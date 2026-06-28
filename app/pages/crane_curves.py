@@ -1,15 +1,13 @@
 """
 Crane curves — DSV Picasso 140 t main winch load chart.
 
-Replicates the MacGregor "Load chart window": a filled SWL contour (radius vs
-height above main deck) per lift mode, a point-query readout (by jib angles or by
-radius+height, with a Best-lift / Nearest-grid toggle), load-geometry inputs, and
-CSV export of the queried point.
+Filled SWL contour (radius vs height above main deck) per lift mode, with a moving
+crane schematic overlaid, a point-query readout (by jib angles with sliders, or by
+radius+height with a Best-lift / Nearest-grid toggle), and CSV export.
 """
 import io
 import dash
 from dash import html, dcc, Input, Output, State, callback, no_update
-import numpy as np
 import plotly.graph_objects as go
 
 from app.engines import crane
@@ -18,49 +16,74 @@ dash.register_page(__name__, path="/lifting/crane-curves", name="Crane curves", 
 
 MUTED = "#64748b"
 ACCENT = "#0f766e"
-PANEL = "#0b1220"
-PANEL_TEXT = "#86efac"
+INK = "#0f172a"
+GRID = "#e2e8f0"
 
 _MODES = crane.list_modes()
 _MODE_OPTS = [{"label": f'{m["label"]} · {m["tag"]}', "value": m["key"]} for m in _MODES]
 
 
-def _figure(mode_key, marker=None):
+def _figure(mode_key, marker=None, linkage=None):
     g = crane.contour_grid(mode_key)
     fig = go.Figure()
     fig.add_trace(go.Contour(
         x=g["x"], y=g["y"], z=g["z"],
         colorscale="Turbo", zmin=0, zmax=g["swl_max"],
         contours=dict(showlines=False, start=0, end=g["swl_max"], size=g["swl_max"] / 14),
-        colorbar=dict(title="SWL [t]", thickness=14, len=0.9),
-        connectgaps=False, hovertemplate="R %{x:.1f} m<br>H %{y:.1f} m<br>SWL %{z:.1f} t<extra></extra>",
+        colorbar=dict(title="SWL [t]", thickness=14, len=0.9, outlinewidth=0),
+        connectgaps=False,
+        hovertemplate="R %{x:.1f} m<br>H %{y:.1f} m<br>SWL %{z:.1f} t<extra></extra>",
     ))
+
+    # Crane schematic linkage (pedestal -> main jib -> folding jib -> wire drop)
+    if linkage:
+        pr, pz = linkage["pivot"]
+        er, ez = linkage["elbow"]
+        tr, tz = linkage["tip"]
+        base_r, _ = linkage["pedestal_base"]
+        # pedestal column (deck up to pivot) + jibs
+        fig.add_trace(go.Scatter(
+            x=[base_r, pr, er, tr], y=[0, pz, ez, tz],
+            mode="lines+markers",
+            line=dict(color="#0f172a", width=3),
+            marker=dict(size=6, color="#0f172a"),
+            hoverinfo="skip", showlegend=False,
+        ))
+        # wire drop from tip down to the load (down to deck level for reference)
+        fig.add_trace(go.Scatter(
+            x=[tr, tr], y=[tz, 0],
+            mode="lines", line=dict(color="#0f172a", width=1, dash="dot"),
+            hoverinfo="skip", showlegend=False,
+        ))
+
     if marker:
         fig.add_trace(go.Scatter(
             x=[marker["radius_m"]], y=[marker["height_m"]],
-            mode="markers", marker=dict(symbol="cross", size=16, color="white",
-                                        line=dict(color="black", width=2)),
-            name="Query", hovertemplate=f'{marker["swl_t"]} t<extra></extra>',
+            mode="markers",
+            marker=dict(symbol="cross", size=15, color="#0f172a",
+                        line=dict(color="white", width=2)),
+            hovertemplate=f'{marker["swl_t"]} t<extra></extra>', showlegend=False,
         ))
+
     fig.update_layout(
         margin=dict(l=55, r=10, t=10, b=45),
         xaxis_title="Radius [m]", yaxis_title="Height above main deck [m]",
-        plot_bgcolor="#0b1220", paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#cbd5e1"), showlegend=False, height=560,
+        plot_bgcolor="#ffffff", paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=INK), showlegend=False, height=560,
     )
-    fig.update_xaxes(gridcolor="#1e293b", zeroline=False)
-    fig.update_yaxes(gridcolor="#1e293b", zeroline=True, zerolinecolor="#334155")
+    fig.update_xaxes(gridcolor=GRID, zeroline=False)
+    fig.update_yaxes(gridcolor=GRID, zeroline=True, zerolinecolor="#94a3b8")
     return fig
 
 
 def _readline(label, value, unit=""):
     return html.Div([
-        html.Span(label, style={"color": "#94a3b8", "fontSize": "0.82rem"}),
+        html.Span(label, style={"color": MUTED, "fontSize": "0.82rem"}),
         html.Span(f"{value}" + (f" {unit}" if unit else ""),
-                  style={"color": PANEL_TEXT, "fontFamily": "ui-monospace,monospace",
-                         "fontWeight": 600}),
+                  style={"color": INK, "fontFamily": "ui-monospace,monospace",
+                         "fontWeight": 700}),
     ], style={"display": "flex", "justifyContent": "space-between",
-              "padding": "5px 10px", "borderBottom": "1px solid #1e293b"})
+              "padding": "6px 12px", "borderBottom": f"1px solid {GRID}"})
 
 
 def _readout_panel(r):
@@ -76,14 +99,13 @@ def _readout_panel(r):
         _readline("DAF", r["daf"], ""),
         _readline("Stiffness", r["stiffness_tm"] if r["stiffness_tm"] is not None else "—", "t/m"),
         _readline("Limiting component", r["limit_label"], ""),
-        _readline("Lowest point", r["lowest_point_m"], "m"),
     ]
     if r.get("snapped"):
         rows.append(html.Div("Snapped to nearest data point",
-                             style={"color": "#fbbf24", "fontSize": "0.72rem",
-                                    "padding": "6px 10px"}))
-    return html.Div(rows, style={"background": PANEL, "borderRadius": "10px",
-                                 "overflow": "hidden", "border": "1px solid #1e293b"})
+                             style={"color": "#b45309", "fontSize": "0.72rem",
+                                    "padding": "6px 12px"}))
+    return html.Div(rows, style={"background": "#fff", "borderRadius": "10px",
+                                 "overflow": "hidden", "border": f"1px solid {GRID}"})
 
 
 def _num(id_, label, value, step=0.1, unit=""):
@@ -92,8 +114,8 @@ def _num(id_, label, value, step=0.1, unit=""):
                    style={"fontSize": "0.75rem", "fontWeight": 600, "color": MUTED}),
         dcc.Input(id=id_, type="number", value=value, step=step, debounce=True,
                   style={"width": "100%", "padding": "6px 8px", "borderRadius": "6px",
-                         "border": "1px solid #cbd5e1", "boxSizing": "border-box"}),
-    ], style={"marginBottom": "8px"})
+                         "border": f"1px solid {GRID}", "boxSizing": "border-box"}),
+    ], style={"marginBottom": "4px"})
 
 
 def layout():
@@ -121,8 +143,15 @@ def layout():
                     dcc.Tab(label="By jib angles", value="angles", children=[
                         html.Div([
                             _num("cr-main", "Main jib angle", 30.0, 0.5, "°"),
+                            dcc.Slider(id="cr-main-sl", min=0, max=84, step=0.5, value=30.0,
+                                       marks={0: "0", 42: "42", 84: "84"},
+                                       tooltip={"placement": "bottom"}),
+                            html.Div(style={"height": "10px"}),
                             _num("cr-fold", "Folding jib angle", 45.0, 0.5, "°"),
-                        ], style={"paddingTop": "10px"}),
+                            dcc.Slider(id="cr-fold-sl", min=0, max=102, step=0.5, value=45.0,
+                                       marks={0: "0", 51: "51", 102: "102"},
+                                       tooltip={"placement": "bottom"}),
+                        ], style={"paddingTop": "12px"}),
                     ]),
                     dcc.Tab(label="By radius + height", value="rh", children=[
                         html.Div([
@@ -130,7 +159,8 @@ def layout():
                             _num("cr-height", "Height above deck", 10.0, 0.5, "m"),
                             html.Label("When several solutions exist",
                                        style={"fontSize": "0.75rem", "fontWeight": 600,
-                                              "color": MUTED}),
+                                              "color": MUTED, "marginTop": "6px",
+                                              "display": "block"}),
                             dcc.RadioItems(
                                 id="cr-rule",
                                 options=[{"label": " Best lift (highest SWL)", "value": "best"},
@@ -139,19 +169,10 @@ def layout():
                                 style={"fontSize": "0.85rem", "marginTop": "4px"},
                                 labelStyle={"display": "block", "marginBottom": "3px"},
                             ),
-                        ], style={"paddingTop": "10px"}),
+                        ], style={"paddingTop": "12px"}),
                     ]),
                 ]),
-                html.Details([
-                    html.Summary("Load geometry",
-                                 style={"cursor": "pointer", "fontWeight": 600,
-                                        "fontSize": "0.85rem", "margin": "12px 0 6px"}),
-                    _num("cr-wire", "Wire length a", 0.0, 0.5, "m"),
-                    _num("cr-rig", "Rigging height c", 0.0, 0.5, "m"),
-                    _num("cr-loadh", "Load height d", 0.0, 0.5, "m"),
-                    _num("cr-loadw", "Load width e", 0.0, 0.5, "m"),
-                ], open=False),
-                html.Div(id="cr-readout", style={"marginTop": "12px"}),
+                html.Div(id="cr-readout", style={"marginTop": "14px"}),
                 html.Button("Download point as CSV", id="cr-csv-btn", n_clicks=0,
                             style={"marginTop": "12px", "width": "100%", "padding": "9px",
                                    "borderRadius": "8px", "border": "none",
@@ -163,14 +184,37 @@ def layout():
     ], style={"maxWidth": "1100px"})
 
 
-def _solve(mode, tab, main, fold, radius, height, rule, wire, rig, loadh):
-    geom = {"wire_a": wire or 0.0, "rigging_c": rig or 0.0, "load_d": loadh or 0.0}
+# --- sync number <-> slider for main and folding angle ---
+@callback(Output("cr-main", "value"), Output("cr-main-sl", "value"),
+          Input("cr-main", "value"), Input("cr-main-sl", "value"),
+          prevent_initial_call=True)
+def _sync_main(num, sl):
+    trig = dash.callback_context.triggered_id
+    v = sl if trig == "cr-main-sl" else num
+    if v is None:
+        return no_update, no_update
+    v = max(0, min(84, v))
+    return v, v
+
+
+@callback(Output("cr-fold", "value"), Output("cr-fold-sl", "value"),
+          Input("cr-fold", "value"), Input("cr-fold-sl", "value"),
+          prevent_initial_call=True)
+def _sync_fold(num, sl):
+    trig = dash.callback_context.triggered_id
+    v = sl if trig == "cr-fold-sl" else num
+    if v is None:
+        return no_update, no_update
+    v = max(0, min(102, v))
+    return v, v
+
+
+def _solve(mode, tab, main, fold, radius, height, rule):
     if tab == "rh":
         return crane.query_point(mode, radius if radius is not None else 0,
-                                 height if height is not None else 0,
-                                 rule=rule or "best", geom=geom)
+                                 height if height is not None else 0, rule=rule or "best")
     return crane.query_angles(mode, main if main is not None else 0,
-                              fold if fold is not None else 0, geom=geom)
+                              fold if fold is not None else 0)
 
 
 @callback(
@@ -181,11 +225,13 @@ def _solve(mode, tab, main, fold, radius, height, rule, wire, rig, loadh):
     Input("cr-mode-tab", "value"),
     Input("cr-main", "value"), Input("cr-fold", "value"),
     Input("cr-radius", "value"), Input("cr-height", "value"), Input("cr-rule", "value"),
-    Input("cr-wire", "value"), Input("cr-rig", "value"), Input("cr-loadh", "value"),
 )
-def _update(mode, tab, main, fold, radius, height, rule, wire, rig, loadh):
-    r = _solve(mode, tab, main, fold, radius, height, rule, wire, rig, loadh)
-    fig = _figure(mode, marker=r)
+def _update(mode, tab, main, fold, radius, height, rule):
+    r = _solve(mode, tab, main, fold, radius, height, rule)
+    lk = None
+    if r:
+        lk = crane.linkage_points(r["main_deg"], r["fold_deg"])
+    fig = _figure(mode, marker=r, linkage=lk)
     return fig, _readout_panel(r), r
 
 
@@ -211,5 +257,4 @@ def _csv(_n, r, mode):
     buf.write(f"Folding angle,{r['fold_deg']},deg\n")
     buf.write(f"Stiffness,{r['stiffness_tm']},t/m\n")
     buf.write(f"Limiting component,{r['limit_label']},\n")
-    buf.write(f"Lowest point,{r['lowest_point_m']},m\n")
     return dict(content=buf.getvalue(), filename=f"crane_{mode}_point.csv")

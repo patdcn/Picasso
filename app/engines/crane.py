@@ -32,6 +32,45 @@ _VOLUME_DIR = os.getenv("CRANE_DATA_DIR", "/data/tools/crane")
 # above main deck.
 DECK_OFFSET = 6.0
 
+# Crane linkage geometry, derived by least-squares fit of a two-jib kinematic model
+# to the .mat tip positions (RMS tip error 0.18 m across the envelope). Coordinates
+# are in the booklet frame: radius from slew centre, height above pedestal flange.
+# tip = pivot + L1*dir(main+PM) + L2*dir(main+PM-(pi-fold)+PF)
+LINKAGE = {
+    "pivot_r": 0.99,
+    "pivot_z": 4.55,   # above pedestal flange
+    "L1": 25.55,       # main jib length [m]
+    "L2": 11.90,       # folding jib length [m]
+    "phase_main": 0.002,
+    "phase_fold": 0.447,
+}
+
+
+def linkage_points(main_deg, fold_deg):
+    """
+    Return the schematic joint coordinates (radius, height-above-deck) for the
+    pedestal pivot, the main/folding elbow, and the jib tip, at the given angles.
+    Heights are referenced to the Picasso main deck (pivot_z is above the flange,
+    so DECK_OFFSET is added). Used to draw the moving crane schematic.
+    """
+    import math
+    g = LINKAGE
+    am = math.radians(main_deg)
+    a1 = am + g["phase_main"]
+    a2 = am + g["phase_main"] - (math.pi - math.radians(fold_deg)) + g["phase_fold"]
+    pr, pz = g["pivot_r"], g["pivot_z"] + DECK_OFFSET
+    er = pr + g["L1"] * math.cos(a1)
+    ez = pz + g["L1"] * math.sin(a1)
+    tr = er + g["L2"] * math.cos(a2)
+    tz = ez + g["L2"] * math.sin(a2)
+    return {
+        "pivot": (pr, pz),
+        "elbow": (er, ez),
+        "tip": (tr, tz),
+        "deck_z": DECK_OFFSET - DECK_OFFSET,   # main deck is z=0 in deck frame
+        "pedestal_base": (pr, 0.0),
+    }
+
 # Limiting-component code -> label. Code 2 = Main Hinge is confirmed against two
 # MacGregor readouts at known positions. The others are labelled by character
 # (refine the strings here if exact MacGregor names become available).

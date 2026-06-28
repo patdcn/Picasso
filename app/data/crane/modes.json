@@ -29,14 +29,14 @@
   },
   {
     "key": "sts1",
-    "label": "Ship-to-ship",
+    "label": "Subsea lift",
     "tag": "Hs 1.00",
     "daf": null,
     "rated": 126.4
   },
   {
     "key": "sts2",
-    "label": "Ship-to-ship",
+    "label": "Subsea lift",
     "tag": "Hs 2.00",
     "daf": null,
     "rated": 101.1

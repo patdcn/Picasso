@@ -30,6 +30,22 @@ auth.register_auth(server)
 
 from app.nav import build_nav  # noqa: E402
 
+# ---- serve GA reference files from the data volume (read-only, safe filenames) ----
+import os as _os
+from flask import send_from_directory, abort  # noqa: E402
+
+_GA_DIR = _os.getenv("GA_DATA_DIR", "/data/tools/ga")
+
+
+@server.route("/ga-file/<path:name>")
+def _ga_file(name):
+    # only allow simple filenames within the GA dir
+    if "/" in name or "\\" in name or ".." in name:
+        abort(404)
+    if not _os.path.isdir(_GA_DIR) or not _os.path.exists(_os.path.join(_GA_DIR, name)):
+        abort(404)
+    return send_from_directory(_GA_DIR, name)
+
 # ---- Header (toggle + title + user area) ----
 header = html.Header(
     [
