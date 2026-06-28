@@ -203,24 +203,72 @@ def contour_field(key):
 _GRID_CACHE = {}
 
 
-def contour_grid(key, nx=120, ny=120):
+def contour_grid(key, nx=140, ny=140):
     """
     Resample the curvilinear 50x50 SWL field onto a regular (radius x height) grid
-    so Plotly's Contour renders it instantly. Points outside the data hull are NaN,
-    which gives the natural load-chart envelope. Cached per mode.
+    so Plotly's Contour renders it instantly. Pure numpy (no scipy) so the page has
+    no heavy runtime dependency. Points outside the data hull are NaN, which gives
+    the natural load-chart envelope. Cached per mode.
+
+    Method: the native grid is a structured quad mesh in (R, H). For each regular
+    target cell we find the native quad containing it and bilinearly interpolate
+    SWL. To keep it simple and fast with numpy only, we rasterise each native quad
+    onto the regular grid (scan-fill) using barycentric interpolation over the two
+    triangles of the quad.
     """
     ck = (key, nx, ny)
     if ck in _GRID_CACHE:
         return _GRID_CACHE[ck]
-    from scipy.interpolate import griddata  # server-side, once per mode
+
     d = load_mode(key)
-    R = d["TP_y_m"].ravel()
-    H = d["height_deck"].ravel()
-    P = d["Pmax"].ravel()
-    xi = np.linspace(float(np.nanmin(R)), float(np.nanmax(R)), nx)
-    yi = np.linspace(float(np.nanmin(H)), float(np.nanmax(H)), ny)
-    Xi, Yi = np.meshgrid(xi, yi)
-    Zi = griddata((R, H), P, (Xi, Yi), method="linear")
-    out = {"x": xi, "y": yi, "z": Zi, "swl_max": float(np.nanmax(d["Pmax"]))}
+    R = d["TP_y_m"]
+    H = d["height_deck"]
+    P = d["Pmax"]
+
+    r_min, r_max = float(np.nanmin(R)), float(np.nanmax(R))
+    h_min, h_max = float(np.nanmin(H)), float(np.nanmax(H))
+    xi = np.linspace(r_min, r_max, nx)
+    yi = np.linspace(h_min, h_max, ny)
+    Z = np.full((ny, nx), np.nan)
+
+    inv_dx = (nx - 1) / (r_max - r_min)
+    inv_dy = (ny - 1) / (h_max - h_min)
+
+    def _fill_tri(p0, p1, p2, v0, v1, v2):
+        # rasterise triangle (p=(r,h)) into Z with barycentric-interpolated SWL
+        rs = [p0[0], p1[0], p2[0]]
+        hs = [p0[1], p1[1], p2[1]]
+        cmin = max(int(np.floor((min(rs) - r_min) * inv_dx)), 0)
+        cmax = min(int(np.ceil((max(rs) - r_min) * inv_dx)), nx - 1)
+        rmin_ = max(int(np.floor((min(hs) - h_min) * inv_dy)), 0)
+        rmax_ = min(int(np.ceil((max(hs) - h_min) * inv_dy)), ny - 1)
+        if cmax < cmin or rmax_ < rmin_:
+            return
+        denom = ((p1[1] - p2[1]) * (p0[0] - p2[0]) + (p2[0] - p1[0]) * (p0[1] - p2[1]))
+        if abs(denom) < 1e-12:
+            return
+        for rr in range(rmin_, rmax_ + 1):
+            hy = yi[rr]
+            for cc in range(cmin, cmax + 1):
+                rx = xi[cc]
+                a = ((p1[1] - p2[1]) * (rx - p2[0]) + (p2[0] - p1[0]) * (hy - p2[1])) / denom
+                b = ((p2[1] - p0[1]) * (rx - p2[0]) + (p0[0] - p2[0]) * (hy - p2[1])) / denom
+                c = 1 - a - b
+                if a >= -1e-9 and b >= -1e-9 and c >= -1e-9:
+                    Z[rr, cc] = a * v0 + b * v1 + c * v2
+
+    ni, nj = R.shape
+    for i in range(ni - 1):
+        for j in range(nj - 1):
+            p00 = (R[i, j], H[i, j]); v00 = P[i, j]
+            p01 = (R[i, j + 1], H[i, j + 1]); v01 = P[i, j + 1]
+            p10 = (R[i + 1, j], H[i + 1, j]); v10 = P[i + 1, j]
+            p11 = (R[i + 1, j + 1], H[i + 1, j + 1]); v11 = P[i + 1, j + 1]
+            if not (np.isfinite(v00) and np.isfinite(v01) and np.isfinite(v10) and np.isfinite(v11)):
+                continue
+            _fill_tri(p00, p01, p11, v00, v01, v11)
+            _fill_tri(p00, p11, p10, v00, v11, v10)
+
+    out = {"x": xi, "y": yi, "z": Z, "swl_max": float(np.nanmax(P))}
     _GRID_CACHE[ck] = out
     return out
