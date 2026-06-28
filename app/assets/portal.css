@@ -125,3 +125,19 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
   }
   .content { padding: 18px 16px; }
 }
+
+/* ------- header user area ------- */
+.user-area {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.user-email { color: var(--muted); font-size: 0.85rem; }
+.user-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.user-link:hover { text-decoration: underline; }

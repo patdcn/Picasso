@@ -3,7 +3,8 @@ DSV Picasso Engineering Portal — application entrypoint.
 
 Portal shell: persistent header + collapsible grouped sidebar + page content area.
 Tools live in app/pages/ and self-register (Dash Pages). The sidebar is generated
-from the page registry and grouped per app/nav.py.
+from the page registry, grouped per app/nav.py, and filtered by the logged-in user's
+module permissions. Authentication and per-module access live in app/auth.py.
 """
 import os
 import dash
@@ -13,15 +14,30 @@ app = Dash(__name__, use_pages=True, title="DSV Picasso Engineering Portal",
            suppress_callback_exceptions=True)
 server = app.server  # gunicorn target
 
-from app.nav import build_nav  # noqa: E402  (after app init; uses page registry at runtime)
+# ---- session / cookie security ----
+server.secret_key = os.getenv("SECRET_KEY", "dev-insecure-key-change-me")
+server.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    # Flip COOKIE_SECURE=true once HTTPS (the Let's Encrypt cert) is live.
+    SESSION_COOKIE_SECURE=(os.getenv("COOKIE_SECURE", "false").lower() == "true"),
+)
 
-# ---- Header (with sidebar toggle) ----
+# ---- auth: create DB + bootstrap admin, then install guard + login/logout ----
+from app import auth  # noqa: E402
+auth.init_db()
+auth.register_auth(server)
+
+from app.nav import build_nav  # noqa: E402
+
+# ---- Header (toggle + title + user area) ----
 header = html.Header(
     [
         html.Button("\u2630", id="nav-toggle", className="nav-toggle", n_clicks=0,
                     title="Show/hide menu"),
         html.H2("DSV Picasso Engineering Portal", className="app-title"),
         html.Span("DCN Diving", className="app-subtitle"),
+        html.Div(id="user-area", className="user-area"),
     ],
     className="app-header",
 )
@@ -30,7 +46,7 @@ header = html.Header(
 app.layout = html.Div(
     [
         dcc.Location(id="url"),
-        dcc.Store(id="nav-open", data=True),  # sidebar visible by default
+        dcc.Store(id="nav-open", data=True),
         header,
         html.Div(
             [
@@ -44,13 +60,23 @@ app.layout = html.Div(
 )
 
 
-# Build/refresh the sidebar on navigation (gives active-link highlighting for free).
 @app.callback(Output("sidebar", "children"), Input("url", "pathname"))
 def _render_nav(pathname):
-    return build_nav(pathname)
+    return build_nav(pathname, auth.current_user())
 
 
-# Toggle the sidebar open/closed. The class drives the CSS (incl. responsive behaviour).
+@app.callback(Output("user-area", "children"), Input("url", "pathname"))
+def _render_user_area(_pathname):
+    user = auth.current_user()
+    if not user:
+        return ""
+    children = [html.Span(user["email"], className="user-email")]
+    if user["is_admin"]:
+        children.append(dcc.Link("Admin", href="/admin", className="user-link"))
+    children.append(html.A("Sign out", href="/logout", className="user-link"))
+    return children
+
+
 @app.callback(
     Output("app-shell", "className"),
     Output("nav-open", "data"),

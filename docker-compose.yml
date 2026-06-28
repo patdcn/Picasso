@@ -1,10 +1,28 @@
-# First deploy: just the web service. The worker + redis + postgres services get
-# added here later, once the chain is proven and we start adding real tools.
+# Picasso portal — single web service with a persistent volume for auth.db (and,
+# later, tool data files under /data/tools/...).
+#
+# Environment variables to set in the Dokploy UI (NOT committed here):
+#   SECRET_KEY       long random string used to sign session cookies
+#   ADMIN_EMAIL      bootstrap admin email (created on first run)
+#   ADMIN_PASSWORD   bootstrap admin password (used once on first run)
+#   COOKIE_SECURE    "true" once HTTPS/Let's Encrypt is live; "false" until then
+#
+# The worker/redis/postgres services get added here later if/when needed.
 services:
   web:
     build: .
     restart: unless-stopped
     ports:
       - "8050:8050"
-    # In Dokploy you can instead attach a domain to this service for HTTPS,
-    # rather than exposing the port directly.
+    environment:
+      - AUTH_DB=/data/auth.db
+      - SECRET_KEY=${SECRET_KEY}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - COOKIE_SECURE=${COOKIE_SECURE}
+    volumes:
+      - picasso_data:/data        # persists auth.db across redeploys
+    # In Dokploy: attach the domain to this service, container port 8050, HTTPS on.
+
+volumes:
+  picasso_data:

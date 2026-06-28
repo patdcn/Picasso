@@ -24,7 +24,7 @@ def _grouped_pages():
     """Return {group_name: [page, ...]} for all registered pages except Home."""
     groups = {g: [] for g in NAV_GROUPS}
     for page in dash.page_registry.values():
-        if page["path"] == "/":          # Home is rendered separately, at the top
+        if page["path"] in ("/", "/admin"):   # Home + admin rendered separately
             continue
         cat = page.get("category") or "Other"
         groups.setdefault(cat, []).append(page)
@@ -39,8 +39,17 @@ def _link(page, active: bool):
     return dcc.Link(page["name"], href=page["path"], className=cls)
 
 
-def build_nav(pathname: str):
-    """Build the sidebar contents, highlighting the active route."""
+def _visible(page, user):
+    """A page is visible if the user is admin or has been granted its module."""
+    if user and user.get("is_admin"):
+        return True
+    if not user:
+        return False
+    return page["path"] in (user.get("modules") or [])
+
+
+def build_nav(pathname: str, user=None):
+    """Build the sidebar contents for `user`, highlighting the active route."""
     items = [
         dcc.Link(
             [html.Span("⌂", className="nav-home-icon"), html.Span("Home")],
@@ -50,9 +59,9 @@ def build_nav(pathname: str):
     ]
     groups = _grouped_pages()
     for group in list(NAV_GROUPS) + [g for g in groups if g not in NAV_GROUPS]:
-        pages = groups.get(group, [])
+        pages = [p for p in groups.get(group, []) if _visible(p, user)]
         if not pages:
-            continue  # don't show empty groups
+            continue  # don't show empty groups (or groups with nothing this user can see)
         items.append(html.Div(group, className="nav-group-label"))
         for page in pages:
             items.append(_link(page, active=(pathname == page["path"])))
