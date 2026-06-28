@@ -1,0 +1,10 @@
+# First deploy: just the web service. The worker + redis + postgres services get
+# added here later, once the chain is proven and we start adding real tools.
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8050:8050"
+    # In Dokploy you can instead attach a domain to this service for HTTPS,
+    # rather than exposing the port directly.
