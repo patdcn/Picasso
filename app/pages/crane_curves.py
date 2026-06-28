@@ -26,21 +26,21 @@ _MODE_OPTS = [{"label": f'{m["label"]} · {m["tag"]}', "value": m["key"]} for m 
 
 
 def _figure(mode_key, marker=None):
-    cf = crane.contour_field(mode_key)
-    R, H, P = cf["radius"], cf["height"], cf["swl"]
+    g = crane.contour_grid(mode_key)
     fig = go.Figure()
     fig.add_trace(go.Contour(
-        x=R.ravel(), y=H.ravel(), z=P.ravel(),
-        colorscale="Turbo", contours=dict(showlines=False),
+        x=g["x"], y=g["y"], z=g["z"],
+        colorscale="Turbo", zmin=0, zmax=g["swl_max"],
+        contours=dict(showlines=False, start=0, end=g["swl_max"], size=g["swl_max"] / 14),
         colorbar=dict(title="SWL [t]", thickness=14, len=0.9),
-        connectgaps=True, line_smoothing=0.85,
+        connectgaps=False, hovertemplate="R %{x:.1f} m<br>H %{y:.1f} m<br>SWL %{z:.1f} t<extra></extra>",
     ))
     if marker:
         fig.add_trace(go.Scatter(
             x=[marker["radius_m"]], y=[marker["height_m"]],
             mode="markers", marker=dict(symbol="cross", size=16, color="white",
                                         line=dict(color="black", width=2)),
-            name="Query",
+            name="Query", hovertemplate=f'{marker["swl_t"]} t<extra></extra>',
         ))
     fig.update_layout(
         margin=dict(l=55, r=10, t=10, b=45),

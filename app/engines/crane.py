@@ -188,9 +188,8 @@ def _readout(d, r, c, geom, snapped=False):
 # --------------------------------------------------------------------------- #
 def contour_field(key):
     """
-    Return arrays for the filled SWL contour:
-      radius (50x50), height_above_deck (50x50), swl (50x50), and the colour-bar max.
-    The renderer (page) turns these into a Plotly contour/heatmap.
+    Raw scattered grid for the SWL field (50x50 curvilinear). Mostly used by
+    contour_grid() below; kept for callers that want the native nodes.
     """
     d = load_mode(key)
     return {
@@ -198,8 +197,30 @@ def contour_field(key):
         "height": d["height_deck"],
         "swl": d["Pmax"],
         "swl_max": float(np.nanmax(d["Pmax"])),
-        "r_min": float(d["ymin"][0, 0]),
-        "r_max": float(d["ymax"][0, 0]),
-        "h_min": float(d["zmin"][0, 0]) + DECK_OFFSET,
-        "h_max": float(d["zmax"][0, 0]) + DECK_OFFSET,
     }
+
+
+_GRID_CACHE = {}
+
+
+def contour_grid(key, nx=120, ny=120):
+    """
+    Resample the curvilinear 50x50 SWL field onto a regular (radius x height) grid
+    so Plotly's Contour renders it instantly. Points outside the data hull are NaN,
+    which gives the natural load-chart envelope. Cached per mode.
+    """
+    ck = (key, nx, ny)
+    if ck in _GRID_CACHE:
+        return _GRID_CACHE[ck]
+    from scipy.interpolate import griddata  # server-side, once per mode
+    d = load_mode(key)
+    R = d["TP_y_m"].ravel()
+    H = d["height_deck"].ravel()
+    P = d["Pmax"].ravel()
+    xi = np.linspace(float(np.nanmin(R)), float(np.nanmax(R)), nx)
+    yi = np.linspace(float(np.nanmin(H)), float(np.nanmax(H)), ny)
+    Xi, Yi = np.meshgrid(xi, yi)
+    Zi = griddata((R, H), P, (Xi, Yi), method="linear")
+    out = {"x": xi, "y": yi, "z": Zi, "swl_max": float(np.nanmax(d["Pmax"]))}
+    _GRID_CACHE[ck] = out
+    return out
