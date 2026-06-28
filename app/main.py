@@ -1,49 +1,67 @@
 """
 DSV Picasso Engineering Portal — application entrypoint.
 
-This is the real portal foundation, kept deliberately minimal for the first deploy.
-Right now it registers one placeholder page so we can prove the full chain works:
-    GitHub push -> Dokploy build -> container runs -> reachable on your IP.
-
-Once this is green, engines/, pages/, core/ etc. get added into this same structure.
+Portal shell: persistent header + collapsible grouped sidebar + page content area.
+Tools live in app/pages/ and self-register (Dash Pages). The sidebar is generated
+from the page registry and grouped per app/nav.py.
 """
 import os
 import dash
-from dash import Dash, html
+from dash import Dash, html, dcc, Input, Output, State
 
-# `use_pages=True` is what makes this a multi-tool portal rather than a single app.
-# Pages live in app/pages/ and self-register via dash.register_page(...).
-app = Dash(__name__, use_pages=True, title="DSV Picasso Engineering Portal")
+app = Dash(__name__, use_pages=True, title="DSV Picasso Engineering Portal",
+           suppress_callback_exceptions=True)
+server = app.server  # gunicorn target
 
-# Gunicorn targets this `server` object in production (see Dockerfile CMD).
-server = app.server
+from app.nav import build_nav  # noqa: E402  (after app init; uses page registry at runtime)
 
-# Shared shell: a header + a slot where the active page renders.
+# ---- Header (with sidebar toggle) ----
+header = html.Header(
+    [
+        html.Button("\u2630", id="nav-toggle", className="nav-toggle", n_clicks=0,
+                    title="Show/hide menu"),
+        html.H2("DSV Picasso Engineering Portal", className="app-title"),
+        html.Span("DCN Diving", className="app-subtitle"),
+    ],
+    className="app-header",
+)
+
+# ---- Shell: sidebar + content ----
 app.layout = html.Div(
     [
+        dcc.Location(id="url"),
+        dcc.Store(id="nav-open", data=True),  # sidebar visible by default
+        header,
         html.Div(
             [
-                html.H2(
-                    "DSV Picasso Engineering Portal",
-                    style={"margin": 0, "fontFamily": "system-ui, sans-serif"},
-                ),
-                html.Span(
-                    "DCN Diving",
-                    style={"color": "#6b7280", "fontFamily": "system-ui, sans-serif"},
-                ),
+                html.Nav(id="sidebar", className="sidebar"),
+                html.Main(dash.page_container, className="content"),
             ],
-            style={
-                "padding": "14px 20px",
-                "borderBottom": "1px solid #e5e7eb",
-                "display": "flex",
-                "alignItems": "baseline",
-                "gap": "12px",
-            },
+            id="app-shell",
+            className="app-shell",
         ),
-        html.Div(dash.page_container, style={"padding": "24px"}),
     ]
 )
 
+
+# Build/refresh the sidebar on navigation (gives active-link highlighting for free).
+@app.callback(Output("sidebar", "children"), Input("url", "pathname"))
+def _render_nav(pathname):
+    return build_nav(pathname)
+
+
+# Toggle the sidebar open/closed. The class drives the CSS (incl. responsive behaviour).
+@app.callback(
+    Output("app-shell", "className"),
+    Output("nav-open", "data"),
+    Input("nav-toggle", "n_clicks"),
+    State("nav-open", "data"),
+    prevent_initial_call=True,
+)
+def _toggle_nav(_clicks, is_open):
+    is_open = not is_open
+    return ("app-shell" if is_open else "app-shell collapsed"), is_open
+
+
 if __name__ == "__main__":
-    # Local dev only. Production runs via gunicorn (see Dockerfile).
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8050")), debug=True)
