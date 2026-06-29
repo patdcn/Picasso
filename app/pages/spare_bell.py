@@ -57,7 +57,7 @@ def _num(id_, label, value, step, minv=None, maxv=None, hint="", disabled=False)
 
 def _controls():
     try:
-        locked = not auth.may_edit_params(auth.current_user())
+        locked = not auth.may_edit_params(auth.current_user(), "/diving/spare-bell")
     except Exception:
         locked = True
     note = html.Div(

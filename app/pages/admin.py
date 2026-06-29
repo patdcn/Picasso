@@ -36,9 +36,35 @@ def _user_options():
             for u in auth.list_users()]
 
 
-def _module_options():
-    return [{"label": f'{m["category"]} \u00b7 {m["name"]}', "value": m["path"]}
-            for m in auth.list_modules()]
+def _module_rows(allowed, param_allowed):
+    """One row per tool module: an access checkbox, plus an 'edit parameters'
+    checkbox for modules that expose editable parameters. Built from the page
+    registry + params registry, so new tools/params appear here automatically."""
+    pmods = set(params.param_edit_modules())
+    allowed = set(allowed or [])
+    param_allowed = set(param_allowed or [])
+    rows = []
+    for m in auth.list_modules():
+        path = m["path"]
+        access = dcc.Checklist(
+            id={"type": "adm-acc", "path": path},
+            options=[{"label": f' {m["category"]} \u00b7 {m["name"]}', "value": path}],
+            value=[path] if path in allowed else [],
+            inputStyle={"marginRight": "8px"})
+        right = None
+        if path in pmods:
+            right = dcc.Checklist(
+                id={"type": "adm-par", "path": path},
+                options=[{"label": " edit parameters", "value": path}],
+                value=[path] if path in param_allowed else [],
+                inputStyle={"marginRight": "6px"},
+                style={"fontSize": "0.82rem", "color": ACCENT, "whiteSpace": "nowrap"})
+        rows.append(html.Div(
+            [html.Div(access, style={"flex": "1 1 auto"}),
+             html.Div(right, style={"flex": "0 0 auto"}) if right else None],
+            style={"display": "flex", "alignItems": "center", "gap": "10px",
+                   "padding": "4px 0", "borderBottom": "1px solid #f1f5f9"}))
+    return rows
 
 
 def _btn(label, id_, primary=True):
@@ -121,16 +147,12 @@ def layout():
             dcc.Checklist(id="adm-is-admin",
                           options=[{"label": " Administrator (full access)", "value": "admin"}],
                           value=[], style={"marginBottom": "12px"}),
-            dcc.Checklist(id="adm-can-edit-params",
-                          options=[{"label": " May edit parameters on the bell pages "
-                                             "(day rates & timing)", "value": "can_edit"}],
-                          value=[], style={"marginBottom": "12px"},
-                          inputStyle={"marginRight": "8px"}),
             html.Label("Module access", style={"fontSize": "0.8rem", "fontWeight": 600}),
-            dcc.Checklist(id="adm-modules", options=_module_options(), value=[],
-                          style={"margin": "6px 0 14px", "display": "flex",
-                                 "flexDirection": "column", "gap": "4px"},
-                          inputStyle={"marginRight": "8px"}),
+            html.Div("Tick to grant access. Where a tool has editable parameters, tick "
+                     "\u201cedit parameters\u201d to let that user change them on that page.",
+                     style={"fontSize": "0.74rem", "color": MUTED, "margin": "2px 0 8px"}),
+            html.Div(id="adm-module-rows", children=_module_rows([], []),
+                     style={"margin": "6px 0 14px"}),
             _btn("Save changes", "adm-save"),
             _btn("Delete user", "adm-delete", primary=False),
             _status("adm-user-status"),
@@ -160,9 +182,8 @@ def _create(_n, email, pw, admin):
 
 # --- load a user's current access when selected ---
 @callback(
-    Output("adm-modules", "value"),
+    Output("adm-module-rows", "children"),
     Output("adm-is-admin", "value"),
-    Output("adm-can-edit-params", "value"),
     Output("adm-user-status", "children"),
     Input("adm-user-dd", "value"),
     prevent_initial_call=True,
@@ -170,9 +191,9 @@ def _create(_n, email, pw, admin):
 def _select(email):
     u = auth.get_user(email)
     if not u:
-        return [], [], [], ""
-    return (u["modules"], (["admin"] if u["is_admin"] else []),
-            (["can_edit"] if u["can_edit_params"] else []), "")
+        return _module_rows([], []), [], ""
+    return (_module_rows(u["modules"], u["param_modules"]),
+            (["admin"] if u["is_admin"] else []), "")
 
 
 # --- save changes ---
@@ -180,17 +201,18 @@ def _select(email):
     Output("adm-user-status", "children", allow_duplicate=True),
     Input("adm-save", "n_clicks"),
     State("adm-user-dd", "value"),
-    State("adm-modules", "value"),
+    State({"type": "adm-acc", "path": ALL}, "value"),
+    State({"type": "adm-par", "path": ALL}, "value"),
     State("adm-is-admin", "value"),
-    State("adm-can-edit-params", "value"),
     prevent_initial_call=True,
 )
-def _save(_n, email, modules, admin, can_edit):
+def _save(_n, email, acc_values, par_values, admin):
     if not email:
         return html.Span("Select a user first.", style={"color": "#b91c1c"})
+    modules = [v[0] for v in (acc_values or []) if v]
+    param_modules = [v[0] for v in (par_values or []) if v]
     ok, msg = auth.update_user(email, is_admin=("admin" in (admin or [])),
-                               modules=modules or [],
-                               can_edit_params=("can_edit" in (can_edit or [])))
+                               modules=modules, param_modules=param_modules)
     return html.Span(msg, style={"color": ACCENT if ok else "#b91c1c"})
 
 
@@ -199,9 +221,8 @@ def _save(_n, email, modules, admin, can_edit):
     Output("adm-user-status", "children", allow_duplicate=True),
     Output("adm-user-dd", "options", allow_duplicate=True),
     Output("adm-user-dd", "value"),
-    Output("adm-modules", "value", allow_duplicate=True),
+    Output("adm-module-rows", "children", allow_duplicate=True),
     Output("adm-is-admin", "value", allow_duplicate=True),
-    Output("adm-can-edit-params", "value", allow_duplicate=True),
     Input("adm-delete", "n_clicks"),
     State("adm-user-dd", "value"),
     prevent_initial_call=True,
@@ -209,11 +230,12 @@ def _save(_n, email, modules, admin, can_edit):
 def _delete(_n, email):
     if not email:
         return (html.Span("Select a user first.", style={"color": "#b91c1c"}),
-                no_update, no_update, no_update, no_update, no_update)
+                no_update, no_update, no_update, no_update)
     ok, msg = auth.delete_user(email)
     if ok:
-        return (html.Span(msg, style={"color": ACCENT}), _user_options(), None, [], [], [])
-    return (html.Span(msg, style={"color": "#b91c1c"}), no_update, no_update, no_update, no_update, no_update)
+        return (html.Span(msg, style={"color": ACCENT}), _user_options(), None,
+                _module_rows([], []), [])
+    return (html.Span(msg, style={"color": "#b91c1c"}), no_update, no_update, no_update, no_update)
 
 
 # --- save cost & timing assumptions ---

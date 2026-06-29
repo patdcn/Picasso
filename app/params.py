@@ -29,26 +29,36 @@ PARAM_DB = os.getenv("PARAM_DB", "/data/parameter.db")
 # here (any category) and they show up in Admin and are queryable immediately.
 # --------------------------------------------------------------------------- #
 REGISTRY = [
-    # key                           label                          unit   category                    default    step
-    ("day_rate_single_9man",        "Single bell · 9-man",         "/day", "Bell day rates",          150000.0,  1000),
-    ("day_rate_single_12man",       "Single bell · 12-man",        "/day", "Bell day rates",          160000.0,  1000),
-    ("day_rate_twin_12man",         "Twin bell · 12-man",          "/day", "Bell day rates",          190000.0,  1000),
-    ("day_rate_single_twin_9man",   "Single-twin · 9-man",         "/day", "Bell day rates",          160000.0,  1000),
-    ("day_rate_single_twin_12man",  "Single-twin · 12-man",        "/day", "Bell day rates",          170000.0,  1000),
-    ("bell_transit_min",            "Bell to job transit (one way)", "min", "Bell timing",              15.0,      1),
-    ("bell_changeover_h",           "Bell changeover",             "h",    "Bell timing",               1.0,      0.25),
+    # key                           label                          unit   category          default    step   modules (page paths that use it)
+    ("day_rate_single_9man",        "Single bell · 9-man",         "/day", "Bell day rates", 150000.0,  1000, ("/diving/bell", "/diving/spare-bell")),
+    ("day_rate_single_12man",       "Single bell · 12-man",        "/day", "Bell day rates", 160000.0,  1000, ("/diving/bell", "/diving/spare-bell")),
+    ("day_rate_twin_12man",         "Twin bell · 12-man",          "/day", "Bell day rates", 190000.0,  1000, ("/diving/bell",)),
+    ("day_rate_single_twin_9man",   "Single-twin · 9-man",         "/day", "Bell day rates", 160000.0,  1000, ("/diving/spare-bell",)),
+    ("day_rate_single_twin_12man",  "Single-twin · 12-man",        "/day", "Bell day rates", 170000.0,  1000, ("/diving/spare-bell",)),
+    ("bell_transit_min",            "Bell to job transit (one way)", "min", "Bell timing",    15.0,      1,    ("/diving/bell", "/diving/spare-bell")),
+    ("bell_changeover_h",           "Bell changeover",             "h",    "Bell timing",     1.0,      0.25, ("/diving/bell", "/diving/spare-bell")),
 ]
 
-_DEFAULTS = {k: dflt for (k, _l, _u, _c, dflt, _s) in REGISTRY}
+_DEFAULTS = {k: dflt for (k, _l, _u, _c, dflt, _s, _m) in REGISTRY}
 _KEYS = [k for (k, *_rest) in REGISTRY]
 
 
 def definitions():
     """Ordered parameter metadata for the Admin UI."""
     return [
-        {"key": k, "label": l, "unit": u, "category": c, "default": d, "step": s}
-        for (k, l, u, c, d, s) in REGISTRY
+        {"key": k, "label": l, "unit": u, "category": c, "default": d, "step": s, "modules": list(m)}
+        for (k, l, u, c, d, s, m) in REGISTRY
     ]
+
+
+def param_edit_modules():
+    """Set of page paths that expose editable parameters (union over the registry).
+    The Admin page uses this to decide which modules get an 'edit parameters'
+    checkbox; pages use it implicitly via auth.may_edit_params(user, path)."""
+    mods = set()
+    for (_k, _l, _u, _c, _d, _s, m) in REGISTRY:
+        mods.update(m)
+    return sorted(mods)
 
 
 # --------------------------------------------------------------------------- #
