@@ -219,8 +219,10 @@ def _sync_fold(num, sl):
 @callback(
     Output("cr-radius", "value"), Output("cr-radius-sl", "value"),
     Output("cr-radius-sl", "min"), Output("cr-radius-sl", "max"),
+    Output("cr-radius", "min"), Output("cr-radius", "max"),
     Output("cr-height", "value"), Output("cr-height-sl", "value"),
     Output("cr-height-sl", "min"), Output("cr-height-sl", "max"),
+    Output("cr-height", "min"), Output("cr-height", "max"),
     Input("cr-radius", "value"), Input("cr-radius-sl", "value"),
     Input("cr-height", "value"), Input("cr-height-sl", "value"),
     Input("cr-mode", "value"),
@@ -228,15 +230,15 @@ def _sync_fold(num, sl):
 )
 def _sync_rh(r_num, r_sl, h_num, h_sl, mode):
     """
-    Dynamic mutual envelope constraint. Whichever control moved is the 'driver';
-    we clamp it into the mode's overall span, then re-range and clamp the other
-    axis to what's actually reachable at the driver's value. This keeps the
-    radius+height pair inside the crane's reach at all times.
+    Manual change to one axis re-ranges the OTHER axis to what's reachable at the
+    driver's value. The other axis's VALUE only moves if it now falls outside that
+    new range, and when it does it is set to the MAXIMUM of the new range. The
+    number-box min/max are synced to the live ranges so valid values never show the
+    browser's red out-of-range outline.
     """
     trig = dash.callback_context.triggered_id
     fs = crane.full_span(mode)
 
-    # current values, falling back sensibly
     radius = r_sl if trig == "cr-radius-sl" else r_num
     height = h_sl if trig == "cr-height-sl" else h_num
     if radius is None:
@@ -248,28 +250,32 @@ def _sync_rh(r_num, r_sl, h_num, h_sl, mode):
         return max(lo, min(hi, v))
 
     if trig in ("cr-height", "cr-height-sl", "cr-mode"):
-        # height is the driver -> re-range radius to what's reachable at this height
+        # height drives -> clamp height to its full span, re-range radius
         height = clamp(height, fs["h_min"], fs["h_max"])
-        span = crane.reachable_radius_span(mode, height)
-        if span:
-            rlo, rhi = span
-            radius = clamp(radius, rlo, rhi)
-        else:
-            rlo, rhi = fs["r_min"], fs["r_max"]
-        # height slider keeps full mode range; radius slider gets the reachable span
-        return (round(radius, 1), round(radius, 1), round(rlo, 1), round(rhi, 1),
-                round(height, 1), round(height, 1), round(fs["h_min"], 1), round(fs["h_max"], 1))
+        span = crane.reachable_radius_span(mode, height) or (fs["r_min"], fs["r_max"])
+        rlo, rhi = span
+        # only move radius if it's now out of range; if so, set to the MAXIMUM
+        if radius < rlo or radius > rhi:
+            radius = rhi
+        return (
+            round(radius, 1), round(radius, 1), round(rlo, 1), round(rhi, 1),
+            round(rlo, 1), round(rhi, 1),
+            round(height, 1), round(height, 1), round(fs["h_min"], 1), round(fs["h_max"], 1),
+            round(fs["h_min"], 1), round(fs["h_max"], 1),
+        )
     else:
-        # radius is the driver -> re-range height to what's reachable at this radius
+        # radius drives -> clamp radius to its full span, re-range height
         radius = clamp(radius, fs["r_min"], fs["r_max"])
-        span = crane.reachable_height_span(mode, radius)
-        if span:
-            hlo, hhi = span
-            height = clamp(height, hlo, hhi)
-        else:
-            hlo, hhi = fs["h_min"], fs["h_max"]
-        return (round(radius, 1), round(radius, 1), round(fs["r_min"], 1), round(fs["r_max"], 1),
-                round(height, 1), round(height, 1), round(hlo, 1), round(hhi, 1))
+        span = crane.reachable_height_span(mode, radius) or (fs["h_min"], fs["h_max"])
+        hlo, hhi = span
+        if height < hlo or height > hhi:
+            height = hhi
+        return (
+            round(radius, 1), round(radius, 1), round(fs["r_min"], 1), round(fs["r_max"], 1),
+            round(fs["r_min"], 1), round(fs["r_max"], 1),
+            round(height, 1), round(height, 1), round(hlo, 1), round(hhi, 1),
+            round(hlo, 1), round(hhi, 1),
+        )
 
 
 def _solve(mode, tab, main, fold, radius, height, rule):
