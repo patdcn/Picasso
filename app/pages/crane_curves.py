@@ -216,28 +216,60 @@ def _sync_fold(num, sl):
     return v, v
 
 
-@callback(Output("cr-radius", "value"), Output("cr-radius-sl", "value"),
-          Input("cr-radius", "value"), Input("cr-radius-sl", "value"),
-          prevent_initial_call=True)
-def _sync_radius(num, sl):
+@callback(
+    Output("cr-radius", "value"), Output("cr-radius-sl", "value"),
+    Output("cr-radius-sl", "min"), Output("cr-radius-sl", "max"),
+    Output("cr-height", "value"), Output("cr-height-sl", "value"),
+    Output("cr-height-sl", "min"), Output("cr-height-sl", "max"),
+    Input("cr-radius", "value"), Input("cr-radius-sl", "value"),
+    Input("cr-height", "value"), Input("cr-height-sl", "value"),
+    Input("cr-mode", "value"),
+    prevent_initial_call=True,
+)
+def _sync_rh(r_num, r_sl, h_num, h_sl, mode):
+    """
+    Dynamic mutual envelope constraint. Whichever control moved is the 'driver';
+    we clamp it into the mode's overall span, then re-range and clamp the other
+    axis to what's actually reachable at the driver's value. This keeps the
+    radius+height pair inside the crane's reach at all times.
+    """
     trig = dash.callback_context.triggered_id
-    v = sl if trig == "cr-radius-sl" else num
-    if v is None:
-        return no_update, no_update
-    v = max(7, min(36, v))
-    return v, v
+    fs = crane.full_span(mode)
 
+    # current values, falling back sensibly
+    radius = r_sl if trig == "cr-radius-sl" else r_num
+    height = h_sl if trig == "cr-height-sl" else h_num
+    if radius is None:
+        radius = (fs["r_min"] + fs["r_max"]) / 2
+    if height is None:
+        height = (fs["h_min"] + fs["h_max"]) / 2
 
-@callback(Output("cr-height", "value"), Output("cr-height-sl", "value"),
-          Input("cr-height", "value"), Input("cr-height-sl", "value"),
-          prevent_initial_call=True)
-def _sync_height(num, sl):
-    trig = dash.callback_context.triggered_id
-    v = sl if trig == "cr-height-sl" else num
-    if v is None:
-        return no_update, no_update
-    v = max(0, min(45, v))
-    return v, v
+    def clamp(v, lo, hi):
+        return max(lo, min(hi, v))
+
+    if trig in ("cr-height", "cr-height-sl", "cr-mode"):
+        # height is the driver -> re-range radius to what's reachable at this height
+        height = clamp(height, fs["h_min"], fs["h_max"])
+        span = crane.reachable_radius_span(mode, height)
+        if span:
+            rlo, rhi = span
+            radius = clamp(radius, rlo, rhi)
+        else:
+            rlo, rhi = fs["r_min"], fs["r_max"]
+        # height slider keeps full mode range; radius slider gets the reachable span
+        return (round(radius, 1), round(radius, 1), round(rlo, 1), round(rhi, 1),
+                round(height, 1), round(height, 1), round(fs["h_min"], 1), round(fs["h_max"], 1))
+    else:
+        # radius is the driver -> re-range height to what's reachable at this radius
+        radius = clamp(radius, fs["r_min"], fs["r_max"])
+        span = crane.reachable_height_span(mode, radius)
+        if span:
+            hlo, hhi = span
+            height = clamp(height, hlo, hhi)
+        else:
+            hlo, hhi = fs["h_min"], fs["h_max"]
+        return (round(radius, 1), round(radius, 1), round(fs["r_min"], 1), round(fs["r_max"], 1),
+                round(height, 1), round(height, 1), round(hlo, 1), round(hhi, 1))
 
 
 def _solve(mode, tab, main, fold, radius, height, rule):

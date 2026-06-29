@@ -240,7 +240,51 @@ def contour_field(key):
     }
 
 
+_SPAN_CACHE = {}
 _GRID_CACHE = {}
+
+
+def _envelope_mask(key, n=160):
+    """A boolean reachability grid (regular radius x height) for the mode, cached."""
+    g = contour_grid(key, nx=n, ny=n)
+    import numpy as np
+    return g["x"], g["y"], np.isfinite(g["z"])
+
+
+def reachable_radius_span(key, height):
+    """Min/max radius the crane can reach at the given height-above-deck, or None."""
+    import numpy as np
+    x, y, mask = _envelope_mask(key)
+    j = int(np.argmin(np.abs(y - float(height))))
+    row = mask[j, :]
+    if not row.any():
+        return None
+    cols = np.where(row)[0]
+    return float(x[cols.min()]), float(x[cols.max()])
+
+
+def reachable_height_span(key, radius):
+    """Min/max height the crane can reach at the given radius, or None."""
+    import numpy as np
+    x, y, mask = _envelope_mask(key)
+    i = int(np.argmin(np.abs(x - float(radius))))
+    col = mask[:, i]
+    if not col.any():
+        return None
+    rows = np.where(col)[0]
+    return float(y[rows.min()]), float(y[rows.max()])
+
+
+def full_span(key):
+    """Overall radius and height envelope bounds for a mode."""
+    import numpy as np
+    x, y, mask = _envelope_mask(key)
+    cols = np.where(mask.any(axis=0))[0]
+    rows = np.where(mask.any(axis=1))[0]
+    return {
+        "r_min": float(x[cols.min()]), "r_max": float(x[cols.max()]),
+        "h_min": float(y[rows.min()]), "h_max": float(y[rows.max()]),
+    }
 
 
 def contour_grid(key, nx=140, ny=140):
