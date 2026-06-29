@@ -445,3 +445,44 @@ def contour_grid(key, nx=140, ny=140):
     out = {"x": xi, "y": yi, "z": Z, "swl_max": float(np.nanmax(P))}
     _GRID_CACHE[ck] = out
     return out
+
+
+def swl_vs_radius(key, n=200):
+    """
+    Load-radius envelope: the maximum SWL liftable at each outreach (radius),
+    taken over all reachable jib positions / heights for the mode. This reduces
+    the 2-D capacity field to the classic SWL-vs-radius load chart curve.
+    Returns {radius, swl, swl_max} with radius ascending.
+    """
+    import numpy as np
+    g = contour_grid(key, nx=n, ny=n)
+    x = g["x"]
+    z = g["z"]                       # shape (ny, nx): SWL over (radius, height)
+    swl = np.full(x.shape, np.nan)
+    for i in range(x.size):
+        col = z[:, i]
+        if np.isfinite(col).any():
+            swl[i] = np.nanmax(col)  # best SWL achievable at this radius
+    valid = np.isfinite(swl)
+    return {"radius": x[valid], "swl": swl[valid],
+            "swl_max": float(np.nanmax(swl)) if valid.any() else 0.0}
+
+
+def swl_at_radius(key, radius):
+    """Interpolated SWL capacity at a given outreach, or None if out of range."""
+    import numpy as np
+    c = swl_vs_radius(key)
+    r = c["radius"]
+    if r.size == 0 or radius < r.min() or radius > r.max():
+        return None
+    return float(np.interp(float(radius), r, c["swl"]))
+
+
+def max_radius_for_load(key, load_t):
+    """Largest outreach at which the crane can still lift load_t, or None."""
+    import numpy as np
+    c = swl_vs_radius(key)
+    ok = c["swl"] >= float(load_t)
+    if not ok.any():
+        return None
+    return float(c["radius"][ok].max())
