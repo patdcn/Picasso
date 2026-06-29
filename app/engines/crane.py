@@ -26,11 +26,12 @@ import numpy as np
 _REPO_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "crane")
 _VOLUME_DIR = os.getenv("CRANE_DATA_DIR", "/data/tools/crane")
 
-# Pedestal flange -> Picasso main deck. Main deck is 6 m below slew bearing; the
-# booklet's "boom tip range" notes height is measured from slew-ring centre with
-# main deck 6000 mm below. TP_z_m is referenced such that adding 6.0 gives height
-# above main deck.
-DECK_OFFSET = 6.0
+# Pedestal flange -> Picasso main deck. TP_z_m is referenced to the pedestal flange;
+# the MacGregor app references height to the main deck. The flange-to-deck offset is
+# 8.75 m, confirmed against two MacGregor readouts (harbour Height 12.87 at TP_z 4.12,
+# and STS Height 26.08 at TP_z 17.33 — both give exactly 8.75). The booklet's "main
+# deck 6000 mm below slew bearing" is a different reference (slew bearing, not flange).
+DECK_OFFSET = 8.75
 
 # Crane linkage geometry, derived by least-squares fit of a two-jib kinematic model
 # to the .mat tip positions (RMS tip error 0.18 m across the envelope). Coordinates
