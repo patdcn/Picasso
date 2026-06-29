@@ -287,6 +287,86 @@ def full_span(key):
     }
 
 
+# --------------------------------------------------------------------------- #
+# Load-based (inverse) queries: "I need to lift L tonnes — where can I be?"
+# --------------------------------------------------------------------------- #
+def feasible_grid(key, load_t, nx=140, ny=140):
+    """
+    Regular (radius x height) grid where SWL is shown only where SWL >= load_t;
+    cells below the load (or outside the envelope) are NaN. Used to grey out the
+    infeasible region on the chart. Returns x, y, z(masked), swl_max.
+    """
+    import numpy as np
+    g = contour_grid(key, nx=nx, ny=ny)
+    z = g["z"].copy()
+    z[~(z >= float(load_t))] = np.nan
+    return {"x": g["x"], "y": g["y"], "z": z, "swl_max": g["swl_max"]}
+
+
+def load_extremes(key, load_t):
+    """
+    Maximum outreach (radius) and maximum height at which the crane can still lift
+    load_t, taken over the whole envelope (any feasible jib position). Returns a
+    dict, or None if the load exceeds the mode's capacity everywhere.
+    """
+    import numpy as np
+    d = load_mode(key)
+    P = d["Pmax"]; R = d["TP_y_m"]; H = d["height_deck"]
+    ok = np.isfinite(P) & (P >= float(load_t))
+    if not ok.any():
+        return None
+    return {
+        "max_outreach_m": round(float(np.nanmax(R[ok])), 2),
+        "max_height_m": round(float(np.nanmax(H[ok])), 2),
+        "min_outreach_m": round(float(np.nanmin(R[ok])), 2),
+    }
+
+
+def feasible_angle_set(key, load_t):
+    """
+    Return the set of (main, folding) grid nodes where SWL >= load_t, plus the
+    overall min/max of each angle over that feasible set. Used to constrain the
+    jib-angle sliders to positions that can carry the load.
+    """
+    import numpy as np
+    d = load_mode(key)
+    P = d["Pmax"]
+    ok = np.isfinite(P) & (P >= float(load_t))
+    if not ok.any():
+        return None
+    main = d["VMm"][ok]
+    fold = d["VFm"][ok]
+    return {
+        "main_min": float(np.min(main)), "main_max": float(np.max(main)),
+        "fold_min": float(np.min(fold)), "fold_max": float(np.max(fold)),
+    }
+
+
+def feasible_fold_span(key, load_t, main_deg):
+    """
+    For a given main jib angle, the folding-angle span that still lifts load_t.
+    Returns (lo, hi) or None. Lets the folding slider re-range as main changes.
+    """
+    import numpy as np
+    d = load_mode(key)
+    P = d["Pmax"]
+    main_axis = d["main_axis"]
+    c = int(np.argmin(np.abs(main_axis - float(main_deg))))
+    col_ok = np.isfinite(P[:, c]) & (P[:, c] >= float(load_t))
+    if not col_ok.any():
+        return None
+    folds = d["fold_axis"][col_ok]
+    return float(np.min(folds)), float(np.max(folds))
+
+
+def feasible_main_span(key, load_t):
+    """The main-angle span that can lift load_t somewhere, or None."""
+    fs = feasible_angle_set(key, load_t)
+    if not fs:
+        return None
+    return fs["main_min"], fs["main_max"]
+
+
 def contour_grid(key, nx=140, ny=140):
     """
     Resample the curvilinear 50x50 SWL field onto a regular (radius x height) grid

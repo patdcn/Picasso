@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 
 from app.engines import crane
 
-dash.register_page(__name__, path="/lifting/crane-curves", name="Crane curves", category="Lifting")
+dash.register_page(__name__, path="/lifting/crane-curves", name="Main Lift Curves", category="Lifting", order=1)
 
 MUTED = "#64748b"
 ACCENT = "#0f766e"
@@ -121,7 +121,7 @@ def _num(id_, label, value, step=0.1, unit=""):
 def layout():
     first = _MODES[0]["key"]
     return html.Div([
-        html.H3("Crane curves — 140 t main winch", style={"marginBottom": "2px"}),
+        html.H3("Main Lift Curves — 140 t main winch", style={"marginBottom": "2px"}),
         html.P("GPOKa 5000-140-36 AHC subsea crane · DSV Picasso · main lift. "
                "Heights are referenced to the Picasso main deck.",
                style={"color": MUTED, "marginTop": 0, "maxWidth": "760px"}),
