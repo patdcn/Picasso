@@ -141,3 +141,21 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
   font-weight: 600;
 }
 .user-link:hover { text-decoration: underline; }
+
+/* ------- print: force background colours and clean up the page ------- */
+/* Browsers strip background colours when printing by default, which blanks the
+   timeline bars, legend swatches and coloured panels. These rules force them to
+   render so a printed/PDF page matches the screen. */
+* {
+  -webkit-print-color-adjust: exact !important;  /* Chrome, Edge, Safari */
+  print-color-adjust: exact !important;            /* standard */
+  color-adjust: exact !important;                  /* legacy */
+}
+
+@media print {
+  /* hide the app chrome so the print is just the report content */
+  .sidebar, .app-header, .nav-toggle, .user-area { display: none !important; }
+  .content { padding: 0 !important; margin: 0 !important; }
+  .app-shell { display: block !important; }
+  body { background: #fff !important; }
+}
