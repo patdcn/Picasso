@@ -174,9 +174,11 @@ def _sync_load(num, sl):
 @callback(
     Output("lp-main", "value"), Output("lp-main-sl", "value"),
     Output("lp-main-sl", "min"), Output("lp-main-sl", "max"),
+    Output("lp-main-sl", "marks"),
     Output("lp-main", "min"), Output("lp-main", "max"),
     Output("lp-fold", "value"), Output("lp-fold-sl", "value"),
     Output("lp-fold-sl", "min"), Output("lp-fold-sl", "max"),
+    Output("lp-fold-sl", "marks"),
     Output("lp-fold", "min"), Output("lp-fold", "max"),
     Input("lp-main", "value"), Input("lp-main-sl", "value"),
     Input("lp-fold", "value"), Input("lp-fold-sl", "value"),
@@ -193,10 +195,15 @@ def _sync_angles(m_num, m_sl, f_num, f_sl, load, mode):
     if fold is None:
         fold = 45.0
 
+    def marks(lo, hi):
+        mid = (lo + hi) / 2
+        return {round(lo, 1): f"{lo:.0f}", round(mid, 1): f"{mid:.0f}", round(hi, 1): f"{hi:.0f}"}
+
     mspan = crane.feasible_main_span(mode, load)
     if not mspan:
-        # load infeasible everywhere: leave full ranges, values unchanged
-        return (main, main, 0, 84, 0, 84, fold, fold, 0, 102, 0, 102)
+        # load infeasible everywhere: full ranges, values unchanged
+        return (main, main, 0, 84, marks(0, 84), 0, 84,
+                fold, fold, 0, 102, marks(0, 102), 0, 102)
     mlo, mhi = mspan
     if main < mlo or main > mhi:
         main = mhi
@@ -204,9 +211,9 @@ def _sync_angles(m_num, m_sl, f_num, f_sl, load, mode):
     flo, fhi = fspan
     if fold < flo or fold > fhi:
         fold = fhi
-    return (round(main, 1), round(main, 1), round(mlo, 1), round(mhi, 1),
+    return (round(main, 1), round(main, 1), round(mlo, 1), round(mhi, 1), marks(mlo, mhi),
             round(mlo, 1), round(mhi, 1),
-            round(fold, 1), round(fold, 1), round(flo, 1), round(fhi, 1),
+            round(fold, 1), round(fold, 1), round(flo, 1), round(fhi, 1), marks(flo, fhi),
             round(flo, 1), round(fhi, 1))
 
 

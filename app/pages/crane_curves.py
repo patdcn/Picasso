@@ -219,9 +219,11 @@ def _sync_fold(num, sl):
 @callback(
     Output("cr-radius", "value"), Output("cr-radius-sl", "value"),
     Output("cr-radius-sl", "min"), Output("cr-radius-sl", "max"),
+    Output("cr-radius-sl", "marks"),
     Output("cr-radius", "min"), Output("cr-radius", "max"),
     Output("cr-height", "value"), Output("cr-height-sl", "value"),
     Output("cr-height-sl", "min"), Output("cr-height-sl", "max"),
+    Output("cr-height-sl", "marks"),
     Output("cr-height", "min"), Output("cr-height", "max"),
     Input("cr-radius", "value"), Input("cr-radius-sl", "value"),
     Input("cr-height", "value"), Input("cr-height-sl", "value"),
@@ -232,9 +234,9 @@ def _sync_rh(r_num, r_sl, h_num, h_sl, mode):
     """
     Manual change to one axis re-ranges the OTHER axis to what's reachable at the
     driver's value. The other axis's VALUE only moves if it now falls outside that
-    new range, and when it does it is set to the MAXIMUM of the new range. The
-    number-box min/max are synced to the live ranges so valid values never show the
-    browser's red out-of-range outline.
+    new range, and when it does it is set to the MAXIMUM of the new range. Slider
+    marks and number-box min/max track the live ranges so the scale stays clean and
+    valid values never show the browser's red out-of-range outline.
     """
     trig = dash.callback_context.triggered_id
     fs = crane.full_span(mode)
@@ -249,18 +251,22 @@ def _sync_rh(r_num, r_sl, h_num, h_sl, mode):
     def clamp(v, lo, hi):
         return max(lo, min(hi, v))
 
+    def marks(lo, hi):
+        mid = (lo + hi) / 2
+        return {round(lo, 1): f"{lo:.0f}", round(mid, 1): f"{mid:.0f}", round(hi, 1): f"{hi:.0f}"}
+
     if trig in ("cr-height", "cr-height-sl", "cr-mode"):
         # height drives -> clamp height to its full span, re-range radius
         height = clamp(height, fs["h_min"], fs["h_max"])
         span = crane.reachable_radius_span(mode, height) or (fs["r_min"], fs["r_max"])
         rlo, rhi = span
-        # only move radius if it's now out of range; if so, set to the MAXIMUM
         if radius < rlo or radius > rhi:
             radius = rhi
         return (
-            round(radius, 1), round(radius, 1), round(rlo, 1), round(rhi, 1),
+            round(radius, 1), round(radius, 1), round(rlo, 1), round(rhi, 1), marks(rlo, rhi),
             round(rlo, 1), round(rhi, 1),
             round(height, 1), round(height, 1), round(fs["h_min"], 1), round(fs["h_max"], 1),
+            marks(fs["h_min"], fs["h_max"]),
             round(fs["h_min"], 1), round(fs["h_max"], 1),
         )
     else:
@@ -272,8 +278,9 @@ def _sync_rh(r_num, r_sl, h_num, h_sl, mode):
             height = hhi
         return (
             round(radius, 1), round(radius, 1), round(fs["r_min"], 1), round(fs["r_max"], 1),
+            marks(fs["r_min"], fs["r_max"]),
             round(fs["r_min"], 1), round(fs["r_max"], 1),
-            round(height, 1), round(height, 1), round(hlo, 1), round(hhi, 1),
+            round(height, 1), round(height, 1), round(hlo, 1), round(hhi, 1), marks(hlo, hhi),
             round(hlo, 1), round(hhi, 1),
         )
 
