@@ -77,14 +77,21 @@ def _num(id_, label, value, step, unit=""):
 
 
 def _banner():
-    if not subsea.is_interim():
-        return None
+    if subsea.is_interim():
+        return html.Div([
+            html.Strong("Interim capacity data. "),
+            "The max-dynamic-capacity curve is recovered from sea-state data, not the official "
+            "MacGregor table. Replace app/data/crane/maxdyncap.json before any operational use.",
+        ], style={"background": "#fffbeb", "border": f"1px solid {WARN}", "color": "#92400e",
+                  "borderRadius": "8px", "padding": "10px 14px", "fontSize": "0.85rem",
+                  "marginBottom": "14px"})
     return html.Div([
-        html.Strong("Interim capacity data. "),
-        "The max-dynamic-capacity curve is recovered from sea-state data, not the official "
-        "MacGregor table. Replace app/data/crane/maxdyncap.json before any operational use.",
-    ], style={"background": "#fffbeb", "border": f"1px solid {WARN}", "color": "#92400e",
-              "borderRadius": "8px", "padding": "10px 14px", "fontSize": "0.85rem",
+        html.Span("Capacity source: ", style={"fontWeight": 600}),
+        "max dynamic capacity = SWL \u00d7 DAF, derived from the MacGregor subsea data "
+        "(Hs 1.0 & 2.0). Decision-support only \u2014 the lift engineer sets the DAF and "
+        "remains responsible.",
+    ], style={"background": "#f8fafc", "border": f"1px solid {GRID}", "color": MUTED,
+              "borderRadius": "8px", "padding": "8px 14px", "fontSize": "0.8rem",
               "marginBottom": "14px"})
 
 
