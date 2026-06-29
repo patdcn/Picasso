@@ -61,30 +61,33 @@ def _controls():
     except Exception:
         locked = True
     note = html.Div(
-        "Day rates & bell timing are set by an administrator and locked for your account.",
+        "Assumptions are set by an administrator and locked for your account.",
         style={"fontSize": "0.72rem", "color": "#b45309", "background": "#fffbeb",
                "border": "1px solid #fde68a", "borderRadius": "6px",
                "padding": "6px 8px", "marginBottom": "10px"}) if locked else None
+    cur_style = {"width": "100%", "padding": "7px 9px", "borderRadius": "8px",
+                 "border": "1px solid #d1d5db", "textAlign": "center"}
+    if locked:
+        cur_style.update({"background": "#f1f5f9", "color": "#64748b", "cursor": "not-allowed"})
     return html.Div([
     html.Div("Assumptions", style={"fontWeight": 700, "fontSize": "0.95rem", "marginBottom": "10px"}),
     note,
-    _num("sb-W", "Max out-of-bell time (h)", 6, 0.5, 1, hint="dive window per lockout"),
+    _num("sb-W", "Max out-of-bell time (h)", 6, 0.5, 1, hint="dive window per lockout", disabled=locked),
     _num("sb-C", "Bell changeover (h)", params.get_float("bell_changeover_h"), 0.25, 0, disabled=locked),
     _num("sb-T", "Bell to job transit (min, one way)", params.get_float("bell_transit_min"), 1, 0, disabled=locked),
-    _num("sb-B", "Bellsman top-up - S1 only (h)", 1, 0.5, 0),
-    _num("sb-E", "Bellsman reduced work rate", 0.5, 0.05, 0, 1, hint="fraction of a full pair"),
-    _num("sb-bd", "Breakdown downtime (h/week)", 10, 1, 0, hint="single bell only - lost to repairs"),
+    _num("sb-B", "Bellsman top-up - S1 only (h)", 1, 0.5, 0, disabled=locked),
+    _num("sb-E", "Bellsman reduced work rate", 0.5, 0.05, 0, 1, hint="fraction of a full pair", disabled=locked),
+    _num("sb-bd", "Breakdown downtime (h/week)", 10, 1, 0, hint="single bell only - lost to repairs", disabled=locked),
     html.Hr(style={"border": "none", "borderTop": "1px solid #eee", "margin": "12px 0"}),
     _num("sb-R1", "Day rate - single 9-man", params.get_float("day_rate_single_9man"), 1000, 0, disabled=locked),
     _num("sb-R2", "Day rate - single 12-man", params.get_float("day_rate_single_12man"), 1000, 0, disabled=locked),
     _num("sb-R4", "Day rate - single-twin 9-man", params.get_float("day_rate_single_twin_9man"), 1000, 0, disabled=locked),
     _num("sb-R5", "Day rate - single-twin 12-man", params.get_float("day_rate_single_twin_12man"), 1000, 0, disabled=locked),
-    _num("sb-dur", "Base-case duration (days)", 50, 1, 1, hint="defines the fixed scope"),
+    _num("sb-dur", "Base-case duration (days)", 50, 1, 1, hint="defines the fixed scope", disabled=locked),
     html.Div([
         html.Label("Currency", style={"fontSize": "0.8rem", "fontWeight": 600}),
-        dcc.Input(id="sb-CUR", type="text", value="\u20ac", maxLength=3,
-                  style={"width": "100%", "padding": "7px 9px", "borderRadius": "8px",
-                         "border": "1px solid #d1d5db", "textAlign": "center"}),
+        dcc.Input(id="sb-CUR", type="text", value="\u20ac", maxLength=3, disabled=locked,
+                  style=cur_style),
     ]),
 ], style={
     "flex": "0 0 280px", "padding": "16px", "background": "#fafafa",
