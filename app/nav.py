@@ -24,7 +24,7 @@ def _grouped_pages():
     """Return {group_name: [page, ...]} for all registered pages except Home."""
     groups = {g: [] for g in NAV_GROUPS}
     for page in dash.page_registry.values():
-        if page["path"] in ("/", "/admin"):   # Home + admin rendered separately
+        if page["path"] in ("/", "/admin", "/request-access"):   # rendered separately
             continue
         cat = page.get("category") or "Other"
         groups.setdefault(cat, []).append(page)
@@ -65,4 +65,15 @@ def build_nav(pathname: str, user=None):
         items.append(html.Div(group, className="nav-group-label"))
         for page in pages:
             items.append(_link(page, active=(pathname == page["path"])))
+
+    # Non-admins get a "Request access" link pinned at the bottom of the menu.
+    if user and not user.get("is_admin"):
+        items.append(html.Div(style={"height": "14px"}))
+        items.append(html.Hr(style={"border": "none", "borderTop": f"1px solid #e5e7eb",
+                                     "margin": "4px 8px 6px"}))
+        active = (pathname == "/request-access")
+        items.append(dcc.Link(
+            [html.Span("\u2709", style={"marginRight": "8px"}), html.Span("Request access")],
+            href="/request-access",
+            className="nav-link active" if active else "nav-link"))
     return items

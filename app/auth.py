@@ -77,6 +77,18 @@ def init_db():
         if "param_modules" not in cols:
             c.execute("ALTER TABLE users ADD COLUMN param_modules TEXT NOT NULL DEFAULT '[]'")
 
+        # access requests raised by signed-in users wanting more module access.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS access_requests (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                email      TEXT NOT NULL,
+                modules    TEXT NOT NULL,
+                note       TEXT,
+                status     TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL
+            )
+        """)
+
     email = (os.getenv("ADMIN_EMAIL") or "").strip().lower()
     pw = os.getenv("ADMIN_PASSWORD") or ""
     if not (email and pw):
@@ -178,15 +190,16 @@ def verify_login(email, password):
 # Access checks
 # --------------------------------------------------------------------------- #
 def module_keys():
-    """All tool module keys (page paths), excluding home and admin."""
-    return {p["path"] for p in dash.page_registry.values()} - {"/", "/admin"}
+    """All tool module keys (page paths), excluding home, admin, and the
+    request-access page (which every signed-in user may reach)."""
+    return {p["path"] for p in dash.page_registry.values()} - {"/", "/admin", "/request-access"}
 
 
 def list_modules():
     """Tool modules for the admin checkboxes: [{path, name, category}], sorted."""
     out = []
     for p in dash.page_registry.values():
-        if p["path"] in ("/", "/admin"):
+        if p["path"] in ("/", "/admin", "/request-access"):
             continue
         out.append({"path": p["path"], "name": p["name"], "category": p.get("category") or "Other"})
     out.sort(key=lambda m: (m["category"], m["name"]))
@@ -213,6 +226,58 @@ def may_edit_params(user, module_key):
 
 def current_user():
     return get_user(session.get("user_email"))
+
+
+# --------------------------------------------------------------------------- #
+# Access requests + admin notification recipients
+# --------------------------------------------------------------------------- #
+def admin_emails():
+    """Email addresses of all administrators (recipients for access requests).
+    Falls back to the ADMIN_EMAIL env var if, somehow, no admin exists."""
+    emails = [u["email"] for u in list_users() if u["is_admin"]]
+    if not emails:
+        env = (os.getenv("ADMIN_EMAIL") or "").strip().lower()
+        if env:
+            emails = [env]
+    return emails
+
+
+def create_access_request(email, modules, note=None):
+    email = (email or "").strip().lower()
+    if not email or "@" not in email:
+        return False, "Enter a valid email address."
+    modules = [m for m in (modules or []) if m]
+    if not modules:
+        return False, "Select at least one tool to request."
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO access_requests (email, modules, note, status, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (email, json.dumps(modules), (note or "").strip() or None, "pending", _now()),
+        )
+    return True, "Request submitted."
+
+
+def list_access_requests(status="pending"):
+    with _conn() as c:
+        if status:
+            rows = c.execute("SELECT * FROM access_requests WHERE status=? ORDER BY created_at DESC",
+                             (status,)).fetchall()
+        else:
+            rows = c.execute("SELECT * FROM access_requests ORDER BY created_at DESC").fetchall()
+    return [{"id": r["id"], "email": r["email"], "modules": json.loads(r["modules"] or "[]"),
+             "note": r["note"], "status": r["status"], "created_at": r["created_at"]} for r in rows]
+
+
+def count_pending_requests():
+    with _conn() as c:
+        return c.execute("SELECT COUNT(*) AS n FROM access_requests WHERE status='pending'").fetchone()["n"]
+
+
+def mark_request_handled(req_id):
+    with _conn() as c:
+        c.execute("UPDATE access_requests SET status='handled' WHERE id=?", (int(req_id),))
+    return True
 
 
 # --------------------------------------------------------------------------- #

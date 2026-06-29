@@ -120,13 +120,50 @@ def _params_card():
     ])
 
 
+def _requests_list():
+    reqs = auth.list_access_requests("pending")
+    if not reqs:
+        return [html.Div("No pending requests.", style={"color": MUTED, "fontSize": "0.88rem"})]
+    names = {m["path"]: f'{m["category"]} \u00b7 {m["name"]}' for m in auth.list_modules()}
+    rows = []
+    for r in reqs:
+        mods = ", ".join(names.get(p, p) for p in r["modules"])
+        rows.append(html.Div([
+            html.Div([
+                html.Span(r["email"], style={"fontWeight": 700}),
+                html.Span(f"   {r['created_at']}Z", style={"color": MUTED, "fontSize": "0.76rem"}),
+            ]),
+            html.Div(mods, style={"fontSize": "0.85rem", "margin": "3px 0"}),
+            html.Div("\u201c" + r["note"] + "\u201d",
+                     style={"fontSize": "0.8rem", "color": MUTED, "fontStyle": "italic"}) if r["note"] else None,
+            html.Button("Mark handled", id={"type": "req-dismiss", "id": r["id"]}, n_clicks=0, style={
+                "marginTop": "6px", "padding": "5px 12px", "borderRadius": "7px",
+                "border": "1px solid #e5e7eb", "background": "#fff", "color": ACCENT,
+                "fontWeight": 600, "cursor": "pointer", "fontSize": "0.8rem"}),
+        ], style={"padding": "10px 0", "borderBottom": "1px solid #f1f5f9"}))
+    return rows
+
+
+def _requests_card():
+    n = auth.count_pending_requests()
+    title = "Pending access requests" + (f"  ({n})" if n else "")
+    return _card([
+        html.H4(title, style={"marginTop": 0}),
+        html.P("Tool-access requests from users. Grant them under \u201cManage access\u201d "
+               "below, then mark the request handled.",
+               style={"color": MUTED, "fontSize": "0.85rem", "marginTop": 0}),
+        html.Div(id="adm-requests-list", children=_requests_list()),
+    ])
+
+
 def layout():
     return html.Div([
         html.H3("Administration"),
-        html.P("Add users and grant access to individual tools, and set the shared "
-               "cost & timing assumptions. Admins can access everything automatically.",
-               style={"color": MUTED, "maxWidth": "640px"}),
+        html.P("Review access requests, add users and grant access to individual tools, "
+               "and set the shared cost & timing assumptions. Admins can access everything "
+               "automatically.", style={"color": MUTED, "maxWidth": "640px"}),
 
+        _requests_card(),
         _params_card(),
         _card([
             html.H4("Add user", style={"marginTop": 0}),
@@ -250,3 +287,17 @@ def _save_params(_n, values, ids):
     mapping = {i["key"]: v for i, v in zip(ids or [], values or [])}
     n, msg = params.set_many(mapping)
     return html.Span(msg, style={"color": ACCENT if n else "#b91c1c"})
+
+
+# --- dismiss (mark handled) a pending access request ---
+@callback(
+    Output("adm-requests-list", "children"),
+    Input({"type": "req-dismiss", "id": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def _dismiss_request(clicks):
+    trig = dash.callback_context.triggered_id
+    if not trig or not any(c for c in (clicks or []) if c):
+        return no_update
+    auth.mark_request_handled(trig["id"])
+    return _requests_list()
