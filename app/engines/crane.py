@@ -290,29 +290,40 @@ def full_span(key):
 # --------------------------------------------------------------------------- #
 # Load-based (inverse) queries: "I need to lift L tonnes — where can I be?"
 # --------------------------------------------------------------------------- #
-def feasible_grid(key, load_t, nx=140, ny=140):
+def feasible_grid(key, load_t, nx=140, ny=140, min_height=None):
     """
     Regular (radius x height) grid where SWL is shown only where SWL >= load_t;
     cells below the load (or outside the envelope) are NaN. Used to grey out the
     infeasible region on the chart. Returns x, y, z(masked), swl_max.
+
+    min_height: optional minimum hook height above deck [m]. When given, cells
+    whose height is below it are also masked out (greyed). Because the hook sits
+    lowest at far outreach, this trims the reachable radius.
     """
     import numpy as np
     g = contour_grid(key, nx=nx, ny=ny)
     z = g["z"].copy()
     z[~(z >= float(load_t))] = np.nan
+    if min_height is not None:
+        z[g["y"] < float(min_height), :] = np.nan
     return {"x": g["x"], "y": g["y"], "z": z, "swl_max": g["swl_max"]}
 
 
-def load_extremes(key, load_t):
+def load_extremes(key, load_t, min_height=None):
     """
     Maximum outreach (radius) and maximum height at which the crane can still lift
     load_t, taken over the whole envelope (any feasible jib position). Returns a
     dict, or None if the load exceeds the mode's capacity everywhere.
+
+    min_height: optional minimum hook height above deck [m]; when given, only
+    positions at or above it are considered (so max_outreach reflects the limit).
     """
     import numpy as np
     d = load_mode(key)
     P = d["Pmax"]; R = d["TP_y_m"]; H = d["height_deck"]
     ok = np.isfinite(P) & (P >= float(load_t))
+    if min_height is not None:
+        ok &= (H >= float(min_height))
     if not ok.any():
         return None
     return {
@@ -322,16 +333,19 @@ def load_extremes(key, load_t):
     }
 
 
-def feasible_angle_set(key, load_t):
+def feasible_angle_set(key, load_t, min_height=None):
     """
     Return the set of (main, folding) grid nodes where SWL >= load_t, plus the
     overall min/max of each angle over that feasible set. Used to constrain the
-    jib-angle sliders to positions that can carry the load.
+    jib-angle sliders to positions that can carry the load. min_height optionally
+    also requires the hook to be at or above a given height above deck.
     """
     import numpy as np
     d = load_mode(key)
     P = d["Pmax"]
     ok = np.isfinite(P) & (P >= float(load_t))
+    if min_height is not None:
+        ok &= (d["height_deck"] >= float(min_height))
     if not ok.any():
         return None
     main = d["VMm"][ok]
@@ -342,10 +356,11 @@ def feasible_angle_set(key, load_t):
     }
 
 
-def feasible_fold_span(key, load_t, main_deg):
+def feasible_fold_span(key, load_t, main_deg, min_height=None):
     """
     For a given main jib angle, the folding-angle span that still lifts load_t.
     Returns (lo, hi) or None. Lets the folding slider re-range as main changes.
+    min_height optionally also requires the hook to be at or above a given height.
     """
     import numpy as np
     d = load_mode(key)
@@ -353,15 +368,17 @@ def feasible_fold_span(key, load_t, main_deg):
     main_axis = d["main_axis"]
     c = int(np.argmin(np.abs(main_axis - float(main_deg))))
     col_ok = np.isfinite(P[:, c]) & (P[:, c] >= float(load_t))
+    if min_height is not None:
+        col_ok &= (d["height_deck"][:, c] >= float(min_height))
     if not col_ok.any():
         return None
     folds = d["fold_axis"][col_ok]
     return float(np.min(folds)), float(np.max(folds))
 
 
-def feasible_main_span(key, load_t):
+def feasible_main_span(key, load_t, min_height=None):
     """The main-angle span that can lift load_t somewhere, or None."""
-    fs = feasible_angle_set(key, load_t)
+    fs = feasible_angle_set(key, load_t, min_height=min_height)
     if not fs:
         return None
     return fs["main_min"], fs["main_max"]

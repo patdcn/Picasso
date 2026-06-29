@@ -25,8 +25,8 @@ _MODES = crane.list_modes()
 _MODE_OPTS = [{"label": f'{m["label"]} · {m["tag"]}', "value": m["key"]} for m in _MODES]
 
 
-def _figure(mode_key, load_t, marker=None, linkage=None):
-    g = crane.feasible_grid(mode_key, load_t)
+def _figure(mode_key, load_t, marker=None, linkage=None, min_height=None):
+    g = crane.feasible_grid(mode_key, load_t, min_height=min_height)
     fig = go.Figure()
     # full envelope outline (faint grey) so the user sees what's been excluded
     full = crane.contour_grid(mode_key)
@@ -44,6 +44,12 @@ def _figure(mode_key, load_t, marker=None, linkage=None):
         connectgaps=False,
         hovertemplate="R %{x:.1f} m<br>H %{y:.1f} m<br>SWL %{z:.1f} t<extra></extra>",
     ))
+    # minimum hook-height floor: dashed line marking the excluded band below it
+    if min_height is not None:
+        fig.add_hline(y=float(min_height), line=dict(color="#b45309", width=1.5, dash="dash"),
+                      annotation_text=f"min hook height {float(min_height):g} m",
+                      annotation_position="top left",
+                      annotation_font=dict(color="#b45309", size=11))
     if linkage:
         pr, pz = linkage["pivot"]; er, ez = linkage["elbow"]; tr, tz = linkage["tip"]
         base_r, _ = linkage["pedestal_base"]
@@ -76,16 +82,22 @@ def _readline(label, value, unit="", strong=False):
               "padding": "6px 12px", "borderBottom": f"1px solid {GRID}"})
 
 
-def _readout_panel(r, extremes, load_t, feasible):
+def _readout_panel(r, extremes, load_t, feasible, min_height=None):
     if not feasible:
-        return html.Div(f"No crane position can lift {load_t} t in this mode.",
-                        style={"color": "#b45309", "padding": "12px", "fontWeight": 600})
+        if min_height is not None:
+            msg = (f"No crane position can lift {load_t} t with the hook at or above "
+                   f"{float(min_height):g} m in this mode.")
+        else:
+            msg = f"No crane position can lift {load_t} t in this mode."
+        return html.Div(msg, style={"color": "#b45309", "padding": "12px", "fontWeight": 600})
     rows = []
     if extremes:
         rows += [
             _readline("Max outreach at load", extremes["max_outreach_m"], "m", strong=True),
             _readline("Max height at load", extremes["max_height_m"], "m", strong=True),
         ]
+    if min_height is not None:
+        rows.append(_readline("Min height under hook", f"{float(min_height):g}", "m"))
     if r:
         rows += [
             _readline("Rated load (SWL)", r["swl_t"], "t"),
@@ -140,6 +152,17 @@ def layout():
                 dcc.Slider(id="lp-load-sl", min=0, max=140, step=1, value=50,
                            marks={0: "0", 70: "70", 140: "140"},
                            tooltip={"placement": "bottom"}),
+                html.Div([
+                    dcc.Checklist(
+                        id="lp-minh-on",
+                        options=[{"label": " Limit by minimum height under hook", "value": "on"}],
+                        value=[], style={"fontSize": "0.85rem"},
+                        inputStyle={"marginRight": "6px"},
+                    ),
+                    _num("lp-minh", "Min height under hook", 5.0, 0.5, "m"),
+                ], style={"marginTop": "12px", "padding": "10px 12px",
+                          "background": "#f8fafc", "borderRadius": "8px",
+                          "border": f"1px solid {GRID}"}),
                 html.Div("Position the crane (feasible range only)",
                          style={"fontWeight": 700, "margin": "16px 0 8px"}),
                 _num("lp-main", "Main jib angle", 30.0, 0.5, "°"),
@@ -183,11 +206,13 @@ def _sync_load(num, sl):
     Input("lp-main", "value"), Input("lp-main-sl", "value"),
     Input("lp-fold", "value"), Input("lp-fold-sl", "value"),
     Input("lp-load", "value"), Input("lp-mode", "value"),
+    Input("lp-minh-on", "value"), Input("lp-minh", "value"),
     prevent_initial_call=True,
 )
-def _sync_angles(m_num, m_sl, f_num, f_sl, load, mode):
+def _sync_angles(m_num, m_sl, f_num, f_sl, load, mode, minh_on, minh):
     trig = dash.callback_context.triggered_id
     load = load if load is not None else 0
+    mh = float(minh) if (minh_on and "on" in minh_on and minh is not None) else None
     main = m_sl if trig == "lp-main-sl" else m_num
     fold = f_sl if trig == "lp-fold-sl" else f_num
     if main is None:
@@ -199,15 +224,15 @@ def _sync_angles(m_num, m_sl, f_num, f_sl, load, mode):
         mid = (lo + hi) / 2
         return {round(lo, 1): f"{lo:.0f}", round(mid, 1): f"{mid:.0f}", round(hi, 1): f"{hi:.0f}"}
 
-    mspan = crane.feasible_main_span(mode, load)
+    mspan = crane.feasible_main_span(mode, load, min_height=mh)
     if not mspan:
-        # load infeasible everywhere: full ranges, values unchanged
+        # load (with height limit) infeasible everywhere: full ranges, values unchanged
         return (main, main, 0, 84, marks(0, 84), 0, 84,
                 fold, fold, 0, 102, marks(0, 102), 0, 102)
     mlo, mhi = mspan
     if main < mlo or main > mhi:
         main = mhi
-    fspan = crane.feasible_fold_span(mode, load, main) or (0, 102)
+    fspan = crane.feasible_fold_span(mode, load, main, min_height=mh) or (0, 102)
     flo, fhi = fspan
     if fold < flo or fold > fhi:
         fold = fhi
@@ -223,11 +248,13 @@ def _sync_angles(m_num, m_sl, f_num, f_sl, load, mode):
     Output("lp-store", "data"),
     Input("lp-mode", "value"), Input("lp-load", "value"),
     Input("lp-main", "value"), Input("lp-fold", "value"),
+    Input("lp-minh-on", "value"), Input("lp-minh", "value"),
 )
-def _update(mode, load, main, fold):
+def _update(mode, load, main, fold, minh_on, minh):
     load = load if load is not None else 0
+    mh = float(minh) if (minh_on and "on" in minh_on and minh is not None) else None
     try:
-        extremes = crane.load_extremes(mode, load)
+        extremes = crane.load_extremes(mode, load, min_height=mh)
     except Exception:
         extremes = None
     feasible = extremes is not None
@@ -238,7 +265,7 @@ def _update(mode, load, main, fold):
         r = None
     lk = crane.linkage_points(r["main_deg"], r["fold_deg"]) if r else None
     try:
-        fig = _figure(mode, load, marker=r, linkage=lk)
+        fig = _figure(mode, load, marker=r, linkage=lk, min_height=mh)
     except Exception:
         # last-resort: plain contour so the chart never goes blank
         g = crane.contour_grid(mode)
@@ -247,4 +274,4 @@ def _update(mode, load, main, fold):
         fig.update_layout(plot_bgcolor="#ffffff", paper_bgcolor="rgba(0,0,0,0)",
                           height=560, margin=dict(l=55, r=10, t=10, b=45),
                           xaxis_title="Radius [m]", yaxis_title="Height above main deck [m]")
-    return fig, _readout_panel(r, extremes, load, feasible), r
+    return fig, _readout_panel(r, extremes, load, feasible, min_height=mh), r
