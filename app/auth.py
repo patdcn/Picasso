@@ -51,6 +51,7 @@ def _row_to_user(row):
         "email": row["email"],
         "is_admin": bool(row["is_admin"]),
         "modules": json.loads(row["modules"] or "[]"),
+        "can_edit_params": bool(row["can_edit_params"]) if "can_edit_params" in row.keys() else False,
         "created_at": row["created_at"],
     }
 
@@ -68,6 +69,10 @@ def init_db():
                 created_at    TEXT NOT NULL
             )
         """)
+        # migration: add the parameter-edit permission to pre-existing databases.
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(users)").fetchall()}
+        if "can_edit_params" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN can_edit_params INTEGER NOT NULL DEFAULT 0")
 
     email = (os.getenv("ADMIN_EMAIL") or "").strip().lower()
     pw = os.getenv("ADMIN_PASSWORD") or ""
@@ -111,7 +116,7 @@ def count_admins():
         return c.execute("SELECT COUNT(*) AS n FROM users WHERE is_admin=1").fetchone()["n"]
 
 
-def create_user(email, password, is_admin=False, modules=None):
+def create_user(email, password, is_admin=False, modules=None, can_edit_params=False):
     email = (email or "").strip().lower()
     if not email or "@" not in email:
         return False, "Enter a valid email address."
@@ -121,15 +126,15 @@ def create_user(email, password, is_admin=False, modules=None):
         return False, f"A user with email {email} already exists."
     with _conn() as c:
         c.execute(
-            "INSERT INTO users (email, password_hash, is_admin, modules, created_at) "
-            "VALUES (?,?,?,?,?)",
+            "INSERT INTO users (email, password_hash, is_admin, modules, can_edit_params, created_at) "
+            "VALUES (?,?,?,?,?,?)",
             (email, generate_password_hash(password), 1 if is_admin else 0,
-             json.dumps(modules or []), _now()),
+             json.dumps(modules or []), 1 if can_edit_params else 0, _now()),
         )
     return True, f"Created user {email}."
 
 
-def update_user(email, is_admin, modules):
+def update_user(email, is_admin, modules, can_edit_params=False):
     email = (email or "").strip().lower()
     u = get_user(email)
     if not u:
@@ -138,8 +143,9 @@ def update_user(email, is_admin, modules):
     if u["is_admin"] and not is_admin and count_admins() <= 1:
         return False, "Can't remove admin rights from the only administrator."
     with _conn() as c:
-        c.execute("UPDATE users SET is_admin=?, modules=? WHERE email=?",
-                  (1 if is_admin else 0, json.dumps(modules or []), email))
+        c.execute("UPDATE users SET is_admin=?, modules=?, can_edit_params=? WHERE email=?",
+                  (1 if is_admin else 0, json.dumps(modules or []),
+                   1 if can_edit_params else 0, email))
     return True, f"Saved changes to {email}."
 
 
@@ -190,6 +196,12 @@ def can_access(user, module_key):
     if user.get("is_admin"):
         return True
     return module_key in (user.get("modules") or [])
+
+
+def may_edit_params(user):
+    """Whether a user may edit the shared parameters where they appear on tool
+    pages. Admins always may; others need the can_edit_params grant."""
+    return bool(user and (user.get("is_admin") or user.get("can_edit_params")))
 
 
 def current_user():

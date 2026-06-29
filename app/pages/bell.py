@@ -10,7 +10,7 @@ import dash
 from dash import html, dcc, Input, Output, callback
 
 from app.engines.bell import BellInputs, run_comparison
-from app import params
+from app import params, auth
 
 dash.register_page(__name__, path="/diving/bell", name="Single vs twin bell",
                    category="Diving", order=1)
@@ -37,10 +37,13 @@ def fmt_money_m(v, cur):
     return f"{cur}{sep}{v/1e6:,.2f}M"
 
 
-def _num(id_, label, value, step, minv=None, maxv=None, hint=""):
-    kw = {"type": "number", "value": value, "step": step, "id": id_,
-          "style": {"width": "100%", "padding": "7px 9px", "borderRadius": "8px",
-                    "border": "1px solid #d1d5db", "fontFamily": "monospace"}}
+def _num(id_, label, value, step, minv=None, maxv=None, hint="", disabled=False):
+    style = {"width": "100%", "padding": "7px 9px", "borderRadius": "8px",
+             "border": "1px solid #d1d5db", "fontFamily": "monospace"}
+    if disabled:
+        style.update({"background": "#f1f5f9", "color": "#64748b", "cursor": "not-allowed"})
+    kw = {"type": "number", "value": value, "step": step, "id": id_, "style": style,
+          "disabled": disabled}
     if minv is not None:
         kw["min"] = minv
     if maxv is not None:
@@ -53,17 +56,27 @@ def _num(id_, label, value, step, minv=None, maxv=None, hint=""):
 
 
 def _controls():
+    try:
+        locked = not auth.may_edit_params(auth.current_user())
+    except Exception:
+        locked = True
+    note = html.Div(
+        "Day rates & bell timing are set by an administrator and locked for your account.",
+        style={"fontSize": "0.72rem", "color": "#b45309", "background": "#fffbeb",
+               "border": "1px solid #fde68a", "borderRadius": "6px",
+               "padding": "6px 8px", "marginBottom": "10px"}) if locked else None
     return html.Div([
     html.Div("Assumptions", style={"fontWeight": 700, "fontSize": "0.95rem", "marginBottom": "10px"}),
+    note,
     _num("W", "Max out-of-bell time (h)", 6, 0.5, 1, hint="dive window per lockout"),
-    _num("C", "Bell changeover (h)", params.get_float("bell_changeover_h"), 0.25, 0),
-    _num("T", "Bell to job transit (min, one way)", params.get_float("bell_transit_min"), 1, 0),
+    _num("C", "Bell changeover (h)", params.get_float("bell_changeover_h"), 0.25, 0, disabled=locked),
+    _num("T", "Bell to job transit (min, one way)", params.get_float("bell_transit_min"), 1, 0, disabled=locked),
     _num("B", "Bellsman top-up - S1 only (h)", 1, 0.5, 0),
     _num("E", "Bellsman reduced work rate", 0.5, 0.05, 0, 1, hint="fraction of a full pair"),
     html.Hr(style={"border": "none", "borderTop": "1px solid #eee", "margin": "12px 0"}),
-    _num("R1", "Day rate - single 9-man", params.get_float("day_rate_single_9man"), 1000, 0),
-    _num("R2", "Day rate - single 12-man", params.get_float("day_rate_single_12man"), 1000, 0),
-    _num("R3", "Day rate - twin 12-man", params.get_float("day_rate_twin_12man"), 1000, 0),
+    _num("R1", "Day rate - single 9-man", params.get_float("day_rate_single_9man"), 1000, 0, disabled=locked),
+    _num("R2", "Day rate - single 12-man", params.get_float("day_rate_single_12man"), 1000, 0, disabled=locked),
+    _num("R3", "Day rate - twin 12-man", params.get_float("day_rate_twin_12man"), 1000, 0, disabled=locked),
     _num("dur", "Base-case duration (days)", 50, 1, 1, hint="defines the fixed scope"),
     html.Div([
         html.Label("Currency", style={"fontSize": "0.8rem", "fontWeight": 600}),

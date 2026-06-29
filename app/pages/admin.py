@@ -121,6 +121,11 @@ def layout():
             dcc.Checklist(id="adm-is-admin",
                           options=[{"label": " Administrator (full access)", "value": "admin"}],
                           value=[], style={"marginBottom": "12px"}),
+            dcc.Checklist(id="adm-can-edit-params",
+                          options=[{"label": " May edit parameters on the bell pages "
+                                             "(day rates & timing)", "value": "can_edit"}],
+                          value=[], style={"marginBottom": "12px"},
+                          inputStyle={"marginRight": "8px"}),
             html.Label("Module access", style={"fontSize": "0.8rem", "fontWeight": 600}),
             dcc.Checklist(id="adm-modules", options=_module_options(), value=[],
                           style={"margin": "6px 0 14px", "display": "flex",
@@ -157,6 +162,7 @@ def _create(_n, email, pw, admin):
 @callback(
     Output("adm-modules", "value"),
     Output("adm-is-admin", "value"),
+    Output("adm-can-edit-params", "value"),
     Output("adm-user-status", "children"),
     Input("adm-user-dd", "value"),
     prevent_initial_call=True,
@@ -164,8 +170,9 @@ def _create(_n, email, pw, admin):
 def _select(email):
     u = auth.get_user(email)
     if not u:
-        return [], [], ""
-    return (u["modules"], (["admin"] if u["is_admin"] else []), "")
+        return [], [], [], ""
+    return (u["modules"], (["admin"] if u["is_admin"] else []),
+            (["can_edit"] if u["can_edit_params"] else []), "")
 
 
 # --- save changes ---
@@ -175,12 +182,15 @@ def _select(email):
     State("adm-user-dd", "value"),
     State("adm-modules", "value"),
     State("adm-is-admin", "value"),
+    State("adm-can-edit-params", "value"),
     prevent_initial_call=True,
 )
-def _save(_n, email, modules, admin):
+def _save(_n, email, modules, admin, can_edit):
     if not email:
         return html.Span("Select a user first.", style={"color": "#b91c1c"})
-    ok, msg = auth.update_user(email, is_admin=("admin" in (admin or [])), modules=modules or [])
+    ok, msg = auth.update_user(email, is_admin=("admin" in (admin or [])),
+                               modules=modules or [],
+                               can_edit_params=("can_edit" in (can_edit or [])))
     return html.Span(msg, style={"color": ACCENT if ok else "#b91c1c"})
 
 
@@ -191,6 +201,7 @@ def _save(_n, email, modules, admin):
     Output("adm-user-dd", "value"),
     Output("adm-modules", "value", allow_duplicate=True),
     Output("adm-is-admin", "value", allow_duplicate=True),
+    Output("adm-can-edit-params", "value", allow_duplicate=True),
     Input("adm-delete", "n_clicks"),
     State("adm-user-dd", "value"),
     prevent_initial_call=True,
@@ -198,11 +209,11 @@ def _save(_n, email, modules, admin):
 def _delete(_n, email):
     if not email:
         return (html.Span("Select a user first.", style={"color": "#b91c1c"}),
-                no_update, no_update, no_update, no_update)
+                no_update, no_update, no_update, no_update, no_update)
     ok, msg = auth.delete_user(email)
     if ok:
-        return (html.Span(msg, style={"color": ACCENT}), _user_options(), None, [], [])
-    return (html.Span(msg, style={"color": "#b91c1c"}), no_update, no_update, no_update, no_update)
+        return (html.Span(msg, style={"color": ACCENT}), _user_options(), None, [], [], [])
+    return (html.Span(msg, style={"color": "#b91c1c"}), no_update, no_update, no_update, no_update, no_update)
 
 
 # --- save cost & timing assumptions ---
