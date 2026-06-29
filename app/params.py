@@ -1,0 +1,153 @@
+"""
+Central tunable parameters for the portal (cost/timing assumptions, and whatever
+else gets added later), persisted in a SQLite database on the same /data volume
+as auth.db so edits survive redeploys.
+
+Design:
+- REGISTRY (below) is the single source of truth for *what* parameters exist and
+  their metadata (label, unit, category, default, step). Add a line here and the
+  parameter automatically appears on the Admin page, seeded with its default, and
+  becomes queryable by any page via params.get(key).
+- The database stores only key -> value (the current, admin-edited numbers). On
+  startup init_db() seeds any registry keys that aren't in the DB yet with their
+  defaults, so a fresh volume (or a newly-added parameter) starts from sane values.
+
+Usage:
+    from app import params
+    rate = params.get("day_rate_single_9man")     # current value (DB or default)
+    params.set_many({"bell_transit_min": 20})     # admin save
+"""
+import os
+import sqlite3
+import datetime
+
+PARAM_DB = os.getenv("PARAM_DB", "/data/parameter.db")
+
+
+# --------------------------------------------------------------------------- #
+# Parameter registry — the source of truth for what exists. Add new entries
+# here (any category) and they show up in Admin and are queryable immediately.
+# --------------------------------------------------------------------------- #
+REGISTRY = [
+    # key                           label                          unit   category                    default    step
+    ("day_rate_single_9man",        "Single bell · 9-man",         "/day", "Bell day rates",          150000.0,  1000),
+    ("day_rate_single_12man",       "Single bell · 12-man",        "/day", "Bell day rates",          160000.0,  1000),
+    ("day_rate_twin_12man",         "Twin bell · 12-man",          "/day", "Bell day rates",          190000.0,  1000),
+    ("day_rate_single_twin_9man",   "Single-twin · 9-man",         "/day", "Bell day rates",          160000.0,  1000),
+    ("day_rate_single_twin_12man",  "Single-twin · 12-man",        "/day", "Bell day rates",          170000.0,  1000),
+    ("bell_transit_min",            "Bell to job transit (one way)", "min", "Bell timing",              15.0,      1),
+    ("bell_changeover_h",           "Bell changeover",             "h",    "Bell timing",               1.0,      0.25),
+]
+
+_DEFAULTS = {k: dflt for (k, _l, _u, _c, dflt, _s) in REGISTRY}
+_KEYS = [k for (k, *_rest) in REGISTRY]
+
+
+def definitions():
+    """Ordered parameter metadata for the Admin UI."""
+    return [
+        {"key": k, "label": l, "unit": u, "category": c, "default": d, "step": s}
+        for (k, l, u, c, d, s) in REGISTRY
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# DB plumbing
+# --------------------------------------------------------------------------- #
+def _now():
+    return datetime.datetime.utcnow().isoformat(timespec="seconds")
+
+
+def _conn():
+    parent = os.path.dirname(PARAM_DB)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    c = sqlite3.connect(PARAM_DB, timeout=5.0)
+    c.row_factory = sqlite3.Row
+    # WAL: lets the bell pages read while an admin save writes (2 gunicorn workers).
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA busy_timeout=5000")
+    return c
+
+
+def init_db():
+    """Create the table and seed any registry keys that aren't stored yet."""
+    with _conn() as c:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS parameters (
+                key        TEXT PRIMARY KEY,
+                value      REAL NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        have = {r["key"] for r in c.execute("SELECT key FROM parameters").fetchall()}
+        now = _now()
+        for k in _KEYS:
+            if k not in have:
+                c.execute("INSERT INTO parameters (key, value, updated_at) VALUES (?,?,?)",
+                          (k, float(_DEFAULTS[k]), now))
+
+
+# --------------------------------------------------------------------------- #
+# Read
+# --------------------------------------------------------------------------- #
+def get(key, default=None):
+    """Current value for key: DB value if present, else the registry default
+    (or the supplied default for unknown keys). Returns a float."""
+    try:
+        with _conn() as c:
+            row = c.execute("SELECT value FROM parameters WHERE key=?", (key,)).fetchone()
+        if row is not None:
+            return float(row["value"])
+    except Exception:
+        pass
+    if key in _DEFAULTS:
+        return float(_DEFAULTS[key])
+    return default
+
+
+# convenience alias used by the pages (always numeric)
+get_float = get
+
+
+def get_all():
+    """Dict of {key: current value} for every registry key."""
+    out = {}
+    try:
+        with _conn() as c:
+            rows = c.execute("SELECT key, value FROM parameters").fetchall()
+        stored = {r["key"]: float(r["value"]) for r in rows}
+    except Exception:
+        stored = {}
+    for k in _KEYS:
+        out[k] = stored.get(k, float(_DEFAULTS[k]))
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Write (admin)
+# --------------------------------------------------------------------------- #
+def set_many(values):
+    """
+    Upsert a {key: value} mapping. Unknown keys are ignored; non-numeric values
+    are skipped. Returns (n_saved, message).
+    """
+    saved = 0
+    now = _now()
+    with _conn() as c:
+        for key, val in (values or {}).items():
+            if key not in _DEFAULTS:
+                continue
+            try:
+                v = float(val)
+            except (TypeError, ValueError):
+                continue
+            c.execute(
+                "INSERT INTO parameters (key, value, updated_at) VALUES (?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                (key, v, now),
+            )
+            saved += 1
+    if saved == 0:
+        return 0, "Nothing to save."
+    return saved, f"Saved {saved} parameter{'s' if saved != 1 else ''}."

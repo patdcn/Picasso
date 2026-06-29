@@ -28,6 +28,9 @@ from app import auth  # noqa: E402
 auth.init_db()
 auth.register_auth(server)
 
+from app import params  # noqa: E402
+params.init_db()
+
 from app.nav import build_nav  # noqa: E402
 
 # ---- serve GA reference files from the data volume (read-only, safe filenames) ----

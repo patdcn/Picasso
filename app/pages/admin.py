@@ -7,9 +7,10 @@ or delete. Module list is built from the page registry, so new tools appear here
 automatically.
 """
 import dash
-from dash import html, dcc, Input, Output, State, callback, no_update
+from dash import html, dcc, Input, Output, State, callback, no_update, ALL
 
 from app import auth
+from app import params
 
 dash.register_page(__name__, path="/admin", name="Admin")  # no category -> not in nav groups
 
@@ -54,12 +55,53 @@ def _status(id_):
     return html.Div(id=id_, style={"fontSize": "0.85rem", "marginTop": "10px", "minHeight": "1.1em"})
 
 
+def _param_field(p, value):
+    return html.Div([
+        html.Label(p["label"] + (f"  [{p['unit']}]" if p["unit"] else ""),
+                   style={"fontSize": "0.8rem", "fontWeight": 600, "color": INK}),
+        dcc.Input(id={"type": "param-input", "key": p["key"]}, type="number",
+                  value=value, step=p["step"], debounce=True, style={
+                      "width": "100%", "padding": "8px 10px", "borderRadius": "8px",
+                      "border": "1px solid #d1d5db", "marginBottom": "4px",
+                      "boxSizing": "border-box", "fontFamily": "ui-monospace,monospace"}),
+    ], style={"marginBottom": "8px"})
+
+
+def _params_card():
+    """Editable cost & timing assumptions, grouped by category. Built from the
+    params registry so new parameters appear here automatically."""
+    current = params.get_all()
+    sections = []
+    last_cat = None
+    for p in params.definitions():
+        if p["category"] != last_cat:
+            sections.append(html.Div(p["category"], style={
+                "fontWeight": 700, "fontSize": "0.85rem", "color": MUTED,
+                "margin": "10px 0 6px", "textTransform": "uppercase",
+                "letterSpacing": "0.03em"}))
+            last_cat = p["category"]
+        sections.append(_param_field(p, current[p["key"]]))
+    return _card([
+        html.H4("Cost & timing assumptions", style={"marginTop": 0}),
+        html.P("These values are used by the Single-vs-twin-bell and "
+               "Single-vs-single-twin tools. Edit and save; both pages pick up "
+               "the new values on their next load.",
+               style={"color": MUTED, "fontSize": "0.85rem", "marginTop": 0}),
+        *sections,
+        html.Div(style={"height": "6px"}),
+        _btn("Save assumptions", "adm-param-save"),
+        _status("adm-param-status"),
+    ])
+
+
 def layout():
     return html.Div([
-        html.H3("User administration"),
-        html.P("Add users and grant access to individual tools. Admins can access "
-               "everything automatically.", style={"color": MUTED, "maxWidth": "640px"}),
+        html.H3("Administration"),
+        html.P("Add users and grant access to individual tools, and set the shared "
+               "cost & timing assumptions. Admins can access everything automatically.",
+               style={"color": MUTED, "maxWidth": "640px"}),
 
+        _params_card(),
         _card([
             html.H4("Add user", style={"marginTop": 0}),
             _input("adm-new-email", "email address", "email"),
@@ -161,3 +203,17 @@ def _delete(_n, email):
     if ok:
         return (html.Span(msg, style={"color": ACCENT}), _user_options(), None, [], [])
     return (html.Span(msg, style={"color": "#b91c1c"}), no_update, no_update, no_update, no_update)
+
+
+# --- save cost & timing assumptions ---
+@callback(
+    Output("adm-param-status", "children"),
+    Input("adm-param-save", "n_clicks"),
+    State({"type": "param-input", "key": ALL}, "value"),
+    State({"type": "param-input", "key": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def _save_params(_n, values, ids):
+    mapping = {i["key"]: v for i, v in zip(ids or [], values or [])}
+    n, msg = params.set_many(mapping)
+    return html.Span(msg, style={"color": ACCENT if n else "#b91c1c"})

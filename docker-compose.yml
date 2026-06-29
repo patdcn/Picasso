@@ -16,12 +16,13 @@ services:
       - "8050:8050"
     environment:
       - AUTH_DB=/data/auth.db
+      - PARAM_DB=/data/parameter.db
       - SECRET_KEY=${SECRET_KEY}
       - ADMIN_EMAIL=${ADMIN_EMAIL}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - COOKIE_SECURE=${COOKIE_SECURE}
     volumes:
-      - picasso_data:/data        # persists auth.db across redeploys
+      - picasso_data:/data        # persists auth.db + parameter.db across redeploys
     # In Dokploy: attach the domain to this service, container port 8050, HTTPS on.
 
 volumes:

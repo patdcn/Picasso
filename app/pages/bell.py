@@ -10,6 +10,7 @@ import dash
 from dash import html, dcc, Input, Output, callback
 
 from app.engines.bell import BellInputs, run_comparison
+from app import params
 
 dash.register_page(__name__, path="/diving/bell", name="Single vs twin bell",
                    category="Diving", order=1)
@@ -51,17 +52,18 @@ def _num(id_, label, value, step, minv=None, maxv=None, hint=""):
     ], style={"marginBottom": "10px"})
 
 
-controls = html.Div([
+def _controls():
+    return html.Div([
     html.Div("Assumptions", style={"fontWeight": 700, "fontSize": "0.95rem", "marginBottom": "10px"}),
     _num("W", "Max out-of-bell time (h)", 6, 0.5, 1, hint="dive window per lockout"),
-    _num("C", "Bell changeover (h)", 1, 0.25, 0),
-    _num("T", "Bell to job transit (min, one way)", 15, 1, 0),
+    _num("C", "Bell changeover (h)", params.get_float("bell_changeover_h"), 0.25, 0),
+    _num("T", "Bell to job transit (min, one way)", params.get_float("bell_transit_min"), 1, 0),
     _num("B", "Bellsman top-up - S1 only (h)", 1, 0.5, 0),
     _num("E", "Bellsman reduced work rate", 0.5, 0.05, 0, 1, hint="fraction of a full pair"),
     html.Hr(style={"border": "none", "borderTop": "1px solid #eee", "margin": "12px 0"}),
-    _num("R1", "Day rate - single 9-man", 150000, 1000, 0),
-    _num("R2", "Day rate - single 12-man", 160000, 1000, 0),
-    _num("R3", "Day rate - twin 12-man", 190000, 1000, 0),
+    _num("R1", "Day rate - single 9-man", params.get_float("day_rate_single_9man"), 1000, 0),
+    _num("R2", "Day rate - single 12-man", params.get_float("day_rate_single_12man"), 1000, 0),
+    _num("R3", "Day rate - twin 12-man", params.get_float("day_rate_twin_12man"), 1000, 0),
     _num("dur", "Base-case duration (days)", 50, 1, 1, hint="defines the fixed scope"),
     html.Div([
         html.Label("Currency", style={"fontSize": "0.8rem", "fontWeight": 600}),
@@ -250,7 +252,8 @@ def hero(value, label, sub, color=INK):
               "border": "1px solid #e5e7eb", "background": "#fff"})
 
 
-layout = html.Div([
+def layout():
+    return html.Div([
     html.H3("Single vs Twin Bell - where the working hours go"),
     html.P("Twin-bell saturation diving keeps a crew continuously on the seabed via relief "
            "handover. This compares it against single-bell at 9 and 12 in saturation, on a "
@@ -258,7 +261,7 @@ layout = html.Div([
            "on the left.",
            style={"color": MUTED, "maxWidth": "70ch", "lineHeight": 1.5}),
     html.Div([
-        controls,
+        _controls(),
         html.Div(id="bell-output", style={"flex": "1 1 auto", "minWidth": 0}),
     ], style={"display": "flex", "gap": "20px", "alignItems": "flex-start", "marginTop": "16px"}),
 ])

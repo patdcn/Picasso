@@ -10,6 +10,7 @@ import dash
 from dash import html, dcc, Input, Output, callback
 
 from app.engines.spare_bell import SpareBellInputs, run_comparison
+from app import params
 
 dash.register_page(__name__, path="/diving/spare-bell", name="Single vs single-twin",
                    category="Diving", order=2)
@@ -51,19 +52,20 @@ def _num(id_, label, value, step, minv=None, maxv=None, hint=""):
     ], style={"marginBottom": "10px"})
 
 
-controls = html.Div([
+def _controls():
+    return html.Div([
     html.Div("Assumptions", style={"fontWeight": 700, "fontSize": "0.95rem", "marginBottom": "10px"}),
     _num("sb-W", "Max out-of-bell time (h)", 6, 0.5, 1, hint="dive window per lockout"),
-    _num("sb-C", "Bell changeover (h)", 1, 0.25, 0),
-    _num("sb-T", "Bell to job transit (min, one way)", 15, 1, 0),
+    _num("sb-C", "Bell changeover (h)", params.get_float("bell_changeover_h"), 0.25, 0),
+    _num("sb-T", "Bell to job transit (min, one way)", params.get_float("bell_transit_min"), 1, 0),
     _num("sb-B", "Bellsman top-up - S1 only (h)", 1, 0.5, 0),
     _num("sb-E", "Bellsman reduced work rate", 0.5, 0.05, 0, 1, hint="fraction of a full pair"),
     _num("sb-bd", "Breakdown downtime (h/week)", 10, 1, 0, hint="single bell only - lost to repairs"),
     html.Hr(style={"border": "none", "borderTop": "1px solid #eee", "margin": "12px 0"}),
-    _num("sb-R1", "Day rate - single 9-man", 150000, 1000, 0),
-    _num("sb-R2", "Day rate - single 12-man", 160000, 1000, 0),
-    _num("sb-R4", "Day rate - single-twin 9-man", 160000, 1000, 0),
-    _num("sb-R5", "Day rate - single-twin 12-man", 170000, 1000, 0),
+    _num("sb-R1", "Day rate - single 9-man", params.get_float("day_rate_single_9man"), 1000, 0),
+    _num("sb-R2", "Day rate - single 12-man", params.get_float("day_rate_single_12man"), 1000, 0),
+    _num("sb-R4", "Day rate - single-twin 9-man", params.get_float("day_rate_single_twin_9man"), 1000, 0),
+    _num("sb-R5", "Day rate - single-twin 12-man", params.get_float("day_rate_single_twin_12man"), 1000, 0),
     _num("sb-dur", "Base-case duration (days)", 50, 1, 1, hint="defines the fixed scope"),
     html.Div([
         html.Label("Currency", style={"fontSize": "0.8rem", "fontWeight": 600}),
@@ -254,7 +256,8 @@ def hero(value, label, sub, color=INK):
               "border": "1px solid #e5e7eb", "background": "#fff"})
 
 
-layout = html.Div([
+def layout():
+    return html.Div([
     html.H3("Single bell vs Single-Twin - the value of a spare bell"),
     html.P("A spare bell keeps the job moving when the working bell breaks down. This compares "
            "a true single bell (which sits idle during repairs) against a single-twin with a "
@@ -262,7 +265,7 @@ layout = html.Div([
            "avoided downtime. Adjust the assumptions on the left.",
            style={"color": MUTED, "maxWidth": "70ch", "lineHeight": 1.5}),
     html.Div([
-        controls,
+        _controls(),
         html.Div(id="sb-output", style={"flex": "1 1 auto", "minWidth": 0}),
     ], style={"display": "flex", "gap": "20px", "alignItems": "flex-start", "marginTop": "16px"}),
 ])
