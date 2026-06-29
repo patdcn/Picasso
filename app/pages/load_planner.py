@@ -1,4 +1,5 @@
 """
+# LOAD_PLANNER_VERSION = "v6.1 defensive"
 Load planner — inverse crane query for the 140 t main winch.
 
 Enter a target load; the tool greys out everywhere the crane can't lift it, shows
@@ -143,10 +144,12 @@ def layout():
                          style={"fontWeight": 700, "margin": "16px 0 8px"}),
                 _num("lp-main", "Main jib angle", 30.0, 0.5, "°"),
                 dcc.Slider(id="lp-main-sl", min=0, max=84, step=0.5, value=30.0,
+                           marks={0: "0", 42: "42", 84: "84"},
                            tooltip={"placement": "bottom"}),
                 html.Div(style={"height": "10px"}),
                 _num("lp-fold", "Folding jib angle", 45.0, 0.5, "°"),
                 dcc.Slider(id="lp-fold-sl", min=0, max=102, step=0.5, value=45.0,
+                           marks={0: "0", 51: "51", 102: "102"},
                            tooltip={"placement": "bottom"}),
                 html.Div(id="lp-readout", style={"marginTop": "14px"}),
             ], style={"flex": "0 0 320px", "minWidth": "300px"}),
@@ -216,10 +219,25 @@ def _sync_angles(m_num, m_sl, f_num, f_sl, load, mode):
 )
 def _update(mode, load, main, fold):
     load = load if load is not None else 0
-    extremes = crane.load_extremes(mode, load)
+    try:
+        extremes = crane.load_extremes(mode, load)
+    except Exception:
+        extremes = None
     feasible = extremes is not None
-    r = crane.query_angles(mode, main if main is not None else 0,
-                           fold if fold is not None else 0)
+    try:
+        r = crane.query_angles(mode, main if main is not None else 0,
+                               fold if fold is not None else 0)
+    except Exception:
+        r = None
     lk = crane.linkage_points(r["main_deg"], r["fold_deg"]) if r else None
-    fig = _figure(mode, load, marker=r, linkage=lk)
+    try:
+        fig = _figure(mode, load, marker=r, linkage=lk)
+    except Exception:
+        # last-resort: plain contour so the chart never goes blank
+        g = crane.contour_grid(mode)
+        fig = go.Figure(go.Contour(x=g["x"], y=g["y"], z=g["z"], colorscale="Turbo",
+                                   contours=dict(showlines=False)))
+        fig.update_layout(plot_bgcolor="#ffffff", paper_bgcolor="rgba(0,0,0,0)",
+                          height=560, margin=dict(l=55, r=10, t=10, b=45),
+                          xaxis_title="Radius [m]", yaxis_title="Height above main deck [m]")
     return fig, _readout_panel(r, extremes, load, feasible), r
