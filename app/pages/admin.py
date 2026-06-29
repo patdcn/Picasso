@@ -61,7 +61,7 @@ def _module_rows(allowed, param_allowed):
                 style={"fontSize": "0.82rem", "color": ACCENT, "whiteSpace": "nowrap"})
         rows.append(html.Div(
             [html.Div(access, style={"flex": "1 1 auto"}),
-             html.Div(right, style={"flex": "0 0 auto"}) if right else None],
+             html.Div(right, style={"flex": "0 0 auto"}) if right is not None else None],
             style={"display": "flex", "alignItems": "center", "gap": "10px",
                    "padding": "4px 0", "borderBottom": "1px solid #f1f5f9"}))
     return rows
