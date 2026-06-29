@@ -156,10 +156,17 @@ def layout():
                     dcc.Tab(label="By radius + height", value="rh", children=[
                         html.Div([
                             _num("cr-radius", "Radius", 20.0, 0.5, "m"),
+                            dcc.Slider(id="cr-radius-sl", min=7, max=36, step=0.5, value=20.0,
+                                       marks={7: "7", 21: "21", 36: "36"},
+                                       tooltip={"placement": "bottom"}),
+                            html.Div(style={"height": "10px"}),
                             _num("cr-height", "Height above deck", 10.0, 0.5, "m"),
+                            dcc.Slider(id="cr-height-sl", min=0, max=45, step=0.5, value=10.0,
+                                       marks={0: "0", 22: "22", 45: "45"},
+                                       tooltip={"placement": "bottom"}),
                             html.Label("When several solutions exist",
                                        style={"fontSize": "0.75rem", "fontWeight": 600,
-                                              "color": MUTED, "marginTop": "6px",
+                                              "color": MUTED, "marginTop": "10px",
                                               "display": "block"}),
                             dcc.RadioItems(
                                 id="cr-rule",
@@ -206,6 +213,30 @@ def _sync_fold(num, sl):
     if v is None:
         return no_update, no_update
     v = max(0, min(102, v))
+    return v, v
+
+
+@callback(Output("cr-radius", "value"), Output("cr-radius-sl", "value"),
+          Input("cr-radius", "value"), Input("cr-radius-sl", "value"),
+          prevent_initial_call=True)
+def _sync_radius(num, sl):
+    trig = dash.callback_context.triggered_id
+    v = sl if trig == "cr-radius-sl" else num
+    if v is None:
+        return no_update, no_update
+    v = max(7, min(36, v))
+    return v, v
+
+
+@callback(Output("cr-height", "value"), Output("cr-height-sl", "value"),
+          Input("cr-height", "value"), Input("cr-height-sl", "value"),
+          prevent_initial_call=True)
+def _sync_height(num, sl):
+    trig = dash.callback_context.triggered_id
+    v = sl if trig == "cr-height-sl" else num
+    if v is None:
+        return no_update, no_update
+    v = max(0, min(45, v))
     return v, v
 
 
