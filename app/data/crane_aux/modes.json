@@ -1,0 +1,42 @@
+[
+  {
+    "key": "harbour",
+    "file": "decklift",
+    "label": "Harbour lift",
+    "tag": "HL 1.30",
+    "daf": 1.3,
+    "rated": 5.0
+  },
+  {
+    "key": "deck",
+    "file": "decklift",
+    "label": "Deck lift",
+    "tag": "DL 1.30",
+    "daf": 1.3,
+    "rated": 5.0
+  },
+  {
+    "key": "sea",
+    "file": "decklift",
+    "label": "Sea lift",
+    "tag": "SL 1.30",
+    "daf": 1.3,
+    "rated": 5.0
+  },
+  {
+    "key": "subsea",
+    "file": "sts1",
+    "label": "Subsea lift",
+    "tag": "HS 1.00",
+    "daf": null,
+    "rated": 3.25
+  },
+  {
+    "key": "personnel",
+    "file": "personnel",
+    "label": "Personnel lift",
+    "tag": "PL",
+    "daf": null,
+    "rated": 1.5
+  }
+]
