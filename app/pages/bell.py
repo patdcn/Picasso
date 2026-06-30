@@ -7,10 +7,17 @@ scenario cards, 24h timeline bars, efficiency & cost charts, project projection,
 hero stats and verdict.
 """
 import dash
-from dash import html, dcc, Input, Output, callback
+import datetime
+from dash import html, dcc, Input, Output, State, callback
 
 from app.engines.bell import BellInputs, run_comparison
-from app import params, auth
+from app import params, auth, reports
+
+PDF_BTN_STYLE = {
+    "padding": "8px 14px", "borderRadius": "8px", "border": "none",
+    "background": "#0f766e", "color": "#fff", "fontWeight": 600,
+    "cursor": "pointer", "fontSize": "0.85rem",
+}
 
 dash.register_page(__name__, path="/diving/bell", name="Single vs twin bell",
                    category="Diving", order=1)
@@ -270,6 +277,12 @@ def hero(value, label, sub, color=INK):
 
 def layout():
     return html.Div([
+    html.Div([
+        html.Button([html.Span("\u2913\u2002"), "Export to PDF"], id="bell-pdf-btn",
+                    n_clicks=0, style=PDF_BTN_STYLE,
+                    title="Download a one-page A3 PDF of the current comparison"),
+        dcc.Download(id="bell-pdf"),
+    ], style={"display": "flex", "justifyContent": "flex-end", "marginBottom": "2px"}),
     html.H3("Single vs Twin Bell - where the working hours go"),
     html.P("Twin-bell saturation diving keeps a crew continuously on the seabed via relief "
            "handover. This compares it against single-bell at 9 and 12 in saturation, on a "
@@ -365,3 +378,56 @@ def update(W, C, T, B, E, R1, R2, R3, dur, CUR):
               "border": f"1px solid {verdict_color}"})
 
     return [heroes, cards, eff, proj, cost, callout]
+
+
+@callback(
+    Output("bell-pdf", "data"),
+    Input("bell-pdf-btn", "n_clicks"),
+    State("W", "value"), State("C", "value"), State("T", "value"),
+    State("B", "value"), State("E", "value"),
+    State("R1", "value"), State("R2", "value"), State("R3", "value"),
+    State("dur", "value"), State("CUR", "value"),
+    prevent_initial_call=True,
+)
+def export_pdf(_n, W, C, T, B, E, R1, R2, R3, dur, CUR):
+    def f(x, d):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return d
+    cur = (CUR or "\u20ac").strip() or "\u20ac"
+    inp = BellInputs(W=f(W, 6), C=f(C, 1), T=f(T, 15), B=f(B, 1), E=f(E, 0.5),
+                     R1=f(R1, 150000), R2=f(R2, 160000), R3=f(R3, 190000),
+                     dur=f(dur, 50), currency=cur)
+    r = run_comparison(inp)
+    m = lambda v: fmt_money(v, cur)
+    assumptions = (
+        f"Dive window {inp.W:.1f} h \u00b7 Bell changeover {inp.C:.1f} h \u00b7 "
+        f"Transit {inp.T:.0f} min one-way \u00b7 Bellsman window {inp.B:.1f} h @ {inp.E*100:.0f}% rate "
+        f"\u00b7 Project scope {inp.dur:.0f} days \u00b7 Day rates {m(inp.R1)} / {m(inp.R2)} / {m(inp.R3)}"
+    )
+    headers = [s.name for s in r.scenarios]
+    rows = [
+        ("Configuration", [" \u00b7 ".join(s.cfg) for s in r.scenarios]),
+        ("Divers in saturation", [str(s.divers) for s in r.scenarios]),
+        ("Bell runs per day", [str(s.runs) for s in r.scenarios]),
+        ("Vessel day rate", [m(s.rate) for s in r.scenarios]),
+        ("Effective on-job hours / day", [f"{s.on_job_eff:.1f} h" for s in r.scenarios]),
+        ("Cost per effective hour", [m(s.cph) for s in r.scenarios]),
+        ("Project duration", [f"{s.days:.1f} days" for s in r.scenarios]),
+        ("Project cost", [m(s.cost) for s in r.scenarios]),
+    ]
+    win = next((i for i, s in enumerate(r.scenarios) if s.win), None)
+    if r.twin_cheaper:
+        verdict = (f"Twin bell completes the {inp.dur:.0f}-day scope {r.days_faster:.1f} days faster and "
+                   f"{abs(r.cph_save_pct):.0f}% cheaper per effective hour \u2014 a saving of {m(r.twin_save)} "
+                   f"over the fixed scope versus the single-bell base case.")
+    else:
+        verdict = (f"On these assumptions twin bell finishes {r.days_faster:.1f} days faster but costs "
+                   f"{m(-r.twin_save)} more than the single-bell base case over the fixed scope.")
+    pdf = reports.build_comparison_pdf(
+        "Single vs Twin Bell \u2014 productivity & cost",
+        "DSV saturation diving comparison on a fixed scope",
+        assumptions, headers, rows, highlight_col=win, verdict=verdict)
+    fname = f"DCN_single_vs_twin_bell_{datetime.date.today():%Y%m%d}.pdf"
+    return dcc.send_bytes(lambda b: b.write(pdf), fname)

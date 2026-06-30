@@ -7,10 +7,17 @@ app/engines/spare_bell.py; this is the thin UI. Compares a true single bell
 standby, paired by crew size, for both productivity and total project cost.
 """
 import dash
-from dash import html, dcc, Input, Output, callback
+import datetime
+from dash import html, dcc, Input, Output, State, callback
 
 from app.engines.spare_bell import SpareBellInputs, run_comparison
-from app import params, auth
+from app import params, auth, reports
+
+PDF_BTN_STYLE = {
+    "padding": "8px 14px", "borderRadius": "8px", "border": "none",
+    "background": "#0f766e", "color": "#fff", "fontWeight": 600,
+    "cursor": "pointer", "fontSize": "0.85rem",
+}
 
 dash.register_page(__name__, path="/diving/spare-bell", name="Single vs single-twin",
                    category="Diving", order=2)
@@ -274,6 +281,12 @@ def hero(value, label, sub, color=INK):
 
 def layout():
     return html.Div([
+    html.Div([
+        html.Button([html.Span("\u2913\u2002"), "Export to PDF"], id="sb-pdf-btn",
+                    n_clicks=0, style=PDF_BTN_STYLE,
+                    title="Download a one-page A3 PDF of the current comparison"),
+        dcc.Download(id="sb-pdf"),
+    ], style={"display": "flex", "justifyContent": "flex-end", "marginBottom": "2px"}),
     html.H3("Single bell vs Single-Twin - the value of a spare bell"),
     html.P("A spare bell keeps the job moving when the working bell breaks down. This compares "
            "a true single bell (which sits idle during repairs) against a single-twin with a "
@@ -385,3 +398,61 @@ def update(W, C, T, B, E, bd, R1, R2, R4, R5, dur, CUR):
               "border": f"1px solid {verdict_color}"})
 
     return [heroes, cards, eff, proj, cost, callout]
+
+
+@callback(
+    Output("sb-pdf", "data"),
+    Input("sb-pdf-btn", "n_clicks"),
+    State("sb-W", "value"), State("sb-C", "value"), State("sb-T", "value"),
+    State("sb-B", "value"), State("sb-E", "value"), State("sb-bd", "value"),
+    State("sb-R1", "value"), State("sb-R2", "value"),
+    State("sb-R4", "value"), State("sb-R5", "value"),
+    State("sb-dur", "value"), State("sb-CUR", "value"),
+    prevent_initial_call=True,
+)
+def export_pdf(_n, W, C, T, B, E, bd, R1, R2, R4, R5, dur, CUR):
+    def f(x, d):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return d
+    cur = (CUR or "\u20ac").strip() or "\u20ac"
+    inp = SpareBellInputs(W=f(W, 6), C=f(C, 1), T=f(T, 15), B=f(B, 1), E=f(E, 0.5),
+                          R1=f(R1, 150000), R2=f(R2, 160000), R4=f(R4, 160000), R5=f(R5, 170000),
+                          bd=f(bd, 10), dur=f(dur, 50), currency=cur)
+    r = run_comparison(inp)
+    m = lambda v: fmt_money(v, cur)
+    sc = r.scenarios                                   # S1, S2, S4, S5
+    rowmap = [r.pairs[0].single, r.pairs[1].single, r.pairs[0].stwin, r.pairs[1].stwin]
+    assumptions = (
+        f"Dive window {inp.W:.1f} h \u00b7 Bell changeover {inp.C:.1f} h \u00b7 "
+        f"Transit {inp.T:.0f} min one-way \u00b7 Bellsman window {inp.B:.1f} h @ {inp.E*100:.0f}% rate \u00b7 "
+        f"Breakdown {inp.bd:.1f} h/week (single bell) \u00b7 Project scope {inp.dur:.0f} days \u00b7 "
+        f"Day rates single {m(inp.R1)}/{m(inp.R2)}, single-twin {m(inp.R4)}/{m(inp.R5)}"
+    )
+    headers = [s.name for s in sc]
+    rows = [
+        ("Configuration", [" \u00b7 ".join(s.cfg) for s in sc]),
+        ("Crew in saturation", [str(s.crew) for s in sc]),
+        ("Bell runs per day", [str(s.runs) for s in sc]),
+        ("Vessel day rate", [m(s.rate) for s in sc]),
+        ("Nominal on-job h / day", [f"{rw.nominal:.1f} h" for rw in rowmap]),
+        ("Breakdown downtime", [f"{inp.bd:.1f} h/week" if rw.breaks else "None (spare bell)"
+                                for rw in rowmap]),
+        ("Effective h / day", [f"{rw.eff:.1f} h" for rw in rowmap]),
+        ("Extra idle days (scope)", [f"{rw.idle:.1f}" for rw in rowmap]),
+        ("Project duration", [f"{rw.days:.1f} days" for rw in rowmap]),
+        ("Project cost", [m(rw.cost) for rw in rowmap]),
+    ]
+    win = [i for i, s in enumerate(sc) if s.win]       # the two single-twin columns
+
+    def saved(v):
+        return f"a saving of {m(v)}" if v >= 0 else f"an extra cost of {m(-v)}"
+    verdict = (f"Adding a spare bell (single-twin) removes breakdown downtime: {saved(r.save9)} on the "
+               f"9-diver case and {saved(r.save12)} on the 12-diver case over the {inp.dur:.0f}-day scope.")
+    pdf = reports.build_comparison_pdf(
+        "Single bell vs Single-Twin \u2014 spare-bell reliability & cost",
+        "DSV saturation diving comparison on a fixed scope, accounting for breakdown",
+        assumptions, headers, rows, highlight_col=win, verdict=verdict)
+    fname = f"DCN_single_vs_single-twin_{datetime.date.today():%Y%m%d}.pdf"
+    return dcc.send_bytes(lambda b: b.write(pdf), fname)
