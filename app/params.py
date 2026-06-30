@@ -30,13 +30,17 @@ PARAM_DB = os.getenv("PARAM_DB", "/data/parameter.db")
 # --------------------------------------------------------------------------- #
 REGISTRY = [
     # key                           label                          unit   category          default    step   modules (page paths that use it)
-    ("day_rate_single_9man",        "Single bell · 9-man",         "/day", "Bell day rates", 150000.0,  1000, ("/diving/bell", "/diving/spare-bell")),
-    ("day_rate_single_12man",       "Single bell · 12-man",        "/day", "Bell day rates", 160000.0,  1000, ("/diving/bell", "/diving/spare-bell")),
-    ("day_rate_twin_12man",         "Twin bell · 12-man",          "/day", "Bell day rates", 190000.0,  1000, ("/diving/bell",)),
-    ("day_rate_single_twin_9man",   "Single-twin · 9-man",         "/day", "Bell day rates", 160000.0,  1000, ("/diving/spare-bell",)),
-    ("day_rate_single_twin_12man",  "Single-twin · 12-man",        "/day", "Bell day rates", 170000.0,  1000, ("/diving/spare-bell",)),
+    ("day_rate_single_9man",        "Single bell · 9-man",         "USD/day", "Bell day rates", 150000.0,  1000, ("/diving/bell", "/diving/spare-bell")),
+    ("day_rate_single_12man",       "Single bell · 12-man",        "USD/day", "Bell day rates", 160000.0,  1000, ("/diving/bell", "/diving/spare-bell")),
+    ("day_rate_twin_12man",         "Twin bell · 12-man",          "USD/day", "Bell day rates", 190000.0,  1000, ("/diving/bell",)),
+    ("day_rate_single_twin_9man",   "Single-twin · 9-man",         "USD/day", "Bell day rates", 160000.0,  1000, ("/diving/spare-bell",)),
+    ("day_rate_single_twin_12man",  "Single-twin · 12-man",        "USD/day", "Bell day rates", 170000.0,  1000, ("/diving/spare-bell",)),
     ("bell_transit_min",            "Bell to job transit (one way)", "min", "Bell timing",    15.0,      1,    ("/diving/bell", "/diving/spare-bell")),
     ("bell_changeover_h",           "Bell changeover",             "h",    "Bell timing",     1.0,      0.25, ("/diving/bell", "/diving/spare-bell")),
+    # Currency conversion. EUR shown on the diving pages = USD rate × this factor.
+    # modules empty -> appears in the Admin assumptions card but adds no per-page
+    # "edit parameters" checkbox (it's a global figure, not a per-page parameter).
+    ("usd_eur_rate",                "USD \u2192 EUR exchange rate", "EUR per USD", "Currency", 0.92, 0.001, ()),
 ]
 
 _DEFAULTS = {k: dflt for (k, _l, _u, _c, dflt, _s, _m) in REGISTRY}

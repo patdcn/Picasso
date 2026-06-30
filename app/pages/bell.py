@@ -34,13 +34,15 @@ def fmt_h(h):
 
 
 def fmt_money(v, cur):
-    sep = " " if len(cur) > 1 else ""
-    return f"{cur}{sep}{round(v):,}"
+    sym, fx = cur
+    sep = " " if len(sym) > 1 else ""
+    return f"{sym}{sep}{round(v * fx):,}"
 
 
 def fmt_money_m(v, cur):
-    sep = " " if len(cur) > 1 else ""
-    return f"{cur}{sep}{v/1e6:,.2f}M"
+    sym, fx = cur
+    sep = " " if len(sym) > 1 else ""
+    return f"{sym}{sep}{(v * fx) / 1e6:,.2f}M"
 
 
 def _num(id_, label, value, step, minv=None, maxv=None, hint="", disabled=False):
@@ -71,10 +73,6 @@ def _controls():
         style={"fontSize": "0.72rem", "color": "#b45309", "background": "#fffbeb",
                "border": "1px solid #fde68a", "borderRadius": "6px",
                "padding": "6px 8px", "marginBottom": "10px"}) if locked else None
-    cur_style = {"width": "100%", "padding": "7px 9px", "borderRadius": "8px",
-                 "border": "1px solid #d1d5db", "textAlign": "center"}
-    if locked:
-        cur_style.update({"background": "#f1f5f9", "color": "#64748b", "cursor": "not-allowed"})
     return html.Div([
     html.Div("Assumptions", style={"fontWeight": 700, "fontSize": "0.95rem", "marginBottom": "10px"}),
     note,
@@ -84,14 +82,18 @@ def _controls():
     _num("B", "Bellsman top-up - S1 only (h)", 1, 0.5, 0, disabled=locked),
     _num("E", "Bellsman reduced work rate", 0.5, 0.05, 0, 1, hint="fraction of a full pair", disabled=locked),
     html.Hr(style={"border": "none", "borderTop": "1px solid #eee", "margin": "12px 0"}),
-    _num("R1", "Day rate - single 9-man", params.get_float("day_rate_single_9man"), 1000, 0, disabled=locked),
-    _num("R2", "Day rate - single 12-man", params.get_float("day_rate_single_12man"), 1000, 0, disabled=locked),
-    _num("R3", "Day rate - twin 12-man", params.get_float("day_rate_twin_12man"), 1000, 0, disabled=locked),
+    _num("R1", "Day rate - single 9-man (USD)", params.get_float("day_rate_single_9man"), 1000, 0, disabled=locked),
+    _num("R2", "Day rate - single 12-man (USD)", params.get_float("day_rate_single_12man"), 1000, 0, disabled=locked),
+    _num("R3", "Day rate - twin 12-man (USD)", params.get_float("day_rate_twin_12man"), 1000, 0, disabled=locked),
     _num("dur", "Base-case duration (days)", 50, 1, 1, hint="defines the fixed scope", disabled=locked),
     html.Div([
-        html.Label("Currency", style={"fontSize": "0.8rem", "fontWeight": 600}),
-        dcc.Input(id="CUR", type="text", value="\u20ac", maxLength=3, disabled=locked,
-                  style=cur_style),
+        html.Label("Display currency", style={"fontSize": "0.8rem", "fontWeight": 600}),
+        dcc.Dropdown(id="CUR", clearable=False, value="USD",
+                     options=[{"label": "USD ($)", "value": "USD"},
+                              {"label": "EUR (\u20ac)", "value": "EUR"}],
+                     style={"marginTop": "2px"}),
+        html.Div("Rates are set in USD; EUR converts at the admin exchange rate.",
+                 style={"fontSize": "0.68rem", "color": MUTED, "marginTop": "4px"}),
     ]),
 ], className="assump-panel", style={
     "flex": "0 0 280px", "padding": "16px", "background": "#fafafa",
@@ -312,10 +314,15 @@ def update(W, C, T, B, E, R1, R2, R3, dur, CUR):
             return float(x)
         except (TypeError, ValueError):
             return d
-    cur = (CUR or "\u20ac").strip() or "\u20ac"
+    if (CUR or "USD").upper() == "EUR":
+        sym = "\u20ac"
+        fx = params.get_float("usd_eur_rate", 0.92) or 0.92
+    else:
+        sym, fx = "$", 1.0
+    cur = (sym, fx)
     inp = BellInputs(W=f(W, 6), C=f(C, 1), T=f(T, 15), B=f(B, 1), E=f(E, 0.5),
                      R1=f(R1, 150000), R2=f(R2, 160000), R3=f(R3, 190000),
-                     dur=f(dur, 50), currency=cur)
+                     dur=f(dur, 50), currency=sym)
     r = run_comparison(inp)
     base, mid, twin = r.scenarios
 
