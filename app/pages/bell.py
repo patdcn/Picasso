@@ -7,7 +7,7 @@ scenario cards, 24h timeline bars, efficiency & cost charts, project projection,
 hero stats and verdict.
 """
 import dash
-from dash import html, dcc, Input, Output, State, callback, clientside_callback
+from dash import html, dcc, Input, Output, State, callback, clientside_callback, no_update
 
 from app.engines.bell import BellInputs, run_comparison
 from app import params, auth, reports
@@ -93,10 +93,24 @@ def _controls():
                        labelStyle={"display": "inline-block", "marginRight": "16px",
                                    "fontSize": "0.9rem", "cursor": "pointer"},
                        style={"marginTop": "4px"}),
-        html.Div("Rates are set in USD; switching to EUR converts them at the "
-                 "admin exchange rate.",
+        html.Div([
+            html.Label("USD \u2192 EUR exchange rate",
+                       style={"fontSize": "0.75rem", "fontWeight": 600, "color": INK}),
+            dcc.Input(id="FX", type="number", value=params.get_float("usd_eur_rate"),
+                      step=0.001, min=0, debounce=True,
+                      style={"width": "100%", "padding": "6px 9px", "borderRadius": "8px",
+                             "border": "1px solid #d1d5db", "fontFamily": "monospace",
+                             "boxSizing": "border-box"}),
+        ], style={"marginTop": "8px"}),
+        html.Div("Defaults to the admin rate; change it here to re-convert if it's "
+                 "out of date. Resets to the admin value on reload.",
                  style={"fontSize": "0.68rem", "color": MUTED, "marginTop": "4px"}),
     ]),
+    dcc.Store(id="bell-usd-basis", data={
+        "R1": params.get_float("day_rate_single_9man"),
+        "R2": params.get_float("day_rate_single_12man"),
+        "R3": params.get_float("day_rate_twin_12man"),
+    }),
 ], className="assump-panel", style={
     "flex": "0 0 280px", "padding": "16px", "background": "#fafafa",
     "border": "1px solid #e5e7eb", "borderRadius": "12px", "alignSelf": "flex-start",
@@ -390,26 +404,63 @@ def update(W, C, T, B, E, R1, R2, R3, dur, CUR):
     return [heroes, cards, eff, proj, cost, callout]
 
 
+def _eff_fx(cur, fxval):
+    """Effective multiply factor USD->displayed. 1.0 for USD; for EUR the FX
+    field value, falling back to the admin rate if it's blank or non-positive."""
+    if (cur or "USD").upper() != "EUR":
+        return 1.0
+    try:
+        v = float(fxval)
+        if v > 0:
+            return v
+    except (TypeError, ValueError):
+        pass
+    return params.get_float("usd_eur_rate", 0.92) or 0.92
+
+
 @callback(
-    Output("R1", "value"), Output("R2", "value"), Output("R3", "value"),
-    Input("CUR", "value"),
-    State("R1", "value"), State("R2", "value"), State("R3", "value"),
+    Output("bell-usd-basis", "data"),
+    Input("R1", "value"), Input("R2", "value"), Input("R3", "value"),
+    State("CUR", "value"), State("FX", "value"),
     prevent_initial_call=True,
 )
-def _convert_rates(cur, r1, r2, r3):
-    """Convert the day-rate fields when the currency toggles, using the values
-    currently in the fields (the user's edits) as the basis - not the DB
-    defaults. A fresh page load re-seeds the fields from the DB in USD."""
-    rate = params.get_float("usd_eur_rate", 0.92) or 0.92
-    factor = rate if (cur or "USD").upper() == "EUR" else (1.0 / rate)
+def _basis_from_edits(r1, r2, r3, cur, fxval):
+    """Whenever a rate field changes (user edit, or a currency/FX re-convert),
+    record the canonical USD basis = displayed value / factor. This is the
+    single source of truth the conversions read from, so toggles are exactly
+    reversible and FX changes re-convert from the user's own rates."""
+    fx = _eff_fx(cur, fxval)
 
-    def conv(x):
+    def usd(x):
         try:
-            return round(float(x) * factor)
-        except (TypeError, ValueError):
-            return x
+            return float(x) / fx
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
 
-    return conv(r1), conv(r2), conv(r3)
+    return {"R1": usd(r1), "R2": usd(r2), "R3": usd(r3)}
+
+
+@callback(
+    Output("R1", "value"), Output("R2", "value"), Output("R3", "value"),
+    Input("CUR", "value"), Input("FX", "value"),
+    State("bell-usd-basis", "data"),
+    prevent_initial_call=True,
+)
+def _apply_currency(cur, fxval, basis):
+    """Re-display the rate fields whenever the currency or the exchange rate
+    changes: displayed = USD basis * factor. A page reload re-seeds the basis
+    (and fields) from the DB in USD, so reload returns to admin values."""
+    basis = basis or {}
+    fx = _eff_fx(cur, fxval)
+
+    def disp(key):
+        v = basis.get(key)
+        try:
+            return round(float(v) * fx)
+        except (TypeError, ValueError):
+            return no_update
+
+    return disp("R1"), disp("R2"), disp("R3")
 
 
 clientside_callback(

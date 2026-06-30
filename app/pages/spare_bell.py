@@ -7,7 +7,7 @@ app/engines/spare_bell.py; this is the thin UI. Compares a true single bell
 standby, paired by crew size, for both productivity and total project cost.
 """
 import dash
-from dash import html, dcc, Input, Output, State, callback, clientside_callback
+from dash import html, dcc, Input, Output, State, callback, clientside_callback, no_update
 
 from app.engines.spare_bell import SpareBellInputs, run_comparison
 from app import params, auth, reports
@@ -95,10 +95,25 @@ def _controls():
                        labelStyle={"display": "inline-block", "marginRight": "16px",
                                    "fontSize": "0.9rem", "cursor": "pointer"},
                        style={"marginTop": "4px"}),
-        html.Div("Rates are set in USD; switching to EUR converts them at the "
-                 "admin exchange rate.",
+        html.Div([
+            html.Label("USD \u2192 EUR exchange rate",
+                       style={"fontSize": "0.75rem", "fontWeight": 600, "color": INK}),
+            dcc.Input(id="sb-FX", type="number", value=params.get_float("usd_eur_rate"),
+                      step=0.001, min=0, debounce=True,
+                      style={"width": "100%", "padding": "6px 9px", "borderRadius": "8px",
+                             "border": "1px solid #d1d5db", "fontFamily": "monospace",
+                             "boxSizing": "border-box"}),
+        ], style={"marginTop": "8px"}),
+        html.Div("Defaults to the admin rate; change it here to re-convert if it's "
+                 "out of date. Resets to the admin value on reload.",
                  style={"fontSize": "0.68rem", "color": MUTED, "marginTop": "4px"}),
     ]),
+    dcc.Store(id="sb-usd-basis", data={
+        "R1": params.get_float("day_rate_single_9man"),
+        "R2": params.get_float("day_rate_single_12man"),
+        "R4": params.get_float("day_rate_single_twin_9man"),
+        "R5": params.get_float("day_rate_single_twin_12man"),
+    }),
 ], className="assump-panel", style={
     "flex": "0 0 280px", "padding": "16px", "background": "#fafafa",
     "border": "1px solid #e5e7eb", "borderRadius": "12px", "alignSelf": "flex-start",
@@ -409,28 +424,63 @@ def update(W, C, T, B, E, bd, R1, R2, R4, R5, dur, CUR):
     return [heroes, cards, eff, proj, cost, callout]
 
 
+def _eff_fx(cur, fxval):
+    """Effective multiply factor USD->displayed. 1.0 for USD; for EUR the FX
+    field value, falling back to the admin rate if it's blank or non-positive."""
+    if (cur or "USD").upper() != "EUR":
+        return 1.0
+    try:
+        v = float(fxval)
+        if v > 0:
+            return v
+    except (TypeError, ValueError):
+        pass
+    return params.get_float("usd_eur_rate", 0.92) or 0.92
+
+
+@callback(
+    Output("sb-usd-basis", "data"),
+    Input("sb-R1", "value"), Input("sb-R2", "value"),
+    Input("sb-R4", "value"), Input("sb-R5", "value"),
+    State("sb-CUR", "value"), State("sb-FX", "value"),
+    prevent_initial_call=True,
+)
+def _basis_from_edits(r1, r2, r4, r5, cur, fxval):
+    """Record the canonical USD basis (= displayed value / factor) on every
+    rate-field change, so toggles are exactly reversible and FX changes
+    re-convert from the user's own rates rather than the DB defaults."""
+    fx = _eff_fx(cur, fxval)
+
+    def usd(x):
+        try:
+            return float(x) / fx
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+
+    return {"R1": usd(r1), "R2": usd(r2), "R4": usd(r4), "R5": usd(r5)}
+
+
 @callback(
     Output("sb-R1", "value"), Output("sb-R2", "value"),
     Output("sb-R4", "value"), Output("sb-R5", "value"),
-    Input("sb-CUR", "value"),
-    State("sb-R1", "value"), State("sb-R2", "value"),
-    State("sb-R4", "value"), State("sb-R5", "value"),
+    Input("sb-CUR", "value"), Input("sb-FX", "value"),
+    State("sb-usd-basis", "data"),
     prevent_initial_call=True,
 )
-def _convert_rates(cur, r1, r2, r4, r5):
-    """Convert the day-rate fields when the currency toggles, using the values
-    currently in the fields (the user's edits) as the basis - not the DB
-    defaults. A fresh page load re-seeds the fields from the DB in USD."""
-    rate = params.get_float("usd_eur_rate", 0.92) or 0.92
-    factor = rate if (cur or "USD").upper() == "EUR" else (1.0 / rate)
+def _apply_currency(cur, fxval, basis):
+    """Re-display the rate fields when currency or exchange rate changes:
+    displayed = USD basis * factor. Reload re-seeds from the DB in USD."""
+    basis = basis or {}
+    fx = _eff_fx(cur, fxval)
 
-    def conv(x):
+    def disp(key):
+        v = basis.get(key)
         try:
-            return round(float(x) * factor)
+            return round(float(v) * fx)
         except (TypeError, ValueError):
-            return x
+            return no_update
 
-    return conv(r1), conv(r2), conv(r4), conv(r5)
+    return disp("R1"), disp("R2"), disp("R4"), disp("R5")
 
 
 clientside_callback(
