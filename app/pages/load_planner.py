@@ -9,6 +9,7 @@ maximum height achievable at that load.
 """
 import dash
 from dash import html, dcc, Input, Output, State, callback, no_update
+from app.pages._disclaimer import limits_footnote as _limits_footnote
 import plotly.graph_objects as go
 
 from app.engines import crane
@@ -177,6 +178,7 @@ def layout():
                 html.Div(id="lp-readout", style={"marginTop": "14px"}),
             ], style={"flex": "0 0 320px", "minWidth": "300px"}),
         ], style={"display": "flex", "gap": "24px", "flexWrap": "wrap"}),
+        _limits_footnote(),
     ], style={"maxWidth": "1100px"})
 
 

@@ -10,6 +10,7 @@ validated crane data that drives the Main and Aux Lift Curves tools.
 import io
 import dash
 from dash import html, dcc, Input, Output, State, callback, no_update
+from app.pages._disclaimer import limits_footnote as _limits_footnote
 import plotly.graph_objects as go
 
 from app.engines import crane
@@ -166,6 +167,7 @@ def layout():
                 dcc.Download(id="lr-csv"),
             ], style={"flex": "0 0 300px", "minWidth": "280px"}),
         ], style={"display": "flex", "gap": "24px", "flexWrap": "wrap"}),
+        _limits_footnote(),
     ], style={"maxWidth": "1100px"})
 
 

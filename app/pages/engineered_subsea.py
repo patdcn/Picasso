@@ -10,6 +10,7 @@ load shape and feed it into this same page.
 import io
 import dash
 from dash import html, dcc, Input, Output, State, callback, no_update
+from app.pages._disclaimer import limits_footnote as _limits_footnote
 import plotly.graph_objects as go
 
 from app.engines import subsea
@@ -146,6 +147,7 @@ def layout():
         html.Div("SWL by DAF at standard radii (at rope exit, before wire)",
                  style={"fontWeight": 700, "margin": "20px 0 8px"}),
         html.Div(id="es-table"),
+        _limits_footnote(),
     ], style={"maxWidth": "1100px"})
 
 

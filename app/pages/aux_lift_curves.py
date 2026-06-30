@@ -8,6 +8,7 @@ radius+height with a Best-lift / Nearest-grid toggle), and CSV export.
 import io
 import dash
 from dash import html, dcc, Input, Output, State, callback, no_update
+from app.pages._disclaimer import limits_footnote as _limits_footnote
 import plotly.graph_objects as go
 
 from app.engines import crane_aux as crane
@@ -188,6 +189,7 @@ def layout():
                 dcc.Download(id="ax-csv"),
             ], style={"flex": "0 0 320px", "minWidth": "300px"}),
         ], style={"display": "flex", "gap": "24px", "flexWrap": "wrap"}),
+        _limits_footnote(),
     ], style={"maxWidth": "1100px"})
 
 
