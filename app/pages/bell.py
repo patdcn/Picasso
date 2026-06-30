@@ -19,7 +19,7 @@ PDF_BTN_STYLE = {
 }
 
 dash.register_page(__name__, path="/diving/bell", name="Single vs twin bell",
-                   category="Diving", order=1)
+                   category="SAT Diving", order=1)
 
 GREEN = "#16a34a"
 GREEN_SOFT = "#dcfce7"
