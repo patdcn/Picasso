@@ -455,25 +455,39 @@ def contour_grid(key, nx=140, ny=140):
     return out
 
 
-def swl_vs_radius(key, n=200):
+def swl_vs_radius(key, step=0.5, hw=0.3, n=None):
     """
     Load-radius envelope: the maximum SWL liftable at each outreach (radius),
-    taken over all reachable jib positions / heights for the mode. This reduces
-    the 2-D capacity field to the classic SWL-vs-radius load chart curve.
+    taken over all reachable jib positions / heights for the mode.
+
+    Built directly from the raw node data (max over height within each radius
+    bin) rather than from the resampled contour grid. Reducing the interpolated
+    grid column-by-column aliased against the angled native node layout and
+    produced spurious short-radius 'wrinkles'; binning the raw nodes removes
+    that artefact and is more faithful to the source data. (`n` is accepted for
+    backward compatibility and ignored.)
     Returns {radius, swl, swl_max} with radius ascending.
     """
     import numpy as np
-    g = contour_grid(key, nx=n, ny=n)
-    x = g["x"]
-    z = g["z"]                       # shape (ny, nx): SWL over (radius, height)
-    swl = np.full(x.shape, np.nan)
-    for i in range(x.size):
-        col = z[:, i]
-        if np.isfinite(col).any():
-            swl[i] = np.nanmax(col)  # best SWL achievable at this radius
-    valid = np.isfinite(swl)
-    return {"radius": x[valid], "swl": swl[valid],
-            "swl_max": float(np.nanmax(swl)) if valid.any() else 0.0}
+    d = load_mode(key)
+    R = np.asarray(d["TP_y_m"], float).ravel()
+    P = np.asarray(d["Pmax"], float).ravel()
+    ok = np.isfinite(R) & np.isfinite(P) & (P > 0.6)   # drop the 0.5 'no-lift' filler
+    R, P = R[ok], P[ok]
+    if R.size == 0:
+        return {"radius": np.array([]), "swl": np.array([]), "swl_max": 0.0}
+    grid = np.arange(np.floor(R.min() / step) * step, R.max() + step / 2, step)
+    swl = np.full(grid.shape, np.nan)
+    for i, g in enumerate(grid):
+        m = np.abs(R - g) <= hw
+        if m.any():
+            swl[i] = np.nanmax(P[m])         # best SWL achievable at this radius
+    valid = np.isfinite(swl)                 # fill interior gaps so the line is continuous
+    if valid.sum() >= 2:
+        swl = np.interp(grid, grid[valid], swl[valid])
+    keep = np.isfinite(swl)
+    return {"radius": grid[keep], "swl": swl[keep],
+            "swl_max": float(np.nanmax(swl[keep])) if keep.any() else 0.0}
 
 
 def swl_at_radius(key, radius):
