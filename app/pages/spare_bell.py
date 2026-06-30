@@ -95,7 +95,7 @@ def _controls():
         dcc.Input(id="sb-CUR", type="text", value="\u20ac", maxLength=3, disabled=locked,
                   style=cur_style),
     ]),
-], style={
+], className="assump-panel", style={
     "flex": "0 0 280px", "padding": "16px", "background": "#fafafa",
     "border": "1px solid #e5e7eb", "borderRadius": "12px", "alignSelf": "flex-start",
     "position": "sticky", "top": "72px", "maxHeight": "calc(100vh - 96px)", "overflowY": "auto",
@@ -297,7 +297,8 @@ def layout():
     html.Div([
         _controls(),
         html.Div(id="sb-output", style={"flex": "1 1 auto", "minWidth": 0}),
-    ], style={"display": "flex", "gap": "20px", "alignItems": "flex-start", "marginTop": "16px"}),
+    ], className="diving-main",
+       style={"display": "flex", "gap": "20px", "alignItems": "flex-start", "marginTop": "16px"}),
     reports.print_footer(),
 ])
 

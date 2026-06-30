@@ -194,12 +194,23 @@ a.nav-footer-addr:hover { color: #0f766e; text-decoration: underline; }
 .print-header, .print-footer { display: none; }
 
 @media print {
-  @page { size: A4 portrait; margin: 14mm; }
+  /* Fit the whole comparison onto ONE A3 landscape sheet. The page is scaled
+     uniformly to fit. TUNING: if it ever spills onto a second page, lower the
+     zoom below; if there is too much empty space, raise it (1.0 = full size). */
+  @page { size: A3 landscape; margin: 9mm; }
+  .content { zoom: 0.80; }
+
   .no-print { display: none !important; }
+
+  /* keep the assumptions panel fully visible (defeat on-screen sticky / scroll) */
+  .assump-panel {
+    position: static !important; max-height: none !important; overflow: visible !important;
+  }
+  .diving-main { gap: 14px !important; }
 
   .print-header {
     display: flex; align-items: center; justify-content: space-between;
-    border-bottom: 1.5px solid #1e2a6e; padding-bottom: 8px; margin-bottom: 16px;
+    border-bottom: 1.5px solid #1e2a6e; padding-bottom: 8px; margin-bottom: 14px;
   }
   .print-logo { height: 15mm; width: auto; }
   .print-co { text-align: right; line-height: 1.35; }
@@ -208,7 +219,7 @@ a.nav-footer-addr:hover { color: #0f766e; text-decoration: underline; }
 
   .print-footer {
     display: block; border-top: 1px solid #cbd5e1;
-    padding-top: 7px; margin-top: 20px;
+    padding-top: 7px; margin-top: 16px;
   }
   .print-disclaimer { font-size: 8px; color: #6b7280; line-height: 1.4; }
   .print-disc-label { font-weight: 700; color: #374151; }
