@@ -189,3 +189,28 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
   line-height: 1.5;
 }
 a.nav-footer-addr:hover { color: #0f766e; text-decoration: underline; }
+
+/* ===== Print letterhead (Export to PDF on the diving pages) ===== */
+.print-header, .print-footer { display: none; }
+
+@media print {
+  @page { size: A4 portrait; margin: 14mm; }
+  .no-print { display: none !important; }
+
+  .print-header {
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1.5px solid #1e2a6e; padding-bottom: 8px; margin-bottom: 16px;
+  }
+  .print-logo { height: 15mm; width: auto; }
+  .print-co { text-align: right; line-height: 1.35; }
+  .print-co-name { font-weight: 700; color: #1e2a6e; font-size: 11px; }
+  .print-co-addr { color: #6b7280; font-size: 9px; }
+
+  .print-footer {
+    display: block; border-top: 1px solid #cbd5e1;
+    padding-top: 7px; margin-top: 20px;
+  }
+  .print-disclaimer { font-size: 8px; color: #6b7280; line-height: 1.4; }
+  .print-disc-label { font-weight: 700; color: #374151; }
+  .print-copyright { font-size: 8px; color: #6b7280; margin-top: 4px; }
+}
