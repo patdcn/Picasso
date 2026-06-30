@@ -93,9 +93,8 @@ def layout():
             html.Div([
                 _label("Storage depth"),
                 html.Div([
-                    dcc.Input(id="sd-depth", type="number", value=300, min=eng.MIN_FSW,
-                              max=eng.MAX_FSW, step=1, debounce=True,
-                              style={"width": "110px"}),
+                    dcc.Input(id="sd-depth", type="number", value=300, step="any",
+                              debounce=True, style={"width": "110px"}),
                     html.Span("fsw", id="sd-depth-unit",
                               style={"marginLeft": "6px", "color": MUTED,
                                      "fontSize": "0.85rem"}),
@@ -120,11 +119,35 @@ def layout():
                               debounce=True, placeholder="HH:MM",
                               style={"width": "78px", "marginLeft": "8px"}),
                 ], style={"display": "flex", "alignItems": "center"}),
-                dcc.Checklist(
+                html.Div(dcc.Checklist(
                     id="sd-terminal",
                     options=[{"label": " 4 fsw / 80-min terminal stop", "value": "on"}],
-                    value=["on"], style={"fontSize": "0.82rem", "marginTop": "10px"}),
+                    value=["on"], style={"fontSize": "0.82rem"}),
+                    id="sd-terminal-row", style={"marginTop": "10px"}),
             ], style={"flex": "1 1 240px", "minWidth": "230px"}),
+
+            html.Div([
+                _label("Decompress to"),
+                dcc.RadioItems(
+                    id="sd-decompto",
+                    options=[{"label": " Surface", "value": "surface"},
+                             {"label": " New (shallower) storage depth",
+                              "value": "newdepth"}],
+                    value="surface",
+                    style={"fontSize": "0.85rem"},
+                    labelStyle={"display": "block", "marginBottom": "3px"}),
+                html.Div([
+                    _label("New storage depth"),
+                    html.Div([
+                        dcc.Input(id="sd-target", type="number", value=150,
+                                  step="any", debounce=True,
+                                  style={"width": "110px"}),
+                        html.Span("fsw", id="sd-target-unit",
+                                  style={"marginLeft": "6px", "color": MUTED,
+                                         "fontSize": "0.85rem"}),
+                    ], style={"display": "flex", "alignItems": "center"}),
+                ], id="sd-target-row", style={"display": "none", "marginTop": "6px"}),
+            ], style={"flex": "1 1 220px", "minWidth": "200px"}),
         ], style={"display": "flex", "gap": "22px", "flexWrap": "wrap",
                   "background": "#fff", "border": f"1px solid {GRID}",
                   "borderRadius": "12px", "padding": "16px"}),
@@ -220,6 +243,11 @@ def _rules_block():
                "minutes, followed by direct ascent to the surface at 1 fsw/min "
                "(\u00a713-23.5). This sequence runs to completion without an "
                "intervening rest stop."),
+            li("Decompression to a new, shallower storage depth uses these same "
+               "Table 13-9 rates and rest stops, with no terminal 4 fsw sequence "
+               "(\u00a713-21). Downward excursions are then permitted immediately "
+               "at the new depth; upward excursions require \u2265 48 h of "
+               "stabilisation there."),
             li("Depths are computed in fsw (the table's native unit); the metre "
                "view converts at 1 m = 3.281 ft for display only."),
             li("Prepared but not yet active: upward-excursion initiation at "
@@ -268,28 +296,44 @@ clientside_callback(
 # --------------------------------------------------------------------------- #
 @callback(
     Output("sd-depth", "value"),
-    Output("sd-depth", "min"),
-    Output("sd-depth", "max"),
     Output("sd-depth", "step"),
     Output("sd-depth-unit", "children"),
+    Output("sd-target", "value"),
+    Output("sd-target-unit", "children"),
     Output("sd-unit-prev", "data"),
     Input("sd-unit", "value"),
     State("sd-depth", "value"),
+    State("sd-target", "value"),
     State("sd-unit-prev", "data"),
     prevent_initial_call=True,
 )
-def _convert_units(unit, value, prev):
-    if value is None:
-        value = 300
+def _convert_units(unit, depth, target, prev):
     if unit == prev:
-        return no_update, no_update, no_update, no_update, no_update, unit
-    if unit == "msw":           # fsw -> msw
-        new_val = round(eng.fsw_to_msw(value), 1)
-        return (new_val, round(eng.MIN_FSW / eng.FT_PER_M, 1), eng.MAX_MSW, 1,
-                "msw", unit)
-    else:                       # msw -> fsw
-        new_val = round(eng.msw_to_fsw(value))
-        return (new_val, eng.MIN_FSW, eng.MAX_FSW, 1, "fsw", unit)
+        return (no_update, no_update, no_update, no_update, no_update, unit)
+
+    def conv(v, default):
+        if v is None:
+            return default
+        return (round(eng.fsw_to_msw(v), 1) if unit == "msw"
+                else round(eng.msw_to_fsw(v)))
+
+    suffix = "msw" if unit == "msw" else "fsw"
+    return (conv(depth, 300), "any", suffix, conv(target, 150), suffix, unit)
+
+
+# --------------------------------------------------------------------------- #
+# Show the new-storage-depth field (and hide the terminal stop) when the
+# destination is a shallower storage depth rather than the surface.
+# --------------------------------------------------------------------------- #
+@callback(
+    Output("sd-target-row", "style"),
+    Output("sd-terminal-row", "style"),
+    Input("sd-decompto", "value"),
+)
+def _toggle_target(decompto):
+    if decompto == "newdepth":
+        return {"display": "block", "marginTop": "6px"}, {"display": "none"}
+    return {"display": "none"}, {"marginTop": "10px"}
 
 
 # --------------------------------------------------------------------------- #
@@ -307,10 +351,13 @@ def _convert_units(unit, value, prev):
     Input("sd-date", "date"),
     Input("sd-time", "value"),
     Input("sd-terminal", "value"),
+    Input("sd-decompto", "value"),
+    Input("sd-target", "value"),
     Input("sd-r1s", "value"), Input("sd-r1e", "value"),
     Input("sd-r2s", "value"), Input("sd-r2e", "value"),
 )
-def _compute(mode, unit, depth, date_str, time_str, terminal, r1s, r1e, r2s, r2e):
+def _compute(mode, unit, depth, date_str, time_str, terminal, decompto, target,
+             r1s, r1e, r2s, r2e):
     # --- parse start datetime ---
     start = _parse_dt(date_str, time_str)
     if start is None:
@@ -324,6 +371,20 @@ def _compute(mode, unit, depth, date_str, time_str, terminal, r1s, r1e, r2s, r2e
     depth_fsw = eng.msw_to_fsw(depth) if unit == "msw" else depth
     depth_fsw = max(eng.MIN_FSW, min(eng.MAX_FSW, depth_fsw))
 
+    # --- destination: surface or a new shallower storage depth ---
+    to_surface = decompto != "newdepth"
+    target_fsw = 0.0
+    if not to_surface:
+        try:
+            target_fsw = float(target)
+        except (TypeError, ValueError):
+            return _msg("Enter a new storage depth.")
+        target_fsw = eng.msw_to_fsw(target_fsw) if unit == "msw" else target_fsw
+        if target_fsw >= depth_fsw - 1e-6:
+            return _msg("New storage depth must be shallower than the current "
+                        "storage depth.")
+        target_fsw = max(0.0, target_fsw)
+
     # --- rest windows ---
     windows = _windows(r1s, r1e, r2s, r2e)
     rest_h = _rest_hours_per_24(windows)
@@ -331,7 +392,8 @@ def _compute(mode, unit, depth, date_str, time_str, terminal, r1s, r1e, r2s, r2e
     # --- run engine ---
     terminal_on = bool(terminal) and "on" in terminal
     try:
-        verts = eng.simulate(depth_fsw, start, windows, terminal_on, mode=mode)
+        verts = eng.simulate(depth_fsw, start, windows, target_fsw, terminal_on,
+                             mode=mode)
     except NotImplementedError:
         return _msg("Upward-excursion mode isn't built yet \u2014 use Standard.")
     su = eng.summary(verts)
@@ -340,13 +402,16 @@ def _compute(mode, unit, depth, date_str, time_str, terminal, r1s, r1e, r2s, r2e
     dfmt = "%.0f" if unit == "fsw" else "%.1f"
 
     # --- cards ---
+    end_lbl = "Surfacing" if to_surface else "Arrival at new depth"
+    end_depth_txt = ("surface" if to_surface
+                     else f"{dfmt % eng.depth_in(su['end_depth_fsw'], unit)} {unit_lbl}")
     cards = [
         _card("Total decompression", f"{su['total_h']:.1f} h",
               f"{su['total_days']:.2f} days", accent=True),
-        _card("Surfacing", f"{su['surface_dt']:%H:%M}",
-              f"{su['surface_dt']:%a %d %b %Y}"),
+        _card(end_lbl, f"{su['end_dt']:%H:%M}",
+              f"{su['end_dt']:%a %d %b %Y}"),
         _card("Storage depth", dfmt % eng.depth_in(depth_fsw, unit),
-              unit_lbl),
+              f"{unit_lbl} \u2192 {end_depth_txt}"),
         _card("Rest stops", str(su["rest_stops"]),
               f"{rest_h:.0f} h / 24 h"),
     ]
@@ -362,14 +427,19 @@ def _compute(mode, unit, depth, date_str, time_str, terminal, r1s, r1e, r2s, r2e
                   round(d, 1), ev] for (e, c, d, ev) in rows],
     }
 
-    # --- rest-hours note ---
+    # --- rest-hours note (+ new-storage 48 h reminder) ---
     if abs(rest_h - 8.0) < 1e-6:
-        note = html.Span(f"Total rest: {rest_h:.0f} h / 24 h \u2014 matches the manual.",
-                         style={"color": "#15803d"})
+        note = [html.Span(f"Total rest: {rest_h:.0f} h / 24 h \u2014 matches the manual.",
+                          style={"color": "#15803d"})]
     else:
-        note = html.Span(f"Total rest: {rest_h:.0f} h / 24 h \u2014 the manual "
-                         f"specifies 8 h / 24 h.", style={"color": AMBER,
-                                                          "fontWeight": 600})
+        note = [html.Span(f"Total rest: {rest_h:.0f} h / 24 h \u2014 the manual "
+                          f"specifies 8 h / 24 h.", style={"color": AMBER,
+                                                           "fontWeight": 600})]
+    if not to_surface:
+        note.append(html.Div(
+            "On reaching the new storage depth, downward excursions are permitted "
+            "immediately; upward excursions require \u2265 48 h at the new depth "
+            "(\u00a713-21).", style={"color": MUTED, "marginTop": "4px"}))
 
     return cards, fig, table, payload, note
 

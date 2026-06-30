@@ -130,10 +130,17 @@ def _next_state_change(t, windows):
 # --------------------------------------------------------------------------- #
 # Profile builder
 # --------------------------------------------------------------------------- #
-def simulate(storage_fsw, start_dt, rest_windows=None, terminal_4fsw=True,
-             mode="standard"):
+def simulate(storage_fsw, start_dt, rest_windows=None, target_fsw=0.0,
+             terminal_4fsw=True, mode="standard"):
     """
     Build the saturation decompression profile.
+
+    storage_fsw   : starting (deeper) chamber storage depth, fsw.
+    target_fsw    : destination depth. 0 = decompress to the surface; a positive
+                    value = decompress to a new, shallower storage depth
+                    (section 13-21 — same Table 13-9 rates and rest stops, no
+                    terminal 4 fsw sequence, stop on arrival).
+    terminal_4fsw : only applies when surfacing (target_fsw == 0).
 
     Returns a list of vertex dicts, each:
         {"elapsed_h": float, "depth_fsw": float, "clock": datetime,
@@ -148,14 +155,17 @@ def simulate(storage_fsw, start_dt, rest_windows=None, terminal_4fsw=True,
 
     windows = rest_windows if rest_windows is not None else DEFAULT_REST_WINDOWS
     storage_fsw = float(storage_fsw)
-    target = TERMINAL_STOP_FSW if terminal_4fsw else 0.0
+    target_fsw = max(0.0, float(target_fsw))
+    surfacing = target_fsw <= 1e-9
+    use_terminal = surfacing and terminal_4fsw
+    travel_target = TERMINAL_STOP_FSW if use_terminal else target_fsw
 
     t = start_dt
     d = storage_fsw
     out = [_vertex(0.0, d, t, "Start at storage depth", _resting(t, windows))]
 
     guard = 0
-    while d > target + 1e-9:
+    while d > travel_target + 1e-9:
         guard += 1
         if guard > 200000:                      # safety against any infinite loop
             break
@@ -166,7 +176,7 @@ def simulate(storage_fsw, start_dt, rest_windows=None, terminal_4fsw=True,
             continue
 
         lower, rate = _band(d)
-        seg_target = max(lower, target)
+        seg_target = max(lower, travel_target)
         full_h = (d - seg_target) / rate
         t_seg_end = t + timedelta(hours=full_h)
         t_rest = _next_state_change(t, windows)   # currently travelling -> next rest start
@@ -179,15 +189,20 @@ def simulate(storage_fsw, start_dt, rest_windows=None, terminal_4fsw=True,
         else:                                     # reach the segment's lower edge
             t = t_seg_end
             d = seg_target
-            if d <= target + 1e-9:
-                lbl = "Arrive surface" if target == 0.0 else "Arrive %g fsw" % target
+            if d <= travel_target + 1e-9:
+                if not surfacing:
+                    lbl = "Arrive new storage depth"
+                elif use_terminal:
+                    lbl = "Arrive 4 fsw"
+                else:
+                    lbl = "Arrive surface"
             else:
                 _, new_rate = _band(d - 1e-6)
                 lbl = "Rate \u2192 %g ft/hr" % new_rate
             out.append(_vertex(_el(start_dt, t), d, t, lbl, False))
 
-    # Terminal sequence (runs to completion; not interrupted by rest windows).
-    if terminal_4fsw:
+    # Terminal sequence (surfacing only; runs to completion, not interrupted by rest).
+    if use_terminal:
         t = t + timedelta(minutes=TERMINAL_HOLD_MIN)
         out.append(_vertex(_el(start_dt, t), TERMINAL_STOP_FSW, t,
                            "End %g-min hold at 4 fsw" % TERMINAL_HOLD_MIN, False))
@@ -217,7 +232,8 @@ def summary(vertices):
     return {
         "total_h": total_h,
         "total_days": total_h / 24.0,
-        "surface_dt": vertices[-1]["clock"],
+        "end_dt": vertices[-1]["clock"],
+        "end_depth_fsw": vertices[-1]["depth_fsw"],
         "rest_stops": rest_stops,
     }
 
