@@ -7,7 +7,7 @@ app/engines/spare_bell.py; this is the thin UI. Compares a true single bell
 standby, paired by crew size, for both productivity and total project cost.
 """
 import dash
-from dash import html, dcc, Input, Output, callback, clientside_callback
+from dash import html, dcc, Input, Output, State, callback, clientside_callback
 
 from app.engines.spare_bell import SpareBellInputs, run_comparison
 from app import params, auth, reports
@@ -34,15 +34,13 @@ def fmt_h(h):
 
 
 def fmt_money(v, cur):
-    sym, fx = cur
-    sep = " " if len(sym) > 1 else ""
-    return f"{sym}{sep}{round(v * fx):,}"
+    sep = " " if len(cur) > 1 else ""
+    return f"{cur}{sep}{round(v):,}"
 
 
 def fmt_money_m(v, cur):
-    sym, fx = cur
-    sep = " " if len(sym) > 1 else ""
-    return f"{sym}{sep}{(v * fx) / 1e6:,.2f}M"
+    sep = " " if len(cur) > 1 else ""
+    return f"{cur}{sep}{v/1e6:,.2f}M"
 
 
 def _num(id_, label, value, step, minv=None, maxv=None, hint="", disabled=False):
@@ -83,18 +81,22 @@ def _controls():
     _num("sb-E", "Bellsman reduced work rate", 0.5, 0.05, 0, 1, hint="fraction of a full pair", disabled=locked),
     _num("sb-bd", "Breakdown downtime (h/week)", 10, 1, 0, hint="single bell only - lost to repairs", disabled=locked),
     html.Hr(style={"border": "none", "borderTop": "1px solid #eee", "margin": "12px 0"}),
-    _num("sb-R1", "Day rate - single 9-man (USD)", params.get_float("day_rate_single_9man"), 1000, 0, disabled=locked),
-    _num("sb-R2", "Day rate - single 12-man (USD)", params.get_float("day_rate_single_12man"), 1000, 0, disabled=locked),
-    _num("sb-R4", "Day rate - single-twin 9-man (USD)", params.get_float("day_rate_single_twin_9man"), 1000, 0, disabled=locked),
-    _num("sb-R5", "Day rate - single-twin 12-man (USD)", params.get_float("day_rate_single_twin_12man"), 1000, 0, disabled=locked),
+    _num("sb-R1", "Day rate - single 9-man", params.get_float("day_rate_single_9man"), 1000, 0, disabled=locked),
+    _num("sb-R2", "Day rate - single 12-man", params.get_float("day_rate_single_12man"), 1000, 0, disabled=locked),
+    _num("sb-R4", "Day rate - single-twin 9-man", params.get_float("day_rate_single_twin_9man"), 1000, 0, disabled=locked),
+    _num("sb-R5", "Day rate - single-twin 12-man", params.get_float("day_rate_single_twin_12man"), 1000, 0, disabled=locked),
     _num("sb-dur", "Base-case duration (days)", 50, 1, 1, hint="defines the fixed scope", disabled=locked),
     html.Div([
         html.Label("Display currency", style={"fontSize": "0.8rem", "fontWeight": 600}),
-        dcc.Dropdown(id="sb-CUR", clearable=False, value="USD",
-                     options=[{"label": "USD ($)", "value": "USD"},
-                              {"label": "EUR (\u20ac)", "value": "EUR"}],
-                     style={"marginTop": "2px"}),
-        html.Div("Rates are set in USD; EUR converts at the admin exchange rate.",
+        dcc.RadioItems(id="sb-CUR", value="USD",
+                       options=[{"label": " USD ($)", "value": "USD"},
+                                {"label": " EUR (\u20ac)", "value": "EUR"}],
+                       inputStyle={"marginRight": "4px"},
+                       labelStyle={"display": "inline-block", "marginRight": "16px",
+                                   "fontSize": "0.9rem", "cursor": "pointer"},
+                       style={"marginTop": "4px"}),
+        html.Div("Rates are set in USD; switching to EUR converts them at the "
+                 "admin exchange rate.",
                  style={"fontSize": "0.68rem", "color": MUTED, "marginTop": "4px"}),
     ]),
 ], className="assump-panel", style={
@@ -319,15 +321,12 @@ def update(W, C, T, B, E, bd, R1, R2, R4, R5, dur, CUR):
             return float(x)
         except (TypeError, ValueError):
             return d
-    if (CUR or "USD").upper() == "EUR":
-        sym = "\u20ac"
-        fx = params.get_float("usd_eur_rate", 0.92) or 0.92
-    else:
-        sym, fx = "$", 1.0
-    cur = (sym, fx)
+    # The rate fields already hold the selected currency (converted by the
+    # currency toggle), so the engine runs on them directly.
+    cur = "\u20ac" if (CUR or "USD").upper() == "EUR" else "$"
     inp = SpareBellInputs(W=f(W, 6), C=f(C, 1), T=f(T, 15), B=f(B, 1), E=f(E, 0.5),
                           bd=f(bd, 10), R1=f(R1, 150000), R2=f(R2, 160000),
-                          R4=f(R4, 160000), R5=f(R5, 170000), dur=f(dur, 50), currency=sym)
+                          R4=f(R4, 160000), R5=f(R5, 170000), dur=f(dur, 50), currency=cur)
     r = run_comparison(inp)
 
     # heroes (reliability)
@@ -408,6 +407,30 @@ def update(W, C, T, B, E, bd, R1, R2, R4, R5, dur, CUR):
               "border": f"1px solid {verdict_color}"})
 
     return [heroes, cards, eff, proj, cost, callout]
+
+
+@callback(
+    Output("sb-R1", "value"), Output("sb-R2", "value"),
+    Output("sb-R4", "value"), Output("sb-R5", "value"),
+    Input("sb-CUR", "value"),
+    State("sb-R1", "value"), State("sb-R2", "value"),
+    State("sb-R4", "value"), State("sb-R5", "value"),
+    prevent_initial_call=True,
+)
+def _convert_rates(cur, r1, r2, r4, r5):
+    """Convert the day-rate fields when the currency toggles, using the values
+    currently in the fields (the user's edits) as the basis - not the DB
+    defaults. A fresh page load re-seeds the fields from the DB in USD."""
+    rate = params.get_float("usd_eur_rate", 0.92) or 0.92
+    factor = rate if (cur or "USD").upper() == "EUR" else (1.0 / rate)
+
+    def conv(x):
+        try:
+            return round(float(x) * factor)
+        except (TypeError, ValueError):
+            return x
+
+    return conv(r1), conv(r2), conv(r4), conv(r5)
 
 
 clientside_callback(
