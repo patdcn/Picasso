@@ -55,7 +55,6 @@ header = html.Header(
         html.Button("\u2630", id="nav-toggle", className="nav-toggle", n_clicks=0,
                     title="Show/hide menu"),
         html.H2("DSV Picasso Engineering Portal", className="app-title"),
-        html.Span("DCN Diving", className="app-subtitle"),
         html.Div(id="user-area", className="user-area"),
     ],
     className="app-header",

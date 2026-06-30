@@ -76,4 +76,28 @@ def build_nav(pathname: str, user=None):
             [html.Span("\u2709", style={"marginRight": "8px"}), html.Span("Request access")],
             href="/request-access",
             className="nav-link active" if active else "nav-link"))
+
+    # Company footer (logo + address) pinned to the bottom of the menu column.
+    items.append(_company_footer())
     return items
+
+
+_MAPS_URL = ("https://www.google.com/maps/place//data=!4m2!3m1!1s0x47c3f3787d438aa3:"
+             "0x4c86093f87132404?sa=X&ved=1t:8290&ictx=111")
+
+
+def _company_footer():
+    """DCN logo, company name and address, shown at the foot of the sidebar."""
+    return html.Div(
+        [
+            html.Img(src=dash.get_asset_url("dcn_logo.png"), className="nav-footer-logo",
+                     alt="DCN Diving"),
+            html.Div("DCN Diving B.V.", className="nav-footer-name"),
+            html.A("Van Konijnenburgweg 151", href=_MAPS_URL, target="_blank",
+                   rel="noopener noreferrer", className="nav-footer-addr"),
+            html.A("4612 PL Bergen op Zoom", href=_MAPS_URL, target="_blank",
+                   rel="noopener noreferrer", className="nav-footer-addr"),
+            html.Div("Netherlands", className="nav-footer-addr"),
+        ],
+        className="nav-footer",
+    )

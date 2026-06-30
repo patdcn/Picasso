@@ -52,6 +52,8 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
   overflow-y: auto;
   position: sticky;
   top: var(--header-h);
+  display: flex;
+  flex-direction: column;
   transition: width 0.18s ease, flex-basis 0.18s ease, padding 0.18s ease;
 }
 
@@ -159,3 +161,31 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
   .app-shell { display: block !important; }
   body { background: #fff !important; }
 }
+
+/* ------- company footer (logo + address) at the bottom of the sidebar ------- */
+.nav-footer {
+  margin-top: auto;            /* push to the bottom of the menu column */
+  padding: 16px 8px 4px;
+  border-top: 1px solid var(--border);
+}
+.nav-footer-logo {
+  display: block;
+  width: 150px;
+  max-width: 100%;
+  height: auto;
+  margin-bottom: 9px;
+}
+.nav-footer-name {
+  font-weight: 700;
+  font-size: 0.82rem;
+  color: #334155;
+  margin-bottom: 1px;
+}
+.nav-footer-addr {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-decoration: none;
+  line-height: 1.5;
+}
+a.nav-footer-addr:hover { color: #0f766e; text-decoration: underline; }
