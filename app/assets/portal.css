@@ -194,11 +194,22 @@ a.nav-footer-addr:hover { color: #0f766e; text-decoration: underline; }
 .print-header, .print-footer { display: none; }
 
 @media print {
-  /* Fit the whole comparison onto ONE A3 PORTRAIT sheet. The page is scaled
-     uniformly to fit. TUNING: if it spills onto a second page, lower the zoom
-     below; if there is too much empty space, raise it (1.0 = full size). */
+  /* Fit the whole comparison onto ONE A3 PORTRAIT sheet, centred on the page.
+     The page is scaled uniformly to fit. TUNING: if it spills onto a second
+     page, lower the zoom below; if there is too much empty space, raise it. */
   @page { size: A3 portrait; margin: 9mm; }
-  .content { zoom: 0.80; }
+
+  /* centre the scaled content horizontally on the sheet (letterhead stays at top) */
+  #app-shell {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: flex-start !important;
+  }
+  .content {
+    zoom: 0.80;
+    flex: 0 0 auto !important;
+    max-width: 100% !important;
+  }
 
   .no-print { display: none !important; }
 
