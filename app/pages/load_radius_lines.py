@@ -35,20 +35,32 @@ def _nice_step(vmax):
     return 250
 
 
-def _figure(mode_key, marker=None, linkage=None):
+def _figure(mode_key, step=None, marker=None, linkage=None):
+    import numpy as np
     g = crane.contour_grid(mode_key)
-    step = _nice_step(g["swl_max"])
-    fig = go.Figure()
+    step = step or _nice_step(g["swl_max"])
 
-    # iso-load lines (labelled), coloured by load level
+    # Fill the unreachable area (NaN) with 0, then pad a one-cell zero border, so
+    # every iso-load level closes into a loop around the region where SWL >= level
+    # instead of being cut where the reachable area meets the plot edge.
+    x = np.asarray(g["x"], dtype=float)
+    y = np.asarray(g["y"], dtype=float)
+    z = np.where(np.isnan(np.array(g["z"], dtype=float)), 0.0, g["z"])
+    dx = (x[-1] - x[0]) / (len(x) - 1)
+    dy = (y[-1] - y[0]) / (len(y) - 1)
+    x = np.concatenate([[x[0] - dx], x, [x[-1] + dx]])
+    y = np.concatenate([[y[0] - dy], y, [y[-1] + dy]])
+    z = np.pad(z, 1, mode="constant", constant_values=0.0)
+
+    fig = go.Figure()
     fig.add_trace(go.Contour(
-        x=g["x"], y=g["y"], z=g["z"],
+        x=x, y=y, z=z,
         colorscale="Turbo", zmin=0, zmax=g["swl_max"],
         contours=dict(coloring="lines", showlabels=True,
                       start=step, end=g["swl_max"], size=step,
                       labelfont=dict(size=11, color=INK)),
-        line=dict(width=2),
-        showscale=False, connectgaps=False,
+        line=dict(width=2, smoothing=1.3),
+        showscale=False, connectgaps=True,
         hovertemplate="R %{x:.1f} m<br>H %{y:.1f} m<br>SWL %{z:.1f} t<extra></extra>",
     ))
 
@@ -152,8 +164,14 @@ def layout():
                                                    "color": MUTED, "marginRight": "8px"}),
                     dcc.Dropdown(id="le-mode", options=_MODE_OPTS, value=first, clearable=False,
                                  style={"width": "260px"}),
+                    html.Label("Iso spacing [t]", style={"fontSize": "0.75rem", "fontWeight": 600,
+                                                         "color": MUTED, "margin": "0 8px 0 16px"}),
+                    dcc.Dropdown(id="le-step", clearable=False, value=20,
+                                 options=[{"label": f"{s} t", "value": s}
+                                          for s in (10, 20, 25, 40, 50, 100)],
+                                 style={"width": "110px"}),
                 ], style={"display": "flex", "alignItems": "center", "gap": "8px",
-                          "marginBottom": "8px"}),
+                          "marginBottom": "8px", "flexWrap": "wrap"}),
                 dcc.Graph(id="le-graph", config={"displayModeBar": False}),
             ], style={"flex": "1 1 560px", "minWidth": "340px"}),
             html.Div([
@@ -244,13 +262,14 @@ def _sync_rh(r_num, r_sl, h_num, h_sl, mode):
     Output("le-readout", "children"),
     Output("le-store", "data"),
     Input("le-mode", "value"),
+    Input("le-step", "value"),
     Input("le-radius", "value"), Input("le-height", "value"), Input("le-rule", "value"),
 )
-def _update(mode, radius, height, rule):
+def _update(mode, step, radius, height, rule):
     r = crane.query_point(mode, radius if radius is not None else 0,
                           height if height is not None else 0, rule=rule or "best")
     lk = crane.linkage_points(r["main_deg"], r["fold_deg"]) if r else None
-    fig = _figure(mode, marker=r, linkage=lk)
+    fig = _figure(mode, step=step, marker=r, linkage=lk)
     return fig, _readout_panel(r), r
 
 
