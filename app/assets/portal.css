@@ -102,6 +102,43 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
 .nav-home { margin-bottom: 4px; font-weight: 600; }
 .nav-home-icon { margin-right: 8px; }
 
+/* ------- collapsible nav groups (accordion) ------- */
+.nav-group { margin: 2px 0; }
+.nav-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  box-sizing: border-box;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  color: var(--muted);
+  padding: 9px 8px;
+  margin: 6px 0 2px;
+  border-radius: 8px;
+}
+.nav-group-header:hover { background: #eef2f2; color: #334155; }
+.nav-group-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-group-caret {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+.nav-group.open > .nav-group-header { color: #334155; }
+.nav-group.open > .nav-group-header .nav-group-caret { transform: rotate(90deg); }
+.nav-group-items { display: none; padding-left: 4px; }
+.nav-group.open > .nav-group-items { display: block; }
+
 /* ------- responsive: tablet / phone -------
    Below 820px the sidebar becomes an overlay that slides in from the left.
    Default state on small screens is HIDDEN; the ☰ button reveals it.

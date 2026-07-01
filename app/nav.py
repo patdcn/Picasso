@@ -62,9 +62,22 @@ def build_nav(pathname: str, user=None):
         pages = [p for p in groups.get(group, []) if _visible(p, user)]
         if not pages:
             continue  # don't show empty groups (or groups with nothing this user can see)
-        items.append(html.Div(group, className="nav-group-label"))
-        for page in pages:
-            items.append(_link(page, active=(pathname == page["path"])))
+        group_active = any(pathname == p["path"] for p in pages)
+        links = [_link(page, active=(pathname == page["path"])) for page in pages]
+        items.append(html.Div(
+            [
+                html.Button(
+                    [
+                        html.Span(group, className="nav-group-title"),
+                        html.Span("\u203a", className="nav-group-caret"),
+                    ],
+                    className="nav-group-header", type="button", n_clicks=0,
+                    **{"aria-expanded": "true" if group_active else "false"},
+                ),
+                html.Div(links, className="nav-group-items"),
+            ],
+            className="nav-group open" if group_active else "nav-group",
+        ))
 
     # Non-admins get a "Request access" link pinned at the bottom of the menu.
     if user and not user.get("is_admin"):
