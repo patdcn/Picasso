@@ -219,10 +219,30 @@ def layout():
             ], style={"flex": "1 1 380px", "minWidth": "320px"}),
         ], style={"display": "flex", "gap": "24px", "flexWrap": "wrap"}),
 
+        # ---- post-surfacing precautions (blue), directly under chart/table ----
+        _post_surfacing_box(),
+
         # ---- rules + disclaimer ----
         _rules_block(),
         reports.print_footer(),
     ], style={"maxWidth": "1180px"})
+
+
+# --------------------------------------------------------------------------- #
+# Post-surfacing precautions callout (§13-24), shown above the rules section.
+# --------------------------------------------------------------------------- #
+def _post_surfacing_box():
+    return html.Div([
+        html.Span("Post-surfacing precautions (\u00a713-24)  ",
+                  style={"fontWeight": 700, "color": "#0c4a6e"}),
+        html.Span("After surfacing, divers remain at risk of decompression "
+                  "sickness. They shall remain in the immediate vicinity of a "
+                  "chamber for 2 hours and within 30 minutes travel of a chamber "
+                  "for 48 hours after the dive, and shall not fly for 72 hours "
+                  "after surfacing."),
+    ], style={"marginTop": "18px", "padding": "12px 16px",
+              "background": "#e0f2fe", "border": "1px solid #0284c7",
+              "borderRadius": "10px", "fontSize": "0.84rem", "color": "#0c4a6e"})
 
 
 # --------------------------------------------------------------------------- #
@@ -273,19 +293,7 @@ def _rules_block():
                "2 fsw/min with a 2-hour post-excursion hold for storage depths "
                "\u2264 200 fsw (\u00a713-23.1\u20133)."),
         ], style={"color": INK, "fontSize": "0.85rem", "paddingLeft": "18px",
-                  "lineHeight": "1.5", "maxWidth": "820px"}),
-        html.Div([
-            html.Span("Post-surfacing precautions (\u00a713-24)  ",
-                      style={"fontWeight": 700, "color": "#0c4a6e"}),
-            html.Span("After surfacing, divers remain at risk of decompression "
-                      "sickness. They shall remain in the immediate vicinity of a "
-                      "chamber for 2 hours and within 30 minutes travel of a chamber "
-                      "for 48 hours after the dive, and shall not fly for 72 hours "
-                      "after surfacing."),
-        ], style={"marginTop": "14px", "padding": "10px 14px",
-                  "background": "#e0f2fe", "border": "1px solid #0284c7",
-                  "borderRadius": "10px", "fontSize": "0.82rem", "color": "#0c4a6e",
-                  "maxWidth": "860px"}),
+                  "lineHeight": "1.5"}),
         html.Div([
             html.Span("Disclaimer  ", style={"fontWeight": 700, "color": AMBER}),
             html.Span("This tool is for indicative planning only. It is not an "
@@ -296,8 +304,7 @@ def _rules_block():
                       "Always validate against the current U.S. Navy Diving Manual."),
         ], style={"marginTop": "12px", "padding": "10px 14px",
                   "background": AMBER_BG, "border": f"1px solid {AMBER}",
-                  "borderRadius": "10px", "fontSize": "0.82rem", "color": "#7c2d12",
-                  "maxWidth": "860px"}),
+                  "borderRadius": "10px", "fontSize": "0.82rem", "color": "#7c2d12"}),
     ], style={"marginTop": "28px", "paddingTop": "14px",
               "borderTop": f"1px solid {GRID}"})
 
