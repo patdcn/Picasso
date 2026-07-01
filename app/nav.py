@@ -17,7 +17,7 @@ from dash import html, dcc
 import dash
 
 # Group display order. Rename or reorder freely — this is the single source of truth.
-NAV_GROUPS = ["Lifting", "SAT Diving", "Air MG Diving", "Motions", "Structural", "Reference"]
+NAV_GROUPS = ["Picasso Offshore Crane", "SAT Diving", "Air MG Diving", "Motions", "Structural", "Reference"]
 
 
 def _grouped_pages():

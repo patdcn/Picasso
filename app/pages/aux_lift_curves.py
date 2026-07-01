@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 
 from app.engines import crane_aux as crane
 
-dash.register_page(__name__, path="/lifting/aux-lift-curves", name="Aux Lift Curves", category="Lifting", order=2)
+dash.register_page(__name__, path="/lifting/aux-lift-curves", name="Aux Lift Curves", category="Picasso Offshore Crane", order=2)
 
 MUTED = "#64748b"
 ACCENT = "#0f766e"

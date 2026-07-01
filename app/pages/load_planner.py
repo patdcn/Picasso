@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 from app.engines import crane
 
 dash.register_page(__name__, path="/lifting/load-planner", name="Load Planner",
-                   category="Lifting", order=3)
+                   category="Picasso Offshore Crane", order=3)
 
 MUTED = "#64748b"
 ACCENT = "#0f766e"

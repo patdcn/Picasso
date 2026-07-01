@@ -17,7 +17,7 @@ from app.engines import crane
 from app.engines import crane_aux
 
 dash.register_page(__name__, path="/lifting/load-radius", name="Load-Radius Charts",
-                   category="Lifting", order=4)
+                   category="Picasso Offshore Crane", order=4)
 
 MUTED = "#64748b"
 ACCENT = "#0f766e"

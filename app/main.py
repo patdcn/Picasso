@@ -1,5 +1,5 @@
 """
-DSV Picasso Engineering Portal — application entrypoint.
+DCN Diving Engineering Portal — application entrypoint.
 
 Portal shell: persistent header + collapsible grouped sidebar + page content area.
 Tools live in app/pages/ and self-register (Dash Pages). The sidebar is generated
@@ -10,7 +10,7 @@ import os
 import dash
 from dash import Dash, html, dcc, Input, Output, State
 
-app = Dash(__name__, use_pages=True, title="DSV Picasso Engineering Portal",
+app = Dash(__name__, use_pages=True, title="DCN Diving Engineering Portal",
            suppress_callback_exceptions=True)
 server = app.server  # gunicorn target
 
@@ -54,7 +54,7 @@ header = html.Header(
     [
         html.Button("\u2630", id="nav-toggle", className="nav-toggle", n_clicks=0,
                     title="Show/hide menu"),
-        html.H2("DSV Picasso Engineering Portal", className="app-title"),
+        html.H2("DCN Diving Engineering Portal", className="app-title"),
         html.Div(id="user-area", className="user-area"),
     ],
     className="app-header",

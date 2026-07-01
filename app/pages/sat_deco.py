@@ -256,6 +256,18 @@ def _rules_block():
         ], style={"color": INK, "fontSize": "0.85rem", "paddingLeft": "18px",
                   "lineHeight": "1.5", "maxWidth": "820px"}),
         html.Div([
+            html.Span("Post-surfacing precautions (\u00a713-24)  ",
+                      style={"fontWeight": 700, "color": "#0c4a6e"}),
+            html.Span("After surfacing, divers remain at risk of decompression "
+                      "sickness. They shall remain in the immediate vicinity of a "
+                      "chamber for 2 hours and within 30 minutes travel of a chamber "
+                      "for 48 hours after the dive, and shall not fly for 72 hours "
+                      "after surfacing."),
+        ], style={"marginTop": "14px", "padding": "10px 14px",
+                  "background": "#e0f2fe", "border": "1px solid #0284c7",
+                  "borderRadius": "10px", "fontSize": "0.82rem", "color": "#0c4a6e",
+                  "maxWidth": "860px"}),
+        html.Div([
             html.Span("Disclaimer  ", style={"fontWeight": 700, "color": AMBER}),
             html.Span("This tool is for indicative planning only. It is not an "
                       "operational decompression schedule and must not be used to "
