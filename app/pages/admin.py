@@ -162,6 +162,9 @@ def layout():
         html.P("Review access requests, add users and grant access to individual tools, "
                "and set the shared cost & timing assumptions. Admins can access everything "
                "automatically.", style={"color": MUTED, "maxWidth": "640px"}),
+        dcc.Link("\u2192 Activity log (sign-ins & tool usage)", href="/admin/activity",
+                 style={"color": ACCENT, "fontWeight": 600, "display": "inline-block",
+                        "marginBottom": "16px"}),
 
         _requests_card(),
         _params_card(),

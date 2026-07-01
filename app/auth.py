@@ -21,6 +21,8 @@ import dash
 from flask import session, request, redirect, render_template_string
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from app import activity
+
 AUTH_DB = os.getenv("AUTH_DB", "/data/auth.db")
 
 # Paths the guard always lets through (Dash internals, static assets, the login flow).
@@ -190,16 +192,18 @@ def verify_login(email, password):
 # Access checks
 # --------------------------------------------------------------------------- #
 def module_keys():
-    """All tool module keys (page paths), excluding home, admin, and the
+    """All tool module keys (page paths), excluding home, admin pages, and the
     request-access page (which every signed-in user may reach)."""
-    return {p["path"] for p in dash.page_registry.values()} - {"/", "/admin", "/request-access"}
+    return {p["path"] for p in dash.page_registry.values()
+            if not p["path"].startswith("/admin")
+            and p["path"] not in ("/", "/request-access")}
 
 
 def list_modules():
     """Tool modules for the admin checkboxes: [{path, name, category}], sorted."""
     out = []
     for p in dash.page_registry.values():
-        if p["path"] in ("/", "/admin", "/request-access"):
+        if p["path"].startswith("/admin") or p["path"] in ("/", "/request-access"):
             continue
         out.append({"path": p["path"], "name": p["name"], "category": p.get("category") or "Other"})
     out.sort(key=lambda m: (m["category"], m["name"]))
@@ -330,7 +334,7 @@ def register_auth(server):
         if not user:
             return redirect("/login?next=" + p)
         path = p.rstrip("/") or "/"
-        if path == "/admin" and not user["is_admin"]:
+        if path.startswith("/admin") and not user["is_admin"]:
             return redirect("/")
         if path in module_keys() and not can_access(user, path):
             return redirect("/")
@@ -344,6 +348,10 @@ def register_auth(server):
             if user:
                 session["user_email"] = user["email"]
                 session.permanent = True
+                try:
+                    activity.on_login(user["email"])
+                except Exception:
+                    pass
                 return redirect(nxt if nxt.startswith("/") else "/")
             return _render_login(error="Invalid email or password.", nxt=nxt if nxt != "/" else None)
         if current_user():
@@ -352,5 +360,9 @@ def register_auth(server):
 
     @server.route("/logout")
     def logout():
+        try:
+            activity.on_logout()
+        except Exception:
+            pass
         session.clear()
         return redirect("/login")

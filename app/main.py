@@ -31,6 +31,9 @@ auth.register_auth(server)
 from app import params  # noqa: E402
 params.init_db()
 
+from app import activity  # noqa: E402
+activity.init_db()
+
 from app.nav import build_nav  # noqa: E402
 
 # ---- serve GA reference files from the data volume (read-only, safe filenames) ----
@@ -65,6 +68,9 @@ app.layout = html.Div(
     [
         dcc.Location(id="url"),
         dcc.Store(id="nav-open", data=True),
+        dcc.Interval(id="activity-hb", interval=60_000, n_intervals=0),
+        html.Div(id="activity-sink", style={"display": "none"}),
+        html.Div(id="activity-hb-sink", style={"display": "none"}),
         header,
         html.Div(
             [
@@ -91,8 +97,38 @@ def _render_user_area(_pathname):
     children = [html.Span(user["email"], className="user-email")]
     if user["is_admin"]:
         children.append(dcc.Link("Admin", href="/admin", className="user-link"))
+        children.append(dcc.Link("Activity", href="/admin/activity", className="user-link"))
     children.append(html.A("Sign out", href="/logout", className="user-link"))
     return children
+
+
+def _page_name(pathname):
+    for p in dash.page_registry.values():
+        if p["path"] == pathname:
+            return p["name"]
+    return "Home" if pathname == "/" else pathname
+
+
+@app.callback(Output("activity-sink", "children"), Input("url", "pathname"))
+def _log_pageview(pathname):
+    try:
+        user = auth.current_user()
+        if user and pathname:
+            activity.record_page(user["email"], pathname, _page_name(pathname))
+    except Exception:
+        pass
+    return ""
+
+
+@app.callback(Output("activity-hb-sink", "children"), Input("activity-hb", "n_intervals"))
+def _log_heartbeat(_n):
+    try:
+        user = auth.current_user()
+        if user:
+            activity.heartbeat(user["email"])
+    except Exception:
+        pass
+    return ""
 
 
 @app.callback(
