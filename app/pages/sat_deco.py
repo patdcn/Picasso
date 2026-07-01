@@ -18,6 +18,7 @@ from dash import html, dcc, Input, Output, State, callback, clientside_callback,
 import plotly.graph_objects as go
 
 from app.engines import sat_deco as eng
+from app import reports
 
 dash.register_page(__name__, path="/diving/sat-deco", name="SAT Decompression",
                    category="SAT Diving", order=0)
@@ -28,6 +29,12 @@ INK = "#0f172a"
 GRID = "#e2e8f0"
 AMBER = "#b45309"
 AMBER_BG = "rgba(186,117,23,0.13)"
+
+PDF_BTN_STYLE = {
+    "padding": "8px 14px", "borderRadius": "8px", "border": "none",
+    "background": ACCENT, "color": "#fff", "fontWeight": 600,
+    "cursor": "pointer", "fontSize": "0.85rem",
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -63,6 +70,16 @@ def _card(label, value, sub=None, accent=False):
 def layout():
     today = _date.today().isoformat()
     return html.Div([
+        reports.print_header(),
+        html.Div([
+            html.Button([html.Span("\u2913\u2002"), "Export to PDF"],
+                        id="sd-pdf-btn", n_clicks=0, style=PDF_BTN_STYLE,
+                        title="Opens your browser's print dialog \u2014 "
+                              "choose 'Save as PDF' (A3 portrait)"),
+            html.Div(id="sd-print-sink", style={"display": "none"}),
+        ], className="no-print",
+           style={"display": "flex", "justifyContent": "flex-end",
+                  "marginBottom": "2px"}),
         html.H3("SAT Decompression planner", style={"marginBottom": "2px"}),
         html.P("Standard saturation decompression from storage depth to surface, "
                "per the U.S. Navy Diving Manual (Rev 7) Ch.13, Table 13-9. "
@@ -188,6 +205,7 @@ def layout():
                 html.Div([
                     html.Span("Decompression profile", style={"fontWeight": 700}),
                     html.Button("Download CSV", id="sd-csv-btn", n_clicks=0,
+                                className="no-print",
                                 style={"marginLeft": "auto", "padding": "6px 12px",
                                        "borderRadius": "8px", "border": "none",
                                        "background": ACCENT, "color": "#fff",
@@ -196,13 +214,14 @@ def layout():
                     dcc.Download(id="sd-csv"),
                 ], style={"display": "flex", "alignItems": "center",
                           "marginBottom": "8px"}),
-                html.Div(id="sd-table", style={"maxHeight": "400px",
-                                               "overflowY": "auto"}),
+                html.Div(id="sd-table", className="sd-print-expand",
+                         style={"maxHeight": "400px", "overflowY": "auto"}),
             ], style={"flex": "1 1 380px", "minWidth": "320px"}),
         ], style={"display": "flex", "gap": "24px", "flexWrap": "wrap"}),
 
         # ---- rules + disclaimer ----
         _rules_block(),
+        reports.print_footer(),
     ], style={"maxWidth": "1180px"})
 
 
@@ -580,3 +599,15 @@ def _csv(_n, payload, depth):
     for e, c, d, ev in payload["rows"]:
         buf.write(f"{e},{c},{d},{ev}\n")
     return dict(content=buf.getvalue(), filename="sat_deco_profile.csv")
+
+
+# --------------------------------------------------------------------------- #
+# Export to PDF — open the browser print dialog (A3 portrait CSS in portal.css).
+# --------------------------------------------------------------------------- #
+clientside_callback(
+    "function(n){ if(n){ setTimeout(function(){ window.print(); }, 60); } "
+    "return window.dash_clientside.no_update; }",
+    Output("sd-print-sink", "children"),
+    Input("sd-pdf-btn", "n_clicks"),
+    prevent_initial_call=True,
+)

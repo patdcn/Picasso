@@ -219,6 +219,9 @@ a.nav-footer-addr:hover { color: #0f766e; text-decoration: underline; }
   }
   .diving-main { gap: 14px !important; }
 
+  /* SAT deco: show the whole profile table (defeat the on-screen scroll box) */
+  .sd-print-expand { max-height: none !important; overflow: visible !important; }
+
   .print-header {
     display: flex; align-items: center; justify-content: space-between;
     border-bottom: 1.5px solid #1e2a6e; padding-bottom: 8px; margin-bottom: 14px;
