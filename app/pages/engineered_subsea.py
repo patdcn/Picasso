@@ -16,7 +16,7 @@ import plotly.graph_objects as go
 from app.engines import subsea
 
 dash.register_page(__name__, path="/lifting/engineered-subsea", name="Engineered Subsea",
-                   category="Picasso Offshore Crane", order=5)
+                   category="Picasso Offshore Crane", order=6)
 
 MUTED = "#64748b"; ACCENT = "#0f766e"; INK = "#0f172a"; GRID = "#e2e8f0"
 DYN = "#7c3aed"; BASE = "#94a3b8"; WARN = "#b45309"
