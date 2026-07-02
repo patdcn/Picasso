@@ -134,3 +134,129 @@ def listing(target):
         p = os.path.join(full, name)
         out.append(name + ("/" if os.path.isdir(p) else ""))
     return _rel(full), out
+
+
+# --------------------------------------------------------------------------- #
+# Explorer operations (browse / move / rename / delete). All confined to /data.
+# --------------------------------------------------------------------------- #
+import shutil
+import datetime
+
+
+def _entry(full):
+    try:
+        st = os.stat(full)
+        is_dir = os.path.isdir(full)
+        mtime = datetime.datetime.utcfromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")
+        size = 0 if is_dir else st.st_size
+    except OSError:
+        is_dir, mtime, size = False, "", 0
+    return {"name": os.path.basename(full), "is_dir": is_dir, "size": size,
+            "mtime": mtime, "rel": _rel(full)}
+
+
+def _resolve_dir(rel):
+    """Resolve a directory path (rel to /data). Empty -> the volume root."""
+    rel = (rel or "").strip().strip("/")
+    if not rel:
+        return DATA_ROOT
+    return _resolve(rel + "/", default_name=None)
+
+
+def list_dir(rel=""):
+    """(rel_dir, [entries]) for a folder under /data; folders first, then files.
+    Missing/!dir -> (rel_dir, None)."""
+    try:
+        base = _resolve_dir(rel)
+    except VolumeError:
+        return "", None
+    if not os.path.isdir(base):
+        return _rel(base), None
+    names = os.listdir(base)
+    names.sort(key=lambda n: (not os.path.isdir(os.path.join(base, n)), n.lower()))
+    return _rel(base), [_entry(os.path.join(base, n)) for n in names]
+
+
+def list_all_dirs():
+    """Every folder under /data as relative paths (for a 'move to' picker)."""
+    out = [""]
+    for dirpath, dirs, _files in os.walk(DATA_ROOT):
+        dirs.sort()
+        for d in dirs:
+            out.append(_rel(os.path.join(dirpath, d)))
+    seen, uniq = set(), []
+    for r in out:
+        if r not in seen:
+            seen.add(r)
+            uniq.append(r)
+    return uniq
+
+
+def delete(rel):
+    """Delete a file or folder (recursively) under /data. Never the root."""
+    try:
+        full = _resolve(rel, default_name=None)
+        if full == DATA_ROOT:
+            raise VolumeError("Refusing to delete the volume root.")
+        if not os.path.exists(full):
+            raise VolumeError("Not found.")
+        if os.path.isdir(full):
+            shutil.rmtree(full)
+        else:
+            os.remove(full)
+    except VolumeError as e:
+        return False, str(e)
+    except OSError as e:
+        return False, f"Delete failed: {e}"
+    return True, f"Deleted {_rel(full)}."
+
+
+def move(src_rel, dst_dir_rel):
+    """Move a file/folder into another folder under /data."""
+    try:
+        src = _resolve(src_rel, default_name=None)
+        if src == DATA_ROOT:
+            raise VolumeError("Cannot move the volume root.")
+        if not os.path.exists(src):
+            raise VolumeError("Source not found.")
+        dst_dir = _resolve_dir(dst_dir_rel)
+        os.makedirs(dst_dir, exist_ok=True)
+        dest = os.path.realpath(os.path.join(dst_dir, os.path.basename(src)))
+        root = DATA_ROOT + os.sep
+        if dest != DATA_ROOT and not dest.startswith(root):
+            raise VolumeError("Destination outside the data volume.")
+        if dest == src:
+            return True, "Already there."
+        if os.path.isdir(src) and dest.startswith(src + os.sep):
+            raise VolumeError("Cannot move a folder into itself.")
+        if os.path.exists(dest):
+            raise VolumeError(f"'{os.path.basename(src)}' already exists in the destination.")
+        shutil.move(src, dest)
+    except VolumeError as e:
+        return False, str(e)
+    except OSError as e:
+        return False, f"Move failed: {e}"
+    return True, f"Moved to {_rel(dst_dir)}/."
+
+
+def rename(rel, new_name):
+    """Rename a file/folder in place (new_name is a bare name, no path parts)."""
+    new_name = (new_name or "").strip()
+    if not new_name or "/" in new_name or "\\" in new_name or ".." in new_name:
+        return False, "Enter a valid name (no slashes)."
+    try:
+        src = _resolve(rel, default_name=None)
+        if src == DATA_ROOT:
+            raise VolumeError("Cannot rename the volume root.")
+        dst = os.path.realpath(os.path.join(os.path.dirname(src), new_name))
+        root = DATA_ROOT + os.sep
+        if not dst.startswith(root):
+            raise VolumeError("Name resolves outside the data volume.")
+        if os.path.exists(dst):
+            raise VolumeError("A file with that name already exists.")
+        os.rename(src, dst)
+    except VolumeError as e:
+        return False, str(e)
+    except OSError as e:
+        return False, f"Rename failed: {e}"
+    return True, f"Renamed to {new_name}."
