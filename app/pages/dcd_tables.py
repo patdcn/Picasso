@@ -62,14 +62,14 @@ def layout():
            style={"display": "flex", "justifyContent": "flex-end", "marginBottom": "2px"}),
 
         html.H3("DCD Decompression Tables"),
-        html.P("DCD 2015 revised NDC tables (N-Sea BMS-OP-0600, W. Sterk). Select a table "
+        html.P("DCD 2015 revised NDC tables. Select a table "
                "family and depth to view and print it. Figures are indicative, for commercial "
                "planning only \u2014 not for operational decompression.",
                style={"color": MUTED, "maxWidth": "72ch", "lineHeight": 1.5}),
 
         html.Div([
             _dropdown("dcd-standard", "Standard",
-                      [{"label": "DCD 2015 (N-Sea / Sterk)", "value": "DCD15"}],
+                      [{"label": "DCD 2015", "value": "DCD15"}],
                       "DCD15", disabled=True, width="230px"),
             _dropdown("dcd-family", "Table family", _family_options(), default_code, width="360px"),
             _dropdown("dcd-depth", "Depth", [], None, width="150px"),
