@@ -94,25 +94,38 @@ def _not_loaded():
 
 
 def _rules_header(t, depth=None):
-    bits = [html.Span(f"Code: {t['code']}", style={"fontWeight": 700, "color": INK})]
-    if depth is not None:
-        bits.append(html.Span(f"\u2002\u00b7\u2002Maximum diving depth {depth} m",
-                              style={"color": INK}))
-    rules = html.Ul([html.Li(r, style={"marginBottom": "1px"}) for r in t.get("rules", [])],
-                    style={"margin": "6px 0 0 0", "paddingLeft": "18px",
-                           "color": MUTED, "fontSize": "0.82rem", "lineHeight": 1.45})
+    left = [html.Div(t.get("title", t["code"]),
+                     style={"fontWeight": 700, "fontSize": "0.98rem", "color": INK}),
+            html.Div([html.Span("Code: ", style={"color": MUTED}),
+                      html.Span(t["code"], style={"fontWeight": 700, "letterSpacing": "0.02em"}),
+                      *( [html.Span(f"\u2002\u00b7\u2002maximum diving depth {depth} metres",
+                                    style={"color": MUTED})] if depth is not None else [])],
+                     style={"fontSize": "0.85rem", "marginTop": "2px"})]
+    right = html.Ul([html.Li(r) for r in t.get("rules", [])],
+                    style={"margin": 0, "paddingLeft": "16px", "color": MUTED,
+                           "fontSize": "0.78rem", "lineHeight": 1.4, "listStyle": "square"})
     return html.Div([
-        html.Div(t.get("title", t["code"]),
-                 style={"fontWeight": 700, "fontSize": "1.02rem", "color": INK}),
-        html.Div(bits, style={"fontSize": "0.85rem", "marginTop": "2px"}),
-        rules,
-    ], style={"marginBottom": "10px"})
+        html.Div(left, style={"flex": "1 1 auto"}),
+        html.Div(right, style={"flex": "0 0 auto"}),
+    ], style={"display": "flex", "gap": "24px", "alignItems": "flex-start",
+              "justifyContent": "space-between", "flexWrap": "wrap",
+              "borderLeft": f"4px solid {TEAL}", "background": "#f8fafc",
+              "border": f"1px solid {LINE}", "borderLeftWidth": "4px",
+              "borderLeftColor": TEAL, "borderRadius": "6px",
+              "padding": "10px 14px", "marginBottom": "12px"})
 
 
-_TH = {"border": f"1px solid {LINE}", "padding": "4px 6px", "background": HEAD_BG,
-       "fontSize": "0.78rem", "fontWeight": 700, "color": INK, "textAlign": "center"}
-_TD = {"border": f"1px solid {LINE}", "padding": "3px 6px", "fontSize": "0.82rem",
-       "textAlign": "center", "fontFamily": "monospace", "color": INK}
+# --- table styling, tuned to resemble the source DCD tables ---
+HEAD = "#dbe4ec"          # slate-blue header, like the printed tables
+GRID = "#94a3b8"          # cell borders
+FRAME = "#334155"         # dark outer frame
+BACKUP_ROW = "#eef2f7"
+
+_TH = {"border": f"1px solid {GRID}", "padding": "4px 7px", "background": HEAD,
+       "fontSize": "0.74rem", "fontWeight": 700, "color": "#1e293b",
+       "textAlign": "center", "verticalAlign": "middle"}
+_TD = {"border": f"1px solid {GRID}", "padding": "3px 7px", "fontSize": "0.82rem",
+       "textAlign": "center", "fontFamily": "ui-monospace,monospace", "color": INK}
 
 
 def _cell(v, extra=None):
@@ -122,62 +135,87 @@ def _cell(v, extra=None):
     return html.Td("" if v is None or v == "" else v, style=st)
 
 
-def _table(head, body):
-    return html.Table([html.Thead(html.Tr(head)), html.Tbody(body)],
-                      style={"borderCollapse": "collapse", "marginTop": "4px"})
+def _table(thead, body):
+    return html.Table([thead, html.Tbody(body)],
+                      style={"borderCollapse": "collapse", "marginTop": "2px",
+                             "border": f"2px solid {FRAME}"})
 
 
 def _grid_inwater(t, block):
     sd = t["stop_depths"]
-    head = ([html.Th("dive", style=_TH), html.Th("1st", style=_TH)]
-            + [html.Th(str(d), style=_TH) for d in sd]
-            + [html.Th("deco", style=_TH), html.Th("OTU", style=_TH)])
-    body, divider_done = [], False
+    thead = html.Thead([
+        html.Tr([
+            html.Th("dive time", rowSpan=2, style=_TH),
+            html.Th("till 1st stop", rowSpan=2, style=_TH),
+            html.Th("in-water stops (metres)", colSpan=len(sd), style=_TH),
+            html.Th("total deco time", rowSpan=2, style=_TH),
+            html.Th("total OTU", rowSpan=2, style=_TH),
+        ]),
+        html.Tr([html.Th(str(d), style=_TH) for d in sd]),
+    ])
+    body, bold_done = [], False
     for r in block["rows"]:
-        if r.get("backup") and not divider_done:
-            divider_done = True
-            body.append(html.Tr([html.Td(
-                "\u2014 air backup line (in-water air only as O2 / SurD backup) \u2014",
-                colSpan=len(sd) + 4,
-                style={"border": f"1px solid {LINE}", "background": "#0f172a",
-                       "color": "#fbbf24", "fontSize": "0.72rem", "fontWeight": 700,
-                       "padding": "2px 8px", "textAlign": "left"})]))
-        row_bg = {"background": BACKUP_BG} if r.get("backup") else {}
-        cells = [_cell(r["bt"], {"fontWeight": 700, **row_bg}),
-                 _cell(r.get("till"), row_bg)]
+        thick = {}
+        if r.get("backup") and not bold_done:
+            bold_done = True
+            thick = {"borderTop": f"3px solid {FRAME}"}   # the bold air-backup rule
+        row_bg = {"background": BACKUP_ROW} if r.get("backup") else {}
+        cells = [_cell(r["bt"], {"fontWeight": 700, "background": HEAD, **thick}),
+                 _cell(r.get("till"), {**row_bg, **thick})]
         for d in sd:
-            cells.append(_cell(r["stops"].get(str(d), ""), {"background": "#fbfcfe", **row_bg}))
-        cells.append(_cell(r.get("deco"), {"color": "#0f766e", "fontWeight": 600, **row_bg}))
-        cells.append(_cell(r.get("otu"), row_bg))
+            cells.append(_cell(r["stops"].get(str(d), ""), {"background": "#fbfdff", **row_bg, **thick}))
+        cells.append(_cell(r.get("deco"), {"color": TEAL, "fontWeight": 600, **row_bg, **thick}))
+        cells.append(_cell(r.get("otu"), {**row_bg, **thick}))
         body.append(html.Tr(cells))
-    return _table(head, body)
+    return html.Div([_table(thead, body),
+                     html.Div("Bold rule = air back-up line (in-water air only, as O2 / "
+                              "surface-decompression back-up).",
+                              style={"fontSize": "0.72rem", "color": MUTED, "marginTop": "5px"})
+                     if bold_done else None])
 
 
 def _grid_surfaceox(t, block):
     cols = t["columns"]
     di = t["deco_i"]
-    head = [html.Th(c, style=_TH) for c in cols]
+    iw_idx = [i for i in range(2, di) if cols[i].lower().startswith("iw")]
+    ch_idx = [i for i in range(2, di) if not cols[i].lower().startswith("iw")]
+
+    def _depth_label(i):
+        lab = cols[i]
+        return lab[3:].strip() if lab.lower().startswith("iw ") else lab
+
+    top = [html.Th("dive time", rowSpan=2, style=_TH),
+           html.Th("till 1st stop", rowSpan=2, style=_TH)]
+    if iw_idx:
+        top.append(html.Th("in-water stops (metres)", colSpan=len(iw_idx), style=_TH))
+    if ch_idx:
+        top.append(html.Th("stops in deco-chamber (metres)", colSpan=len(ch_idx), style=_TH))
+    top += [html.Th("total deco time", rowSpan=2, style=_TH),
+            html.Th("total OTU", rowSpan=2, style=_TH)]
+    sub = [html.Th(_depth_label(i), style=_TH) for i in iw_idx + ch_idx]
+    thead = html.Thead([html.Tr(top), html.Tr(sub)])
+
     body = []
     for r in block["rows"]:
-        cells = []
-        for i, _c in enumerate(cols):
-            v = r[i] if i < len(r) else ""
-            extra = {"fontWeight": 700} if i == 0 else \
-                    {"color": "#0f766e", "fontWeight": 600} if i == di else \
-                    {"background": "#fbfcfe"} if 1 < i < di else {}
-            cells.append(_cell(v, extra))
+        cells = [_cell(r[0] if len(r) > 0 else "", {"fontWeight": 700, "background": HEAD}),
+                 _cell(r[1] if len(r) > 1 else "")]
+        for i in iw_idx + ch_idx:
+            cells.append(_cell(r[i] if i < len(r) else "", {"background": "#fbfdff"}))
+        cells.append(_cell(r[di] if di < len(r) else "", {"color": TEAL, "fontWeight": 600}))
+        cells.append(_cell(r[t["otu_i"]] if t["otu_i"] < len(r) else ""))
         body.append(html.Tr(cells))
-    return _table(head, body)
+    return _table(thead, body)
 
 
 def _grid_reference(t):
-    head = [html.Th(c, style=_TH) for c in t["columns"]]
+    thead = html.Thead(html.Tr([html.Th(c, style=_TH) for c in t["columns"]]))
     body = []
     for r in t["rows"]:
         cells = [_cell("\u2013" if v is None else v,
-                       {"fontWeight": 700} if i == 0 else {}) for i, v in enumerate(r)]
+                       {"fontWeight": 700, "background": HEAD} if i == 0 else {})
+                 for i, v in enumerate(r)]
         body.append(html.Tr(cells))
-    return _table(head, body)
+    return _table(thead, body)
 
 
 def _render(t):
