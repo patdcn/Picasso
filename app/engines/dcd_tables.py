@@ -523,20 +523,27 @@ def load_tables(path=None):
 _KIND_LABEL = {"inwater": "In-water", "surfaceox": "Surface / Ox", "reference": "No-stop"}
 
 
+def _short_label(f):
+    """Compact one-line label for the family dropdown."""
+    code, kind, ri = f["code"], f["kind"], f.get("ri")
+    if kind == "reference":
+        return f"{code}  \u00b7  no-stop limits"
+    if kind == "inwater":
+        gas = f.get("gas", "")
+        g = "air" if gas == "air" else "nitrox " + gas.replace("nitrox_", "").replace("_", "/")
+        desc = f"{g} in-water"
+    else:
+        desc = "surface O\u2082" if code in ("SOX15", "HSOX15") else "surface air (backup)"
+    return f"{code}  \u00b7  {desc}" + (f"  \u00b7  RI {ri} h" if ri else "")
+
+
 def ui_families(path=None):
-    """List of families for the dropdown: [{code,label,kind,ri}], data order preserved."""
+    """List of families for the dropdown: [{code,label,kind}], data order preserved."""
     data = load_tables(path)
     if not data:
         return []
-    out = []
-    for f in data["families"]:
-        ri = f.get("ri")
-        tag = f"{_KIND_LABEL.get(f['kind'], f['kind'])}"
-        label = f"{f['code']} \u2014 {f.get('title', '')}"
-        if ri:
-            label += f" (RI {ri} h)"
-        out.append({"code": f["code"], "label": label, "kind": f["kind"], "tag": tag})
-    return out
+    return [{"code": f["code"], "label": _short_label(f), "kind": f["kind"]}
+            for f in data["families"]]
 
 
 def ui_family(code, path=None):

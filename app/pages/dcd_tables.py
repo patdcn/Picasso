@@ -40,7 +40,7 @@ def _dropdown(id_, label, options, value, disabled=False, width="260px"):
         html.Label(label, style={"fontSize": "0.78rem", "fontWeight": 600,
                                  "color": INK, "display": "block", "marginBottom": "3px"}),
         dcc.Dropdown(id=id_, options=options, value=value, clearable=False,
-                     disabled=disabled, style={"fontSize": "0.85rem"}),
+                     disabled=disabled, style={"fontSize": "0.8rem"}),
     ], style={"width": width})
 
 
@@ -101,9 +101,23 @@ def _rules_header(t, depth=None):
                       *( [html.Span(f"\u2002\u00b7\u2002maximum diving depth {depth} metres",
                                     style={"color": MUTED})] if depth is not None else [])],
                      style={"fontSize": "0.85rem", "marginTop": "2px"})]
-    right = html.Ul([html.Li(r) for r in t.get("rules", [])],
+    rules = list(t.get("rules", []))
+    if t.get("kind") == "surfaceox":
+        rules += [
+            "The diver must be under pressure in the chamber within 3 minutes of reaching the "
+            "surface \u2014 this limit is critical; any delay strongly increases the risk of "
+            "decompression sickness.",
+            "If the 3-minute limit is exceeded (or the required in-water stops cannot be made), "
+            "this table may not be used \u2014 apply the Crash Dive emergency procedure: recompress "
+            "to the first in-water stop depth + 9 m, hold 5 min, then decompress on the SIL15 air "
+            "table for the actual bottom time + 10 min (breathing O\u2082 from the 12 m stop in "
+            "20-min periods with 5-min air breaks, if available). Observe a 12-hour repeat interval "
+            "afterwards; all emergency rules apply.",
+        ]
+    right = html.Ul([html.Li(r) for r in rules],
                     style={"margin": 0, "paddingLeft": "16px", "color": MUTED,
-                           "fontSize": "0.78rem", "lineHeight": 1.4, "listStyle": "square"})
+                           "fontSize": "0.78rem", "lineHeight": 1.4, "listStyle": "square",
+                           "maxWidth": "62ch"})
     return html.Div([
         html.Div(left, style={"flex": "1 1 auto"}),
         html.Div(right, style={"flex": "0 0 auto"}),
