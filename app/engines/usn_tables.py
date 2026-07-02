@@ -49,3 +49,27 @@ def ui_table(code, path=None):
         if t["code"] == code:
             return t
     return None
+
+
+def ui_depths(code, path=None):
+    """Depths available for a per-depth (deco_blocks) table; [] otherwise."""
+    t = ui_table(code, path)
+    if not t or t.get("kind") != "deco_blocks":
+        return []
+    return [d["depth"] for d in t.get("depths", [])]
+
+
+def ui_block(code, depth=None, path=None):
+    """For a deco_blocks table, return {'table':t,'block':selected-or-first}."""
+    t = ui_table(code, path)
+    if not t:
+        return None
+    if t.get("kind") != "deco_blocks":
+        return {"table": t, "block": None}
+    blocks = t.get("depths", [])
+    blk = None
+    if depth is not None:
+        blk = next((d for d in blocks if d["depth"] == depth), None)
+    if blk is None and blocks:
+        blk = blocks[0]
+    return {"table": t, "block": blk}
