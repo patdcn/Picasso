@@ -6,11 +6,13 @@ the individual modules they may use (per-module checkboxes), toggle admin, then 
 or delete. Module list is built from the page registry, so new tools appear here
 automatically.
 """
+import os
 import dash
 from dash import html, dcc, Input, Output, State, callback, no_update, ALL
 
 from app import auth
 from app import params
+from app import volume
 
 dash.register_page(__name__, path="/admin", name="Admin")  # no category -> not in nav groups
 
@@ -156,6 +158,45 @@ def _requests_card():
     ])
 
 
+def _volume_card():
+    """Upload a file to the /data volume, or create a folder there. Used to stage
+    the copyright table data (e.g. tools/dcd/dcd_tables.json) without going through
+    the public git repo, and to prepare folders for other tools."""
+    return _card([
+        html.H4("Data volume files", style={"marginTop": 0}),
+        html.P(["Upload a file straight to the persistent ", html.Code("/data"),
+                " volume, or create a folder. Paths are relative to ", html.Code("/data"),
+                " and confined to it. Folders are created automatically on upload. "
+                "Use this to stage table data (e.g. ", html.Code("tools/dcd/dcd_tables.json"),
+                ") \u2014 keep copyright data off the public repo."],
+               style={"color": MUTED, "fontSize": "0.85rem", "marginTop": 0}),
+
+        html.Label("Upload file", style={"fontSize": "0.8rem", "fontWeight": 600}),
+        dcc.Upload(
+            id="adm-vol-upload", multiple=False,
+            children=html.Div(id="adm-vol-drop", children="Drag a file here, or click to browse",
+                              style={"color": MUTED, "fontSize": "0.85rem"}),
+            style={"border": "1px dashed #cbd5e1", "borderRadius": "10px",
+                   "padding": "18px", "textAlign": "center", "background": "#f8fafc",
+                   "cursor": "pointer", "margin": "4px 0 10px"}),
+        html.Label("Destination path (under /data)",
+                   style={"fontSize": "0.8rem", "fontWeight": 600}),
+        _input("adm-vol-path", "tools/dcd/dcd_tables.json"),
+        _btn("Upload to volume", "adm-vol-save"),
+        _status("adm-vol-status"),
+
+        html.Hr(style={"border": "none", "borderTop": "1px solid #f1f5f9", "margin": "16px 0"}),
+
+        html.Label("Create folder (under /data)", style={"fontSize": "0.8rem", "fontWeight": 600}),
+        _input("adm-vol-mkdir", "tools/usn"),
+        _btn("Create folder", "adm-vol-mkdir-btn"),
+        _status("adm-vol-mkdir-status"),
+
+        html.Div(id="adm-vol-listing", style={"fontSize": "0.8rem", "color": MUTED,
+                                              "marginTop": "12px", "fontFamily": "ui-monospace,monospace"}),
+    ])
+
+
 def layout():
     return html.Div([
         html.H3("Administration"),
@@ -167,6 +208,7 @@ def layout():
                         "marginBottom": "16px"}),
 
         _requests_card(),
+        _volume_card(),
         _params_card(),
         _card([
             html.H4("Add user", style={"marginTop": 0}),
@@ -304,3 +346,65 @@ def _dismiss_request(clicks):
         return no_update
     auth.mark_request_handled(trig["id"])
     return _requests_list()
+
+
+# --- data volume: reflect the staged filename in the drop zone ---
+@callback(
+    Output("adm-vol-drop", "children"),
+    Input("adm-vol-upload", "filename"),
+    prevent_initial_call=True,
+)
+def _vol_staged(filename):
+    if not filename:
+        return "Drag a file here, or click to browse"
+    return f"Ready to upload: {filename}"
+
+
+def _vol_listing(folder):
+    """Small preview of a folder's contents under /data (after upload / mkdir)."""
+    rel, entries = volume.listing(folder or "")
+    if entries is None:
+        return f"(/data/{rel} not found)" if rel else ""
+    header = html.Div(f"/data/{rel}/".replace("/./", "/"),
+                      style={"fontWeight": 600, "marginBottom": "3px"})
+    if not entries:
+        return html.Div([header, html.Div("  (empty)")])
+    return html.Div([header] + [html.Div("  " + e) for e in entries])
+
+
+# --- data volume: upload a file (admin only) ---
+@callback(
+    Output("adm-vol-status", "children"),
+    Output("adm-vol-listing", "children"),
+    Input("adm-vol-save", "n_clicks"),
+    State("adm-vol-upload", "contents"),
+    State("adm-vol-upload", "filename"),
+    State("adm-vol-path", "value"),
+    prevent_initial_call=True,
+)
+def _vol_upload(_n, contents, filename, path):
+    user = auth.current_user()
+    if not user or not user.get("is_admin"):
+        return html.Span("Not authorized.", style={"color": "#b91c1c"}), no_update
+    if not contents:
+        return html.Span("Choose a file first.", style={"color": "#b91c1c"}), no_update
+    ok, msg = volume.save_upload(contents, filename, path or "")
+    listing = _vol_listing(os.path.dirname((path or "").rstrip("/")) or (path or ""))
+    return html.Span(msg, style={"color": ACCENT if ok else "#b91c1c"}), listing
+
+
+# --- data volume: create a folder (admin only) ---
+@callback(
+    Output("adm-vol-mkdir-status", "children"),
+    Output("adm-vol-listing", "children", allow_duplicate=True),
+    Input("adm-vol-mkdir-btn", "n_clicks"),
+    State("adm-vol-mkdir", "value"),
+    prevent_initial_call=True,
+)
+def _vol_mkdir(_n, path):
+    user = auth.current_user()
+    if not user or not user.get("is_admin"):
+        return html.Span("Not authorized.", style={"color": "#b91c1c"}), no_update
+    ok, msg = volume.make_dir(path or "")
+    listing = _vol_listing(path or "") if ok else no_update
+    return html.Span(msg, style={"color": ACCENT if ok else "#b91c1c"}), listing
