@@ -114,6 +114,10 @@ def layout():
             style_data_conditional=[
                 {"if": {"filter_query": "{is_dir} = 1", "column_id": "disp"},
                  "color": ACCENT, "fontWeight": 600, "cursor": "pointer"},
+                {"if": {"state": "active"},
+                 "backgroundColor": "#e6f2f1", "border": f"1px solid {ACCENT}"},
+                {"if": {"state": "selected"},
+                 "backgroundColor": "#e6f2f1", "border": f"1px solid {ACCENT}"},
             ],
             cell_selectable=True,
         ),
@@ -181,12 +185,13 @@ def _selected_rels(data, selected_rows):
     Output("fx-crumbs", "children"),
     Output("fx-movedst", "options"),
     Output("fx-table", "selected_rows"),
+    Output("fx-table", "active_cell"),
     Input("fx-cwd", "data"),
     Input("fx-refresh", "data"),
 )
 def _render(cwd, _tick):
     _rel, data = _rows_for(cwd or "")
-    return data, _crumbs(cwd or ""), _dst_options(), []
+    return data, _crumbs(cwd or ""), _dst_options(), [], None
 
 
 # navigate by clicking a folder name
