@@ -186,12 +186,19 @@ def _grid(t, unit):
 
 
 # ---- air decompression per-depth block ----
-def _block(t, block, unit):
-    return _block_air(t, block, unit) if t.get("variant") == "air" \
-        else _block_simple(t, block, unit)
+def _block(t, block, unit, sel_i=None):
+    return _block_air(t, block, unit, sel_i) if t.get("variant") == "air" \
+        else _block_simple(t, block, unit, sel_i)
 
 
-def _block_air(t, block, unit):
+def _highlight(cells):
+    for c in cells:
+        c.style = {**(c.style or {}), "background": "#d1eee9", "color": TEAL,
+                   "fontWeight": 700, "borderTop": f"2px solid {TEAL}",
+                   "borderBottom": f"2px solid {TEAL}"}
+
+
+def _block_air(t, block, unit, sel_i=None):
     sd = t["stop_depths"]
     ncol = 3 + len(sd) + 3
     thead = html.Thead([
@@ -222,13 +229,15 @@ def _block_air(t, block, unit):
         cells.append(_cell(r.get("tat", ""), {"color": TEAL, "fontWeight": 600, **rb}))
         cells.append(_cell(r.get("periods", ""), rb))
         cells.append(_cell(r.get("group", ""), {"fontWeight": 600, **rb}))
+        if i == sel_i:
+            _highlight(cells)
         body.append(html.Tr(cells, id={"type": "usn-prow", "i": i}, n_clicks=0,
                             className="usn-prow", style={"cursor": "pointer"}))
     return _wrap(html.Table([thead, html.Tbody(body)],
                             style={"borderCollapse": "collapse", "border": f"2px solid {FRAME}"}))
 
 
-def _block_simple(t, block, unit):
+def _block_simple(t, block, unit, sel_i=None):
     sd = t["stop_depths"]
     ncol = 2 + len(sd) + 2
     thead = html.Thead([
@@ -253,6 +262,8 @@ def _block_simple(t, block, unit):
             cells.append(_cell(stops.get(str(d), ""), {"background": "#fbfdff"}))
         cells.append(_cell(r.get("tat", ""), {"color": TEAL, "fontWeight": 600}))
         cells.append(_cell(r.get("group", ""), {"fontWeight": 600}))
+        if i == sel_i:
+            _highlight(cells)
         body.append(html.Tr(cells, id={"type": "usn-prow", "i": i}, n_clicks=0,
                             className="usn-prow", style={"cursor": "pointer"}))
     return _wrap(html.Table([thead, html.Tbody(body)],
@@ -290,8 +301,9 @@ def _depths(code, unit):
     Input("usn-table", "value"),
     Input("usn-depth", "value"),
     Input("usn-unit", "value"),
+    Input("usn-sel", "data"),
 )
-def _show(code, depth, unit):
+def _show(code, depth, unit, sel):
     if not code:
         return _not_loaded()
     t = usn.ui_table(code)
@@ -302,8 +314,10 @@ def _show(code, depth, unit):
         blk = res and res.get("block")
         if not blk:
             return _not_loaded()
+        sel_i = sel["i"] if (sel and sel.get("code") == code and sel.get("depth") == depth) else None
         sub = f"maximum diving depth {_depth(blk['depth'], unit)} {_ulabel(unit)}"
-        return html.Div([_rules_header(t, sub), _block(t, blk, unit)], className="usn-table-print")
+        return html.Div([_rules_header(t, sub), _block(t, blk, unit, sel_i)],
+                        className="usn-table-print")
     return html.Div([_rules_header(t), _grid(t, unit)], className="usn-table-print")
 
 
@@ -392,8 +406,16 @@ def _legs_for(t, block, i):
     descent_rate = 75 if gas == "air" else 60
     if t.get("variant") == "air" and row.get("type") == "airo2":
         air = rows[i - 1] if i > 0 and rows[i - 1].get("type") == "air" else row
-        return _legs_surdo2(bottom, sd, air.get("stops", {}), air.get("periods", ""),
-                            _bt(air), descent_rate)
+        try:
+            has_periods = float(air.get("periods") or 0) > 0
+        except (TypeError, ValueError):
+            has_periods = False
+        if has_periods:
+            return _legs_surdo2(bottom, sd, air.get("stops", {}), air.get("periods", ""),
+                                _bt(air), descent_rate)
+        # no chamber O2 -> show the in-water air/O2 profile from this row's own stops
+        return _legs_inwater(bottom, sd, row.get("stops", {}), "air", _bt(air),
+                             descent_rate, True)
     return _legs_inwater(bottom, sd, row.get("stops", {}), gas, _bt(row),
                          descent_rate, t.get("variant") == "air")
 
