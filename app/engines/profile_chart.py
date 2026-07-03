@@ -173,3 +173,79 @@ def build_figure(legs, native_unit="fsw", display_unit="ft", title=None, style_l
         hovermode="closest",
     )
     return fig
+
+
+# --------------------------------------------------------------------------- #
+# Multi-profile overlay (Compare Tables): colour by gas, dash by profile.
+# --------------------------------------------------------------------------- #
+PROFILE_DASH = ["solid", "dash", "dot", "dashdot"]
+
+
+def build_multi_figure(profiles, display_unit="m", title=None):
+    """profiles: [{legs, native_unit, label}]. Each profile is drawn coloured by
+    gas and with its own line dash so up to four overlay legibly. Time is the same
+    compressed scale used elsewhere (not to scale); run time is shown per profile."""
+    fig = go.Figure()
+    gases = set()
+    ulabel = "ft" if display_unit == "ft" else "m"
+    max_w = 0.0
+
+    for k, prof in enumerate(profiles):
+        legs = prof.get("legs") or []
+        native = prof.get("native_unit", "m")
+        dash = PROFILE_DASH[k % len(PROFILE_DASH)]
+        wt = rt = depth_ft = 0.0
+        for leg in legs:
+            gas = leg["gas"]
+            if leg["kind"] == "move":
+                to_ft = _to_ft(leg["to"], native)
+                rate = leg.get("rate_fpm") or 30
+                dur = abs(to_ft - depth_ft) / rate
+                w = _warp(dur)
+                y0, y1 = _disp(depth_ft, display_unit), _disp(to_ft, display_unit)
+                hover = (f"{prof['label']}<br>{GAS_LABEL.get(gas, gas)} \u00b7 "
+                         f"to {y1:g} {ulabel} \u00b7 t\u2248{rt + dur:.0f} min")
+                rt += dur
+                depth_ft = to_ft
+            else:
+                d_ft = _to_ft(leg["depth"], native)
+                depth_ft = d_ft
+                m = leg.get("min") or 0
+                w = _warp(m)
+                y0 = y1 = _disp(d_ft, display_unit)
+                where = "surface" if gas == "surface" else f"{y1:g} {ulabel} stop"
+                hover = (f"{prof['label']}<br>{GAS_LABEL.get(gas, gas)} \u00b7 {where} \u00b7 "
+                         f"{m:g} min \u00b7 t\u2248{rt + m:.0f} min")
+                rt += m
+            fig.add_trace(go.Scatter(
+                x=[round(wt, 3), round(wt + w, 3)], y=[y0, y1], mode="lines",
+                line=dict(color=GAS_COLOR.get(gas, "#374151"), width=2.5, dash=dash),
+                text=[hover, hover], hoverinfo="text", showlegend=False))
+            gases.add(gas)
+            wt += w
+        max_w = max(max_w, wt)
+        prof["_run"] = rt
+
+    for g in GAS_ORDER:
+        if g in gases:
+            fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines",
+                          line=dict(color=GAS_COLOR[g], width=3), name=GAS_LABEL[g],
+                          legendgroup="gas", hoverinfo="skip"))
+    for k, prof in enumerate(profiles):
+        fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines",
+                      line=dict(color="#6b7280", width=2, dash=PROFILE_DASH[k % len(PROFILE_DASH)]),
+                      name=f"{prof['label']}  \u00b7  run {prof.get('_run', 0):.0f} min",
+                      legendgroup="prof", hoverinfo="skip"))
+
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=13), x=0) if title else None,
+        xaxis=dict(title="Time \u2192 (compressed, not to scale)", showgrid=False,
+                   showticklabels=False, zeroline=False, range=[0, (max_w or 1) * 1.02]),
+        yaxis=dict(title=f"Depth ({ulabel})", autorange="reversed", showgrid=True,
+                   gridcolor="#e5e7eb", zeroline=False, rangemode="tozero"),
+        margin=dict(l=60, r=20, t=44 if title else 20, b=94),
+        height=440, plot_bgcolor="white", paper_bgcolor="white",
+        legend=dict(orientation="h", yanchor="top", y=-0.12, x=0, font=dict(size=11)),
+        hovermode="closest",
+    )
+    return fig

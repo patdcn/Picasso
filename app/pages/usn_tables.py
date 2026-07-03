@@ -17,6 +17,7 @@ from dash import html, dcc, Input, Output, State, callback, clientside_callback,
 from app import reports
 from app.engines import usn_tables as usn
 from app.engines import profile_chart
+from app.engines import profiles
 
 dash.register_page(__name__, path="/air-diving/usn-tables", name="US Navy Tables",
                    category="Air MG Diving", order=2)
@@ -334,126 +335,6 @@ def _show(code, depth, unit, sel):
     return html.Div([_rules_header(t), _grid(t, unit)], className="usn-table-print")
 
 
-def _gas_for(code):
-    if "N2O2" in code:
-        return "nitrox"
-    if "HEO2" in code:
-        return "heliox"
-    return "air"
-
-
-def _bt(r):
-    try:
-        return float(r.get("bt") or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _row_bt(rows, i):
-    """Bottom time for row i (falls back to the paired AIR row for AIR/O2 rows)."""
-    b = _bt(rows[i])
-    if b:
-        return b
-    for j in range(i - 1, -1, -1):
-        if rows[j].get("type") == "divider":
-            break
-        if rows[j].get("type") == "air":
-            return _bt(rows[j])
-    return 0.0
-
-
-def _legs_inwater(bottom, sd, stops, gas, bt, descent_rate, o2_shallow=False):
-    legs = [{"kind": "move", "to": bottom, "rate_fpm": descent_rate, "gas": gas,
-             "style": "descent", "phase": "water"}]
-    hold = max(bt - bottom / descent_rate, 0) if bt else 0
-    legs.append({"kind": "hold", "depth": bottom, "min": hold, "gas": gas, "phase": "water"})
-    last_gas = gas
-    for d in sd:                       # sd is deep -> shallow
-        v = stops.get(str(d))
-        if not v:
-            continue
-        g = "o2" if (o2_shallow and d <= 30) else gas   # air/O2: O2 at 30 & 20 fsw
-        legs.append({"kind": "move", "to": d, "rate_fpm": 30, "gas": g,
-                     "style": "ascent", "phase": "water"})
-        legs.append({"kind": "hold", "depth": d, "min": float(v), "gas": g, "phase": "water"})
-        last_gas = g
-    legs.append({"kind": "move", "to": 0, "rate_fpm": 30, "gas": last_gas,
-                 "style": "ascent", "phase": "water"})
-    return legs
-
-
-def _legs_surdo2(bottom, sd, air_stops, periods, bt, descent_rate):
-    # In-water air stops 40 fsw and deeper (never below the bottom), surface, then
-    # chamber O2 with the blow-down to 50 fsw done on air (per NDM 9-8.3.1).
-    legs = [{"kind": "move", "to": bottom, "rate_fpm": descent_rate, "gas": "air",
-             "style": "descent", "phase": "water"},
-            {"kind": "hold", "depth": bottom, "min": max(bt - bottom / descent_rate, 0) if bt else 0,
-             "gas": "air", "phase": "water"}]
-    cur = bottom
-    for d in sd:
-        if d >= bottom or d < 40:
-            continue
-        v = air_stops.get(str(d))
-        if v:
-            legs.append({"kind": "move", "to": d, "rate_fpm": 30, "gas": "air",
-                         "style": "ascent", "phase": "water"})
-            legs.append({"kind": "hold", "depth": d, "min": float(v), "gas": "air", "phase": "water"})
-            cur = d
-    if bottom >= 40 and cur > 40:
-        legs.append({"kind": "move", "to": 40, "rate_fpm": 30, "gas": "air",
-                     "style": "ascent", "phase": "water"})
-        cur = 40
-    legs.append({"kind": "move", "to": 0, "rate_fpm": 40, "gas": "air",
-                 "style": "surfacing", "phase": "water"})        # ascent to surface is in-water
-    legs.append({"kind": "hold", "depth": 0, "min": 2, "gas": "surface", "phase": "surface"})  # <=5 min
-    legs.append({"kind": "move", "to": 50, "rate_fpm": 100, "gas": "air",
-                 "style": "chamber", "phase": "surface"})        # blow-down on AIR
-    try:
-        p = float(periods or 0)
-    except (TypeError, ValueError):
-        p = 0
-    o2 = p * 30
-    at50 = min(15, o2)
-    at40 = max(o2 - at50, 0)
-    legs.append({"kind": "hold", "depth": 50, "min": at50, "gas": "o2", "phase": "surface"})
-    if at40 > 0:
-        legs.append({"kind": "move", "to": 40, "rate_fpm": 30, "gas": "o2",
-                     "style": "ascent", "phase": "surface"})
-        legs.append({"kind": "hold", "depth": 40, "min": at40, "gas": "o2", "phase": "surface"})
-    legs.append({"kind": "move", "to": 0, "rate_fpm": 30, "gas": "air",
-                 "style": "ascent", "phase": "surface"})
-    return legs
-
-
-def _legs_for(t, block, i, mode="inwater"):
-    rows = block["rows"]
-    if i < 0 or i >= len(rows):
-        return None
-    row = rows[i]
-    if row.get("type") == "divider":
-        return None
-    gas = _gas_for(t["code"])
-    bottom = block["depth"]
-    sd = t["stop_depths"]
-    is_air = t.get("variant") == "air"
-    descent_rate = 75 if gas == "air" else 60
-    # SurDO2 mode (air table only): use the bottom time's AIR row + chamber periods
-    if is_air and mode == "surdo2":
-        air = row if row.get("type") == "air" else \
-            (rows[i - 1] if i > 0 and rows[i - 1].get("type") == "air" else row)
-        try:
-            p = float(air.get("periods") or 0)
-        except (TypeError, ValueError):
-            p = 0
-        if p > 0:
-            return _legs_surdo2(bottom, sd, air.get("stops", {}), air.get("periods", ""),
-                                _bt(air), descent_rate)
-    # in-water: plot exactly the clicked row's own schedule
-    o2_shallow = is_air and row.get("type") == "airo2"
-    return _legs_inwater(bottom, sd, row.get("stops", {}), gas, _row_bt(rows, i),
-                         descent_rate, o2_shallow)
-
-
 def _chart_hint(show):
     if not show:
         return None
@@ -505,7 +386,7 @@ def _chart(sel, unit, mode, code):
     if not t or not blk:
         return _chart_hint(is_deco)
     mode = mode if (t.get("variant") == "air") else "inwater"
-    legs = _legs_for(t, blk, sel["i"], mode)
+    legs = profiles.usn_legs(t, blk, sel["i"], mode)
     if not legs:
         return _chart_hint(is_deco)
     disp = "m" if unit == "m" else "ft"

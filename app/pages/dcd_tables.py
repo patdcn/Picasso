@@ -18,6 +18,7 @@ from dash import html, dcc, Input, Output, State, callback, clientside_callback,
 from app import reports
 from app.engines import dcd_tables as dcd
 from app.engines import profile_chart
+from app.engines import profiles
 
 dash.register_page(__name__, path="/air-diving/dcd-tables", name="DCD Tables",
                    category="Air MG Diving", order=1)
@@ -290,91 +291,6 @@ def _show(code, depth, sel):
     return _render(t, sel_i)
 
 
-MPM = 3.28084          # m/min -> ft/min for the (ft-based) rate model
-DCD_STYLE_LABELS = {"ascent": "10 m/min ascent", "surfacing": "to surface",
-                    "chamber": "chamber recompression"}
-
-
-def _num(v):
-    try:
-        return float(v) if v not in (None, "") else None
-    except (TypeError, ValueError):
-        return None
-
-
-def _dcd_legs_inwater(family, block, row):
-    bottom = block["depth"]
-    gas = "nitrox" if (family.get("gas") or "").startswith("nitrox") else "air"
-    bt = _num(row.get("bt")) or 0
-    stops = row.get("stops", {})
-    sd = family["stop_depths"]
-    legs = [{"kind": "move", "to": bottom, "rate_fpm": 20 * MPM, "gas": gas,
-             "style": "descent", "phase": "water"},
-            {"kind": "hold", "depth": bottom, "min": max(bt - bottom / 20.0, 0),
-             "gas": gas, "phase": "water"}]
-    for d in sd:
-        v = _num(stops.get(str(d)))
-        if not v:
-            continue
-        legs.append({"kind": "move", "to": d, "rate_fpm": 10 * MPM, "gas": gas,
-                     "style": "ascent", "phase": "water"})
-        legs.append({"kind": "hold", "depth": d, "min": v, "gas": gas, "phase": "water"})
-    legs.append({"kind": "move", "to": 0, "rate_fpm": 10 * MPM, "gas": gas,
-                 "style": "ascent", "phase": "water"})
-    return legs
-
-
-def _dcd_legs_surdo2(family, block, row):
-    cols = family["columns"]
-    di = family["deco_i"]
-    bottom = block["depth"]
-    bt = _num(row[0]) if row else 0
-    legs = [{"kind": "move", "to": bottom, "rate_fpm": 20 * MPM, "gas": "air",
-             "style": "descent", "phase": "water"},
-            {"kind": "hold", "depth": bottom, "min": max((bt or 0) - bottom / 20.0, 0),
-             "gas": "air", "phase": "water"}]
-    iw = [(int(cols[i].split()[1]), _num(row[i]))
-          for i in range(2, di) if cols[i].lower().startswith("iw") and i < len(row) and _num(row[i])]
-    cur = bottom
-    for d, mins in iw:                      # in-water air stops, deep -> shallow
-        legs.append({"kind": "move", "to": d, "rate_fpm": 10 * MPM, "gas": "air",
-                     "style": "ascent", "phase": "water"})
-        legs.append({"kind": "hold", "depth": d, "min": mins, "gas": "air", "phase": "water"})
-        cur = d
-    legs.append({"kind": "move", "to": 0, "rate_fpm": 10 * MPM, "gas": "air",
-                 "style": "surfacing", "phase": "water"})        # ascent to surface is in-water
-    legs.append({"kind": "hold", "depth": 0, "min": 1.5, "gas": "surface", "phase": "surface"})
-    chamber = [(cols[i], _num(row[i]))
-               for i in range(2, di) if not cols[i].lower().startswith("iw")
-               and i < len(row) and _num(row[i]) is not None]
-    if chamber:
-        first_d = int(chamber[0][0].split()[1])
-        legs.append({"kind": "move", "to": first_d, "rate_fpm": 30 * MPM, "gas": "air",
-                     "style": "chamber", "phase": "surface"})   # blow-down on air
-        cur = first_d
-        for label, mins in chamber:
-            gas = "o2" if label.lower().replace(" ", "").startswith("ox") else "air"
-            d = int(label.split()[1])
-            if d < cur:
-                legs.append({"kind": "move", "to": d, "rate_fpm": 10 * MPM, "gas": "air",
-                             "style": "ascent", "phase": "surface"})   # chamber travel on air
-                cur = d
-            legs.append({"kind": "hold", "depth": d, "min": mins, "gas": gas, "phase": "surface"})
-        legs.append({"kind": "move", "to": 0, "rate_fpm": 10 * MPM, "gas": "air",
-                     "style": "ascent", "phase": "surface"})            # ascent to surface on air
-    return legs
-
-
-def _dcd_legs_for(t, block, i):
-    rows = block["rows"]
-    if i < 0 or i >= len(rows):
-        return None
-    if t["kind"] == "inwater":
-        return _dcd_legs_inwater(t, block, rows[i])
-    if t["kind"] == "surfaceox":
-        return _dcd_legs_surdo2(t, block, rows[i])
-    return None
-
 
 def _chart_hint(show):
     if not show:
@@ -423,12 +339,12 @@ def _chart(sel, code, depth):
         return _chart_hint(chartable)
     if not t or t.get("kind") not in ("inwater", "surfaceox"):
         return _chart_hint(chartable)
-    legs = _dcd_legs_for(t, t.get("block"), sel["i"])
+    legs = profiles.dcd_legs(t, t.get("block"), sel["i"])
     if not legs:
         return _chart_hint(chartable)
     fig = profile_chart.build_figure(
         legs, native_unit="m", display_unit="m",
-        title=f"{t['title']} \u2014 {depth} m dive profile", style_labels=DCD_STYLE_LABELS)
+        title=f"{t['title']} \u2014 {depth} m dive profile", style_labels=profiles.DCD_STYLE_LABELS)
     return dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "410px"})
 
 
