@@ -69,8 +69,11 @@ def _nice_ticks(total, n=6):
     return ticks
 
 
-def build_figure(legs, native_unit="fsw", display_unit="ft", title=None):
+def build_figure(legs, native_unit="fsw", display_unit="ft", title=None, style_labels=None):
     fig = go.Figure()
+    labels = dict(STYLE_LABEL)
+    if style_labels:
+        labels.update(style_labels)
     rt = wt = depth_ft = 0.0
     real_pts, warp_pts = [0.0], [0.0]
     gases, styles = set(), set()
@@ -143,7 +146,7 @@ def build_figure(legs, native_unit="fsw", display_unit="ft", title=None):
         if s in styles:
             fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines",
                           line=dict(color="#6b7280", width=2, dash=STYLE_DASH[s]),
-                          name=STYLE_LABEL[s], legendgroup="style", hoverinfo="skip"))
+                          name=labels[s], legendgroup="style", hoverinfo="skip"))
 
     ticks = _nice_ticks(total_r)
 

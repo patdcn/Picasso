@@ -13,10 +13,11 @@ finalized JSON from the /data volume (DCD_TABLES_JSON, default
 "not loaded" note instead of failing.
 """
 import dash
-from dash import html, dcc, Input, Output, callback, clientside_callback
+from dash import html, dcc, Input, Output, State, callback, clientside_callback, ALL, ctx, no_update
 
 from app import reports
 from app.engines import dcd_tables as dcd
+from app.engines import profile_chart
 
 dash.register_page(__name__, path="/air-diving/dcd-tables", name="DCD Tables",
                    category="Air MG Diving", order=1)
@@ -78,6 +79,8 @@ def layout():
                   "flexWrap": "wrap", "marginTop": "8px", "marginBottom": "6px"}),
 
         html.Div(id="dcd-table-output", style={"marginTop": "14px"}),
+        dcc.Store(id="dcd-sel"),
+        html.Div(id="dcd-chart", style={"marginTop": "10px"}),
         reports.print_footer(),
     ])
 
@@ -155,7 +158,21 @@ def _table(thead, body):
                              "border": f"2px solid {FRAME}"})
 
 
-def _grid_inwater(t, block):
+def _highlight(cells):
+    for c in cells:
+        c.style = {**(c.style or {}), "background": "#d1eee9", "color": TEAL,
+                   "fontWeight": 700, "borderTop": f"2px solid {TEAL}",
+                   "borderBottom": f"2px solid {TEAL}"}
+
+
+def _prow(cells, i, sel_i):
+    if i == sel_i:
+        _highlight(cells)
+    return html.Tr(cells, id={"type": "dcd-prow", "i": i}, n_clicks=0,
+                   className="dcd-prow", style={"cursor": "pointer"})
+
+
+def _grid_inwater(t, block, sel_i=None):
     sd = t["stop_depths"]
     thead = html.Thead([
         html.Tr([
@@ -168,7 +185,7 @@ def _grid_inwater(t, block):
         html.Tr([html.Th(str(d), style=_TH) for d in sd]),
     ])
     body, bold_done = [], False
-    for r in block["rows"]:
+    for i, r in enumerate(block["rows"]):
         thick = {}
         if r.get("backup") and not bold_done:
             bold_done = True
@@ -180,7 +197,7 @@ def _grid_inwater(t, block):
             cells.append(_cell(r["stops"].get(str(d), ""), {"background": "#fbfdff", **row_bg, **thick}))
         cells.append(_cell(r.get("deco"), {"color": TEAL, "fontWeight": 600, **row_bg, **thick}))
         cells.append(_cell(r.get("otu"), {**row_bg, **thick}))
-        body.append(html.Tr(cells))
+        body.append(_prow(cells, i, sel_i))
     return html.Div([_table(thead, body),
                      html.Div("Bold rule = air back-up line (in-water air only, as O2 / "
                               "surface-decompression back-up).",
@@ -188,7 +205,7 @@ def _grid_inwater(t, block):
                      if bold_done else None])
 
 
-def _grid_surfaceox(t, block):
+def _grid_surfaceox(t, block, sel_i=None):
     cols = t["columns"]
     di = t["deco_i"]
     iw_idx = [i for i in range(2, di) if cols[i].lower().startswith("iw")]
@@ -210,14 +227,14 @@ def _grid_surfaceox(t, block):
     thead = html.Thead([html.Tr(top), html.Tr(sub)])
 
     body = []
-    for r in block["rows"]:
+    for j, r in enumerate(block["rows"]):
         cells = [_cell(r[0] if len(r) > 0 else "", {"fontWeight": 700, "background": HEAD}),
                  _cell(r[1] if len(r) > 1 else "")]
         for i in iw_idx + ch_idx:
             cells.append(_cell(r[i] if i < len(r) else "", {"background": "#fbfdff"}))
         cells.append(_cell(r[di] if di < len(r) else "", {"color": TEAL, "fontWeight": 600}))
         cells.append(_cell(r[t["otu_i"]] if t["otu_i"] < len(r) else ""))
-        body.append(html.Tr(cells))
+        body.append(_prow(cells, j, sel_i))
     return _table(thead, body)
 
 
@@ -232,14 +249,15 @@ def _grid_reference(t):
     return _table(thead, body)
 
 
-def _render(t):
+def _render(t, sel_i=None):
     if t["kind"] == "reference":
         return html.Div([_rules_header(t), _grid_reference(t)], className="dcd-table-print")
     block = t.get("block")
     if not block:
         return _not_loaded()
     depth = block["depth"]
-    grid = _grid_inwater(t, block) if t["kind"] == "inwater" else _grid_surfaceox(t, block)
+    grid = _grid_inwater(t, block, sel_i) if t["kind"] == "inwater" \
+        else _grid_surfaceox(t, block, sel_i)
     return html.Div([_rules_header(t, depth), grid], className="dcd-table-print")
 
 
@@ -260,14 +278,158 @@ def _populate_depths(code):
     Output("dcd-table-output", "children"),
     Input("dcd-family", "value"),
     Input("dcd-depth", "value"),
+    Input("dcd-sel", "data"),
 )
-def _show(code, depth):
+def _show(code, depth, sel):
     if not code:
         return _not_loaded()
     t = dcd.ui_table(code, depth)
     if not t:
         return _not_loaded()
-    return _render(t)
+    sel_i = sel["i"] if (sel and sel.get("code") == code and sel.get("depth") == depth) else None
+    return _render(t, sel_i)
+
+
+MPM = 3.28084          # m/min -> ft/min for the (ft-based) rate model
+DCD_STYLE_LABELS = {"ascent": "10 m/min ascent", "surfacing": "to surface",
+                    "chamber": "chamber recompression"}
+
+
+def _num(v):
+    try:
+        return float(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _dcd_legs_inwater(family, block, row):
+    bottom = block["depth"]
+    gas = "nitrox" if (family.get("gas") or "").startswith("nitrox") else "air"
+    bt = _num(row.get("bt")) or 0
+    stops = row.get("stops", {})
+    sd = family["stop_depths"]
+    legs = [{"kind": "move", "to": bottom, "rate_fpm": 20 * MPM, "gas": gas,
+             "style": "descent", "phase": "water"},
+            {"kind": "hold", "depth": bottom, "min": max(bt - bottom / 20.0, 0),
+             "gas": gas, "phase": "water"}]
+    for d in sd:
+        v = _num(stops.get(str(d)))
+        if not v:
+            continue
+        legs.append({"kind": "move", "to": d, "rate_fpm": 10 * MPM, "gas": gas,
+                     "style": "ascent", "phase": "water"})
+        legs.append({"kind": "hold", "depth": d, "min": v, "gas": gas, "phase": "water"})
+    legs.append({"kind": "move", "to": 0, "rate_fpm": 10 * MPM, "gas": gas,
+                 "style": "ascent", "phase": "water"})
+    return legs
+
+
+def _dcd_legs_surdo2(family, block, row):
+    cols = family["columns"]
+    di = family["deco_i"]
+    bottom = block["depth"]
+    bt = _num(row[0]) if row else 0
+    legs = [{"kind": "move", "to": bottom, "rate_fpm": 20 * MPM, "gas": "air",
+             "style": "descent", "phase": "water"},
+            {"kind": "hold", "depth": bottom, "min": max((bt or 0) - bottom / 20.0, 0),
+             "gas": "air", "phase": "water"}]
+    iw = [(int(cols[i].split()[1]), _num(row[i]))
+          for i in range(2, di) if cols[i].lower().startswith("iw") and i < len(row) and _num(row[i])]
+    cur = bottom
+    for d, mins in iw:                      # in-water air stops, deep -> shallow
+        legs.append({"kind": "move", "to": d, "rate_fpm": 10 * MPM, "gas": "air",
+                     "style": "ascent", "phase": "water"})
+        legs.append({"kind": "hold", "depth": d, "min": mins, "gas": "air", "phase": "water"})
+        cur = d
+    legs.append({"kind": "move", "to": 0, "rate_fpm": 10 * MPM, "gas": "air",
+                 "style": "surfacing", "phase": "surface"})
+    legs.append({"kind": "hold", "depth": 0, "min": 1.5, "gas": "surface", "phase": "surface"})
+    chamber = [(cols[i], _num(row[i]))
+               for i in range(2, di) if not cols[i].lower().startswith("iw")
+               and i < len(row) and _num(row[i]) is not None]
+    if chamber:
+        first_d = int(chamber[0][0].split()[1])
+        legs.append({"kind": "move", "to": first_d, "rate_fpm": 30 * MPM, "gas": "air",
+                     "style": "chamber", "phase": "surface"})   # blow-down on air
+        cur = first_d
+        for label, mins in chamber:
+            gas = "o2" if label.lower().replace(" ", "").startswith("ox") else "air"
+            d = int(label.split()[1])
+            if d < cur:
+                legs.append({"kind": "move", "to": d, "rate_fpm": 10 * MPM, "gas": "o2",
+                             "style": "ascent", "phase": "surface"})
+                cur = d
+            legs.append({"kind": "hold", "depth": d, "min": mins, "gas": gas, "phase": "surface"})
+        legs.append({"kind": "move", "to": 0, "rate_fpm": 10 * MPM, "gas": "o2",
+                     "style": "ascent", "phase": "surface"})
+    return legs
+
+
+def _dcd_legs_for(t, block, i):
+    rows = block["rows"]
+    if i < 0 or i >= len(rows):
+        return None
+    if t["kind"] == "inwater":
+        return _dcd_legs_inwater(t, block, rows[i])
+    if t["kind"] == "surfaceox":
+        return _dcd_legs_surdo2(t, block, rows[i])
+    return None
+
+
+def _chart_hint(show):
+    if not show:
+        return None
+    return html.Div("Tip: click any schedule row above to plot its dive profile here "
+                    "(air/nitrox in-water families, or SOX/HSOX surface-O\u2082).",
+                    className="no-print",
+                    style={"color": MUTED, "fontSize": "0.82rem", "fontStyle": "italic",
+                           "marginTop": "4px"})
+
+
+@callback(
+    Output("dcd-sel", "data"),
+    Input({"type": "dcd-prow", "i": ALL}, "n_clicks"),
+    State("dcd-family", "value"),
+    State("dcd-depth", "value"),
+    prevent_initial_call=True,
+)
+def _select_row(_nclicks, code, depth):
+    trig = ctx.triggered_id
+    if not isinstance(trig, dict) or not ctx.triggered or not ctx.triggered[0]["value"]:
+        return no_update
+    return {"code": code, "depth": depth, "i": trig["i"]}
+
+
+@callback(
+    Output("dcd-sel", "data", allow_duplicate=True),
+    Input("dcd-family", "value"),
+    Input("dcd-depth", "value"),
+    prevent_initial_call=True,
+)
+def _clear_sel(_code, _depth):
+    return None
+
+
+@callback(
+    Output("dcd-chart", "children"),
+    Input("dcd-sel", "data"),
+    State("dcd-family", "value"),
+    State("dcd-depth", "value"),
+)
+def _chart(sel, code, depth):
+    t = dcd.ui_table(code, depth) if code else None
+    chartable = bool(t and t.get("kind") in ("inwater", "surfaceox"))
+    if not sel:
+        return _chart_hint(chartable)
+    if not t or t.get("kind") not in ("inwater", "surfaceox"):
+        return _chart_hint(chartable)
+    legs = _dcd_legs_for(t, t.get("block"), sel["i"])
+    if not legs:
+        return _chart_hint(chartable)
+    fig = profile_chart.build_figure(
+        legs, native_unit="m", display_unit="m",
+        title=f"{t['title']} \u2014 {depth} m dive profile", style_labels=DCD_STYLE_LABELS)
+    return dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "410px"})
 
 
 clientside_callback(
