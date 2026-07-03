@@ -184,6 +184,11 @@ def _grid(t, unit):
 
 # ---- air decompression per-depth block ----
 def _block(t, block, unit):
+    return _block_air(t, block, unit) if t.get("variant") == "air" \
+        else _block_simple(t, block, unit)
+
+
+def _block_air(t, block, unit):
     sd = t["stop_depths"]
     ncol = 3 + len(sd) + 3
     thead = html.Thead([
@@ -201,11 +206,7 @@ def _block(t, block, unit):
     body = []
     for r in block["rows"]:
         if r.get("type") == "divider":
-            body.append(html.Tr([html.Td(
-                r.get("text", ""), colSpan=ncol,
-                style={"border": f"1px solid {GRID}", "background": "#0f172a",
-                       "color": "#fbbf24", "fontSize": "0.7rem", "fontWeight": 700,
-                       "padding": "2px 8px", "textAlign": "left"})]))
+            body.append(_divider_row(r, ncol))
             continue
         is_air = r.get("type") == "air"
         rb = {} if is_air else {"background": "#f1f5f9"}
@@ -221,6 +222,44 @@ def _block(t, block, unit):
         body.append(html.Tr(cells))
     return _wrap(html.Table([thead, html.Tbody(body)],
                             style={"borderCollapse": "collapse", "border": f"2px solid {FRAME}"}))
+
+
+def _block_simple(t, block, unit):
+    sd = t["stop_depths"]
+    ncol = 2 + len(sd) + 2
+    thead = html.Thead([
+        html.Tr([
+            html.Th("bottom time (min)", rowSpan=2, style=_TH),
+            html.Th("to 1st stop (M:SS)", rowSpan=2, style=_TH),
+            html.Th(f"decompression stops ({_ulabel(unit)})", colSpan=len(sd), style=_TH),
+            html.Th("total ascent (M:SS)", rowSpan=2, style=_TH),
+            html.Th("repet group", rowSpan=2, style=_TH),
+        ]),
+        html.Tr([html.Th(_depth(d, unit), style=_TH) for d in sd]),
+    ])
+    body = []
+    for r in block["rows"]:
+        if r.get("type") == "divider":
+            body.append(_divider_row(r, ncol))
+            continue
+        cells = [_cell(r.get("bt", ""), {"fontWeight": 700, "background": HEAD}),
+                 _cell(r.get("tfs", ""))]
+        stops = r.get("stops", {})
+        for d in sd:
+            cells.append(_cell(stops.get(str(d), ""), {"background": "#fbfdff"}))
+        cells.append(_cell(r.get("tat", ""), {"color": TEAL, "fontWeight": 600}))
+        cells.append(_cell(r.get("group", ""), {"fontWeight": 600}))
+        body.append(html.Tr(cells))
+    return _wrap(html.Table([thead, html.Tbody(body)],
+                            style={"borderCollapse": "collapse", "border": f"2px solid {FRAME}"}))
+
+
+def _divider_row(r, ncol):
+    return html.Tr([html.Td(
+        r.get("text", ""), colSpan=ncol,
+        style={"border": f"1px solid {GRID}", "background": "#0f172a",
+               "color": "#fbbf24", "fontSize": "0.7rem", "fontWeight": 700,
+               "padding": "2px 8px", "textAlign": "left"})])
 
 
 # ------- callbacks -------
