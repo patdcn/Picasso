@@ -8,10 +8,10 @@ A landing page of link-cards; each opens a dedicated page:
   - Activity log         -> /admin/activity
 """
 import dash
-from dash import html, dcc
+from dash import html
 
 from app import auth
-from app.adminui import hub_card, ACCENT, MUTED
+from app.adminui import hub_card, MUTED
 
 dash.register_page(__name__, path="/admin", name="Admin")  # no category -> not in nav groups
 
@@ -42,7 +42,7 @@ def layout():
                   " without going through the public repo."],
                  "/admin/files", "Open data volume explorer"),
 
-        dcc.Link("\u2192 Activity log (sign-ins & tool usage)", href="/admin/activity",
-                 style={"color": ACCENT, "fontWeight": 600, "display": "inline-block",
-                        "marginTop": "2px"}),
+        hub_card("Activity log",
+                 "Sign-ins and tool usage across users \u2014 who accessed which tool and when.",
+                 "/admin/activity", "Open activity log"),
     ], style={"maxWidth": "680px"})
