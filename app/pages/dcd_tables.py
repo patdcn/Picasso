@@ -342,7 +342,7 @@ def _dcd_legs_surdo2(family, block, row):
         legs.append({"kind": "hold", "depth": d, "min": mins, "gas": "air", "phase": "water"})
         cur = d
     legs.append({"kind": "move", "to": 0, "rate_fpm": 10 * MPM, "gas": "air",
-                 "style": "surfacing", "phase": "surface"})
+                 "style": "surfacing", "phase": "water"})        # ascent to surface is in-water
     legs.append({"kind": "hold", "depth": 0, "min": 1.5, "gas": "surface", "phase": "surface"})
     chamber = [(cols[i], _num(row[i]))
                for i in range(2, di) if not cols[i].lower().startswith("iw")

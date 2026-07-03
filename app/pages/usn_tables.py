@@ -404,7 +404,7 @@ def _legs_surdo2(bottom, sd, air_stops, periods, bt, descent_rate):
                      "style": "ascent", "phase": "water"})
         cur = 40
     legs.append({"kind": "move", "to": 0, "rate_fpm": 40, "gas": "air",
-                 "style": "surfacing", "phase": "surface"})      # surface at 40 fpm
+                 "style": "surfacing", "phase": "water"})        # ascent to surface is in-water
     legs.append({"kind": "hold", "depth": 0, "min": 2, "gas": "surface", "phase": "surface"})  # <=5 min
     legs.append({"kind": "move", "to": 50, "rate_fpm": 100, "gas": "air",
                  "style": "chamber", "phase": "surface"})        # blow-down on AIR
