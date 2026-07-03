@@ -91,6 +91,16 @@ def layout():
                                inputStyle={"marginRight": "4px"},
                                labelStyle={"marginRight": "12px", "fontSize": "0.85rem"}),
             ]),
+            html.Div([
+                html.Label("Profile", style={"fontSize": "0.78rem", "fontWeight": 600,
+                                             "color": INK, "display": "block", "marginBottom": "3px"}),
+                dcc.RadioItems(id="usn-mode",
+                               options=[{"label": " in-water", "value": "inwater"},
+                                        {"label": " SurDO2", "value": "surdo2"}],
+                               value="inwater", inline=True,
+                               inputStyle={"marginRight": "4px"},
+                               labelStyle={"marginRight": "12px", "fontSize": "0.85rem"}),
+            ], id="usn-mode-wrap", style={"display": "none"}),
         ], className="no-print",
            style={"display": "flex", "gap": "18px", "alignItems": "flex-end",
                   "flexWrap": "wrap", "marginTop": "8px", "marginBottom": "6px"}),
@@ -283,6 +293,7 @@ def _divider_row(r, ncol):
     Output("usn-depth", "options"),
     Output("usn-depth", "value"),
     Output("usn-depth-wrap", "style"),
+    Output("usn-mode-wrap", "style"),
     Input("usn-table", "value"),
     Input("usn-unit", "value"),
 )
@@ -290,10 +301,12 @@ def _depths(code, unit):
     depths = usn.ui_depths(code)
     hidden = {"width": "150px", "display": "none"}
     shown = {"width": "150px", "display": "block"}
+    t = usn.ui_table(code) if code else None
+    mode_style = {"display": "block"} if (t and t.get("variant") == "air") else {"display": "none"}
     if not depths:
-        return [], None, hidden
+        return [], None, hidden, mode_style
     opts = [{"label": f"{_depth(d, unit)} {_ulabel(unit)}", "value": d} for d in depths]
-    return opts, depths[0], shown
+    return opts, depths[0], shown, mode_style
 
 
 @callback(
@@ -336,42 +349,62 @@ def _bt(r):
         return 0.0
 
 
-def _legs_inwater(bottom, sd, stops, gas, bt, descent_rate, is_air_table):
+def _row_bt(rows, i):
+    """Bottom time for row i (falls back to the paired AIR row for AIR/O2 rows)."""
+    b = _bt(rows[i])
+    if b:
+        return b
+    for j in range(i - 1, -1, -1):
+        if rows[j].get("type") == "divider":
+            break
+        if rows[j].get("type") == "air":
+            return _bt(rows[j])
+    return 0.0
+
+
+def _legs_inwater(bottom, sd, stops, gas, bt, descent_rate, o2_shallow=False):
     legs = [{"kind": "move", "to": bottom, "rate_fpm": descent_rate, "gas": gas,
              "style": "descent", "phase": "water"}]
     hold = max(bt - bottom / descent_rate, 0) if bt else 0
     legs.append({"kind": "hold", "depth": bottom, "min": hold, "gas": gas, "phase": "water"})
+    last_gas = gas
     for d in sd:                       # sd is deep -> shallow
         v = stops.get(str(d))
         if not v:
             continue
-        g = "o2" if (is_air_table and d <= 30) else gas   # air/O2: O2 at 30 & 20 fsw
+        g = "o2" if (o2_shallow and d <= 30) else gas   # air/O2: O2 at 30 & 20 fsw
         legs.append({"kind": "move", "to": d, "rate_fpm": 30, "gas": g,
                      "style": "ascent", "phase": "water"})
         legs.append({"kind": "hold", "depth": d, "min": float(v), "gas": g, "phase": "water"})
-    legs.append({"kind": "move", "to": 0, "rate_fpm": 30, "gas": gas,
+        last_gas = g
+    legs.append({"kind": "move", "to": 0, "rate_fpm": 30, "gas": last_gas,
                  "style": "ascent", "phase": "water"})
     return legs
 
 
 def _legs_surdo2(bottom, sd, air_stops, periods, bt, descent_rate):
-    # In-water air stops 40 fsw and deeper, surface, then chamber O2 (blow-down on air).
+    # In-water air stops 40 fsw and deeper (never below the bottom), surface, then
+    # chamber O2 with the blow-down to 50 fsw done on air (per NDM 9-8.3.1).
     legs = [{"kind": "move", "to": bottom, "rate_fpm": descent_rate, "gas": "air",
              "style": "descent", "phase": "water"},
             {"kind": "hold", "depth": bottom, "min": max(bt - bottom / descent_rate, 0) if bt else 0,
              "gas": "air", "phase": "water"}]
+    cur = bottom
     for d in sd:
-        if d < 40:
+        if d >= bottom or d < 40:
             continue
         v = air_stops.get(str(d))
         if v:
             legs.append({"kind": "move", "to": d, "rate_fpm": 30, "gas": "air",
                          "style": "ascent", "phase": "water"})
             legs.append({"kind": "hold", "depth": d, "min": float(v), "gas": "air", "phase": "water"})
-    legs.append({"kind": "move", "to": 40, "rate_fpm": 30, "gas": "air",
-                 "style": "ascent", "phase": "water"})
+            cur = d
+    if bottom >= 40 and cur > 40:
+        legs.append({"kind": "move", "to": 40, "rate_fpm": 30, "gas": "air",
+                     "style": "ascent", "phase": "water"})
+        cur = 40
     legs.append({"kind": "move", "to": 0, "rate_fpm": 40, "gas": "air",
-                 "style": "surfacing", "phase": "surface"})      # up to surface at 40 fpm
+                 "style": "surfacing", "phase": "surface"})      # surface at 40 fpm
     legs.append({"kind": "hold", "depth": 0, "min": 2, "gas": "surface", "phase": "surface"})  # <=5 min
     legs.append({"kind": "move", "to": 50, "rate_fpm": 100, "gas": "air",
                  "style": "chamber", "phase": "surface"})        # blow-down on AIR
@@ -392,39 +425,40 @@ def _legs_surdo2(bottom, sd, air_stops, periods, bt, descent_rate):
     return legs
 
 
-def _legs_for(t, block, i):
+def _legs_for(t, block, i, mode="inwater"):
     rows = block["rows"]
     if i < 0 or i >= len(rows):
         return None
     row = rows[i]
     if row.get("type") == "divider":
         return None
-    code = t["code"]
-    gas = _gas_for(code)
+    gas = _gas_for(t["code"])
     bottom = block["depth"]
     sd = t["stop_depths"]
+    is_air = t.get("variant") == "air"
     descent_rate = 75 if gas == "air" else 60
-    if t.get("variant") == "air" and row.get("type") == "airo2":
-        air = rows[i - 1] if i > 0 and rows[i - 1].get("type") == "air" else row
+    # SurDO2 mode (air table only): use the bottom time's AIR row + chamber periods
+    if is_air and mode == "surdo2":
+        air = row if row.get("type") == "air" else \
+            (rows[i - 1] if i > 0 and rows[i - 1].get("type") == "air" else row)
         try:
-            has_periods = float(air.get("periods") or 0) > 0
+            p = float(air.get("periods") or 0)
         except (TypeError, ValueError):
-            has_periods = False
-        if has_periods:
+            p = 0
+        if p > 0:
             return _legs_surdo2(bottom, sd, air.get("stops", {}), air.get("periods", ""),
                                 _bt(air), descent_rate)
-        # no chamber O2 -> show the in-water air/O2 profile from this row's own stops
-        return _legs_inwater(bottom, sd, row.get("stops", {}), "air", _bt(air),
-                             descent_rate, True)
-    return _legs_inwater(bottom, sd, row.get("stops", {}), gas, _bt(row),
-                         descent_rate, t.get("variant") == "air")
+    # in-water: plot exactly the clicked row's own schedule
+    o2_shallow = is_air and row.get("type") == "airo2"
+    return _legs_inwater(bottom, sd, row.get("stops", {}), gas, _row_bt(rows, i),
+                         descent_rate, o2_shallow)
 
 
 def _chart_hint(show):
     if not show:
         return None
-    return html.Div("Tip: click any schedule row above to plot its dive profile here "
-                    "(air rows show the in-water air profile; AIR/O2 rows show SurDO2).",
+    return html.Div("Tip: click any schedule row above to plot that row's dive profile here. "
+                    "For the air table, switch Profile to SurDO2 to see the surface-decompression run.",
                     className="no-print",
                     style={"color": MUTED, "fontSize": "0.82rem", "fontStyle": "italic",
                            "marginTop": "4px"})
@@ -458,9 +492,10 @@ def _clear_sel(_code, _depth):
     Output("usn-chart", "children"),
     Input("usn-sel", "data"),
     Input("usn-unit", "value"),
+    Input("usn-mode", "value"),
     State("usn-table", "value"),
 )
-def _chart(sel, unit, code):
+def _chart(sel, unit, mode, code):
     t = usn.ui_table(code) if code else None
     is_deco = bool(t and t.get("kind") == "deco_blocks")
     if not sel:
@@ -469,16 +504,18 @@ def _chart(sel, unit, code):
     blk = res and res.get("block")
     if not t or not blk:
         return _chart_hint(is_deco)
-    legs = _legs_for(t, blk, sel["i"])
+    mode = mode if (t.get("variant") == "air") else "inwater"
+    legs = _legs_for(t, blk, sel["i"], mode)
     if not legs:
         return _chart_hint(is_deco)
     disp = "m" if unit == "m" else "ft"
     dval = _depth(blk["depth"], unit)
+    kind = "SurDO2" if mode == "surdo2" else "dive"
     fig = profile_chart.build_figure(
         legs, native_unit="fsw", display_unit=disp,
-        title=f"{t['title']} \u2014 {dval} {_ulabel(unit)} dive profile")
+        title=f"{t['title']} \u2014 {dval} {_ulabel(unit)} {kind} profile")
     return dcc.Graph(figure=fig, config={"displayModeBar": False},
-                     style={"height": "380px"})
+                     style={"height": "410px"})
 
 
 clientside_callback(
