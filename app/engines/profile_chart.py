@@ -102,7 +102,9 @@ def build_figure(legs, native_unit="fsw", display_unit="ft", title=None, style_l
             w = _warp(dur)
             gas, style = leg["gas"], leg.get("style", "ascent")
             direction = "descend" if to_ft > depth_ft else "ascend"
-            hover = (f"{GAS_LABEL.get(gas, gas)} · {direction} {rate:g} ft/min<br>"
+            rdisp = rate if native_unit == "fsw" else rate * M_PER_FT
+            runit = "ft/min" if native_unit == "fsw" else "m/min"
+            hover = (f"{GAS_LABEL.get(gas, gas)} · {direction} {rdisp:.0f} {runit}<br>"
                      f"to {_disp(to_ft, display_unit):g} {ulabel} · t≈{rt + dur:.0f} min")
             seg(wt, depth_ft, wt + w, to_ft, gas, style, hover)
             wt += w

@@ -356,12 +356,12 @@ def _dcd_legs_surdo2(family, block, row):
             gas = "o2" if label.lower().replace(" ", "").startswith("ox") else "air"
             d = int(label.split()[1])
             if d < cur:
-                legs.append({"kind": "move", "to": d, "rate_fpm": 10 * MPM, "gas": "o2",
-                             "style": "ascent", "phase": "surface"})
+                legs.append({"kind": "move", "to": d, "rate_fpm": 10 * MPM, "gas": "air",
+                             "style": "ascent", "phase": "surface"})   # chamber travel on air
                 cur = d
             legs.append({"kind": "hold", "depth": d, "min": mins, "gas": gas, "phase": "surface"})
-        legs.append({"kind": "move", "to": 0, "rate_fpm": 10 * MPM, "gas": "o2",
-                     "style": "ascent", "phase": "surface"})
+        legs.append({"kind": "move", "to": 0, "rate_fpm": 10 * MPM, "gas": "air",
+                     "style": "ascent", "phase": "surface"})            # ascent to surface on air
     return legs
 
 
