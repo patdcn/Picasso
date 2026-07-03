@@ -12,10 +12,11 @@ Nitrox (N2O2), HeO2 and shallow-water tables extract from the same source and ar
 added as further entries in usn_tables.json.
 """
 import dash
-from dash import html, dcc, Input, Output, callback, clientside_callback
+from dash import html, dcc, Input, Output, State, callback, clientside_callback, ALL, ctx, no_update
 
 from app import reports
 from app.engines import usn_tables as usn
+from app.engines import profile_chart
 
 dash.register_page(__name__, path="/air-diving/usn-tables", name="US Navy Tables",
                    category="Air MG Diving", order=2)
@@ -95,6 +96,8 @@ def layout():
                   "flexWrap": "wrap", "marginTop": "8px", "marginBottom": "6px"}),
 
         html.Div(id="usn-output", style={"marginTop": "14px"}),
+        dcc.Store(id="usn-sel"),
+        html.Div(id="usn-chart", style={"marginTop": "10px"}),
         reports.print_footer(),
     ])
 
@@ -204,7 +207,7 @@ def _block_air(t, block, unit):
         html.Tr([html.Th(_depth(d, unit), style=_TH) for d in sd]),
     ])
     body = []
-    for r in block["rows"]:
+    for i, r in enumerate(block["rows"]):
         if r.get("type") == "divider":
             body.append(_divider_row(r, ncol))
             continue
@@ -219,7 +222,8 @@ def _block_air(t, block, unit):
         cells.append(_cell(r.get("tat", ""), {"color": TEAL, "fontWeight": 600, **rb}))
         cells.append(_cell(r.get("periods", ""), rb))
         cells.append(_cell(r.get("group", ""), {"fontWeight": 600, **rb}))
-        body.append(html.Tr(cells))
+        body.append(html.Tr(cells, id={"type": "usn-prow", "i": i}, n_clicks=0,
+                            className="usn-prow", style={"cursor": "pointer"}))
     return _wrap(html.Table([thead, html.Tbody(body)],
                             style={"borderCollapse": "collapse", "border": f"2px solid {FRAME}"}))
 
@@ -238,7 +242,7 @@ def _block_simple(t, block, unit):
         html.Tr([html.Th(_depth(d, unit), style=_TH) for d in sd]),
     ])
     body = []
-    for r in block["rows"]:
+    for i, r in enumerate(block["rows"]):
         if r.get("type") == "divider":
             body.append(_divider_row(r, ncol))
             continue
@@ -249,7 +253,8 @@ def _block_simple(t, block, unit):
             cells.append(_cell(stops.get(str(d), ""), {"background": "#fbfdff"}))
         cells.append(_cell(r.get("tat", ""), {"color": TEAL, "fontWeight": 600}))
         cells.append(_cell(r.get("group", ""), {"fontWeight": 600}))
-        body.append(html.Tr(cells))
+        body.append(html.Tr(cells, id={"type": "usn-prow", "i": i}, n_clicks=0,
+                            className="usn-prow", style={"cursor": "pointer"}))
     return _wrap(html.Table([thead, html.Tbody(body)],
                             style={"borderCollapse": "collapse", "border": f"2px solid {FRAME}"}))
 
@@ -300,6 +305,158 @@ def _show(code, depth, unit):
         sub = f"maximum diving depth {_depth(blk['depth'], unit)} {_ulabel(unit)}"
         return html.Div([_rules_header(t, sub), _block(t, blk, unit)], className="usn-table-print")
     return html.Div([_rules_header(t), _grid(t, unit)], className="usn-table-print")
+
+
+def _gas_for(code):
+    if "N2O2" in code:
+        return "nitrox"
+    if "HEO2" in code:
+        return "heliox"
+    return "air"
+
+
+def _bt(r):
+    try:
+        return float(r.get("bt") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _legs_inwater(bottom, sd, stops, gas, bt, descent_rate, is_air_table):
+    legs = [{"kind": "move", "to": bottom, "rate_fpm": descent_rate, "gas": gas,
+             "style": "descent", "phase": "water"}]
+    hold = max(bt - bottom / descent_rate, 0) if bt else 0
+    legs.append({"kind": "hold", "depth": bottom, "min": hold, "gas": gas, "phase": "water"})
+    for d in sd:                       # sd is deep -> shallow
+        v = stops.get(str(d))
+        if not v:
+            continue
+        g = "o2" if (is_air_table and d <= 30) else gas   # air/O2: O2 at 30 & 20 fsw
+        legs.append({"kind": "move", "to": d, "rate_fpm": 30, "gas": g,
+                     "style": "ascent", "phase": "water"})
+        legs.append({"kind": "hold", "depth": d, "min": float(v), "gas": g, "phase": "water"})
+    legs.append({"kind": "move", "to": 0, "rate_fpm": 30, "gas": gas,
+                 "style": "ascent", "phase": "water"})
+    return legs
+
+
+def _legs_surdo2(bottom, sd, air_stops, periods, bt, descent_rate):
+    # In-water air stops 40 fsw and deeper, surface, then chamber O2 (blow-down on air).
+    legs = [{"kind": "move", "to": bottom, "rate_fpm": descent_rate, "gas": "air",
+             "style": "descent", "phase": "water"},
+            {"kind": "hold", "depth": bottom, "min": max(bt - bottom / descent_rate, 0) if bt else 0,
+             "gas": "air", "phase": "water"}]
+    for d in sd:
+        if d < 40:
+            continue
+        v = air_stops.get(str(d))
+        if v:
+            legs.append({"kind": "move", "to": d, "rate_fpm": 30, "gas": "air",
+                         "style": "ascent", "phase": "water"})
+            legs.append({"kind": "hold", "depth": d, "min": float(v), "gas": "air", "phase": "water"})
+    legs.append({"kind": "move", "to": 40, "rate_fpm": 30, "gas": "air",
+                 "style": "ascent", "phase": "water"})
+    legs.append({"kind": "move", "to": 0, "rate_fpm": 40, "gas": "air",
+                 "style": "surfacing", "phase": "surface"})      # up to surface at 40 fpm
+    legs.append({"kind": "hold", "depth": 0, "min": 2, "gas": "surface", "phase": "surface"})  # <=5 min
+    legs.append({"kind": "move", "to": 50, "rate_fpm": 100, "gas": "air",
+                 "style": "chamber", "phase": "surface"})        # blow-down on AIR
+    try:
+        p = float(periods or 0)
+    except (TypeError, ValueError):
+        p = 0
+    o2 = p * 30
+    at50 = min(15, o2)
+    at40 = max(o2 - at50, 0)
+    legs.append({"kind": "hold", "depth": 50, "min": at50, "gas": "o2", "phase": "surface"})
+    if at40 > 0:
+        legs.append({"kind": "move", "to": 40, "rate_fpm": 30, "gas": "o2",
+                     "style": "ascent", "phase": "surface"})
+        legs.append({"kind": "hold", "depth": 40, "min": at40, "gas": "o2", "phase": "surface"})
+    legs.append({"kind": "move", "to": 0, "rate_fpm": 30, "gas": "air",
+                 "style": "ascent", "phase": "surface"})
+    return legs
+
+
+def _legs_for(t, block, i):
+    rows = block["rows"]
+    if i < 0 or i >= len(rows):
+        return None
+    row = rows[i]
+    if row.get("type") == "divider":
+        return None
+    code = t["code"]
+    gas = _gas_for(code)
+    bottom = block["depth"]
+    sd = t["stop_depths"]
+    descent_rate = 75 if gas == "air" else 60
+    if t.get("variant") == "air" and row.get("type") == "airo2":
+        air = rows[i - 1] if i > 0 and rows[i - 1].get("type") == "air" else row
+        return _legs_surdo2(bottom, sd, air.get("stops", {}), air.get("periods", ""),
+                            _bt(air), descent_rate)
+    return _legs_inwater(bottom, sd, row.get("stops", {}), gas, _bt(row),
+                         descent_rate, t.get("variant") == "air")
+
+
+def _chart_hint(show):
+    if not show:
+        return None
+    return html.Div("Tip: click any schedule row above to plot its dive profile here "
+                    "(air rows show the in-water air profile; AIR/O2 rows show SurDO2).",
+                    className="no-print",
+                    style={"color": MUTED, "fontSize": "0.82rem", "fontStyle": "italic",
+                           "marginTop": "4px"})
+
+
+@callback(
+    Output("usn-sel", "data"),
+    Input({"type": "usn-prow", "i": ALL}, "n_clicks"),
+    State("usn-table", "value"),
+    State("usn-depth", "value"),
+    prevent_initial_call=True,
+)
+def _select_row(_nclicks, code, depth):
+    trig = ctx.triggered_id
+    if not isinstance(trig, dict) or not ctx.triggered or not ctx.triggered[0]["value"]:
+        return no_update
+    return {"code": code, "depth": depth, "i": trig["i"]}
+
+
+@callback(
+    Output("usn-sel", "data", allow_duplicate=True),
+    Input("usn-table", "value"),
+    Input("usn-depth", "value"),
+    prevent_initial_call=True,
+)
+def _clear_sel(_code, _depth):
+    return None
+
+
+@callback(
+    Output("usn-chart", "children"),
+    Input("usn-sel", "data"),
+    Input("usn-unit", "value"),
+    State("usn-table", "value"),
+)
+def _chart(sel, unit, code):
+    t = usn.ui_table(code) if code else None
+    is_deco = bool(t and t.get("kind") == "deco_blocks")
+    if not sel:
+        return _chart_hint(is_deco)
+    res = usn.ui_block(sel["code"], sel["depth"])
+    blk = res and res.get("block")
+    if not t or not blk:
+        return _chart_hint(is_deco)
+    legs = _legs_for(t, blk, sel["i"])
+    if not legs:
+        return _chart_hint(is_deco)
+    disp = "m" if unit == "m" else "ft"
+    dval = _depth(blk["depth"], unit)
+    fig = profile_chart.build_figure(
+        legs, native_unit="fsw", display_unit=disp,
+        title=f"{t['title']} \u2014 {dval} {_ulabel(unit)} dive profile")
+    return dcc.Graph(figure=fig, config={"displayModeBar": False},
+                     style={"height": "380px"})
 
 
 clientside_callback(
