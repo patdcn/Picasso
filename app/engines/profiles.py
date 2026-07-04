@@ -224,20 +224,35 @@ def dcd_legs(t, block, i):
 def selectable_tables():
     out = []
     for f in dcd.ui_families():
-        if f["kind"] in ("inwater", "surfaceox"):
-            out.append({"label": "DCD \u00b7 " + f["label"], "value": f"dcd|{f['code']}|"})
+        if f["kind"] == "inwater":
+            out.append({"label": "DCD \u00b7 " + f["label"], "value": f"dcd|{f['code']}|",
+                        "cat": "inwater"})
+        elif f["kind"] == "surfaceox":
+            out.append({"label": "DCD \u00b7 " + f["label"], "value": f"dcd|{f['code']}|",
+                        "cat": "surdo2"})
     for tinfo in usn.ui_tables():
         t = usn.ui_table(tinfo["code"])
         if not t or t.get("kind") != "deco_blocks":
             continue
         if t.get("variant") == "air":
             out.append({"label": "USN \u00b7 " + tinfo["label"] + " (in-water)",
-                        "value": f"usn|{t['code']}|inwater"})
+                        "value": f"usn|{t['code']}|inwater", "cat": "inwater"})
             out.append({"label": "USN \u00b7 " + tinfo["label"] + " (SurDO2)",
-                        "value": f"usn|{t['code']}|surdo2"})
+                        "value": f"usn|{t['code']}|surdo2", "cat": "surdo2"})
         else:
-            out.append({"label": "USN \u00b7 " + tinfo["label"], "value": f"usn|{t['code']}|inwater"})
+            out.append({"label": "USN \u00b7 " + tinfo["label"],
+                        "value": f"usn|{t['code']}|inwater", "cat": "inwater"})
     return out
+
+
+CATEGORY_LABEL = {"inwater": "in-water", "surdo2": "surface-decompression (SurDO2)"}
+
+
+def table_category(value):
+    for o in selectable_tables():
+        if o["value"] == value:
+            return o["cat"]
+    return None
 
 
 def depths(value):

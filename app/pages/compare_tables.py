@@ -7,7 +7,7 @@ Each schedule is coloured by breathing gas and given its own line dash so the
 three read clearly. No-stop-limit and RNT tables are excluded.
 """
 import dash
-from dash import html, dcc, Input, Output, State, callback, MATCH, ALL
+from dash import html, dcc, Input, Output, State, callback, MATCH, ALL, no_update
 
 from app import reports
 from app.engines import profiles
@@ -27,6 +27,11 @@ PDF_BTN_STYLE = {"padding": "8px 14px", "borderRadius": "8px", "border": "none",
                  "cursor": "pointer", "fontSize": "0.85rem"}
 
 
+def _opts(cat=None):
+    return [{"label": o["label"], "value": o["value"]}
+            for o in profiles.selectable_tables() if cat is None or o["cat"] == cat]
+
+
 def _dd(id_, placeholder, options=None):
     return dcc.Dropdown(id=id_, options=options or [], placeholder=placeholder,
                         clearable=True, style={"fontSize": "0.8rem", "marginBottom": "6px"})
@@ -40,7 +45,7 @@ def _slot(k):
                   html.Span(f"Schedule {k + 1}", style={"fontWeight": 700, "fontSize": "0.82rem",
                                                         "color": INK})],
                  style={"marginBottom": "6px"}),
-        _dd({"type": "cmp-table", "k": k}, "table", profiles.selectable_tables()),
+        _dd({"type": "cmp-table", "k": k}, "table", _opts()),
         _dd({"type": "cmp-depth", "k": k}, "depth"),
         _dd({"type": "cmp-row", "k": k}, "bottom time"),
     ], style={"flex": "1 1 240px", "minWidth": "220px", "border": f"1px solid {LINE}",
@@ -60,9 +65,10 @@ def layout():
         html.H3("Compare Tables"),
         html.P("Pick up to three schedules from the DCD and US Navy in-water and "
                "surface-decompression tables; their dive profiles overlay on one chart "
-               "(depths shown in metres). Each schedule is coloured by gas and given its own "
-               "line style. Indicative, for commercial planning only \u2014 not for operational "
-               "decompression.",
+               "(depths shown in metres). Schedule 1 sets the type \u2014 schedules 2 and 3 are "
+               "then limited to the same kind (in-water with in-water, SurDO2 with SurDO2). Each "
+               "schedule is coloured by gas and given its own line style. Indicative, for commercial "
+               "planning only \u2014 not for operational decompression.",
                style={"color": MUTED, "maxWidth": "74ch", "lineHeight": 1.5}),
 
         html.Div([_slot(0), _slot(1), _slot(2)], className="no-print",
@@ -143,6 +149,28 @@ def _chart(row_vals, tables, depths):
     fig = profile_chart.build_multi_figure(profs, display_unit="m",
                                            title="Profile comparison (metres)")
     return dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "440px"})
+
+
+@callback(
+    Output({"type": "cmp-table", "k": 1}, "options"),
+    Output({"type": "cmp-table", "k": 2}, "options"),
+    Output({"type": "cmp-table", "k": 1}, "value"),
+    Output({"type": "cmp-table", "k": 2}, "value"),
+    Input({"type": "cmp-table", "k": 0}, "value"),
+    State({"type": "cmp-table", "k": 1}, "value"),
+    State({"type": "cmp-table", "k": 2}, "value"),
+    prevent_initial_call=True,
+)
+def _constrain(v0, v1, v2):
+    # Schedule 1 (slot 0) sets the category; schedules 2 and 3 are limited to it.
+    if not v0:
+        allo = _opts()
+        return allo, allo, no_update, no_update
+    cat = profiles.table_category(v0)
+    filt = _opts(cat)
+    keep1 = no_update if (v1 and profiles.table_category(v1) == cat) else None
+    keep2 = no_update if (v2 and profiles.table_category(v2) == cat) else None
+    return filt, filt, keep1, keep2
 
 
 dash.clientside_callback(
