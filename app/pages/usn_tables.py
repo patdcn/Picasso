@@ -104,15 +104,21 @@ def layout():
             ], id="usn-mode-wrap", style={"display": "none"}),
             html.Div([
                 html.Div([
-                    html.Label("Repetitive dive \u2014 previous group",
+                    html.Label("Previous dive \u2014 depth",
                                style={"fontSize": "0.78rem", "fontWeight": 600, "color": INK,
                                       "display": "block", "marginBottom": "3px"}),
-                    dcc.Dropdown(id="usn-rep-prev",
-                                 options=[{"label": "none (single dive)", "value": ""}] +
-                                         [{"label": f"group {g}", "value": g} for g in "ABCDEFGHIJKLMNO"] +
-                                         [{"label": "group Z", "value": "Z"}],
-                                 value="", clearable=False, style={"fontSize": "0.8rem"}),
-                ], style={"width": "210px"}),
+                    dcc.Dropdown(id="usn-prev-depth", options=[], placeholder="depth",
+                                 clearable=True, style={"fontSize": "0.8rem"}),
+                ], style={"width": "130px"}),
+                html.Div([
+                    html.Label("Previous bottom time",
+                               style={"fontSize": "0.78rem", "fontWeight": 600, "color": INK,
+                                      "display": "block", "marginBottom": "3px"}),
+                    dcc.Input(id="usn-prev-bt", type="number", min=0, step=1, placeholder="min",
+                              debounce=True, style={"width": "100%", "padding": "7px 9px",
+                                                    "borderRadius": "8px", "border": "1px solid #d1d5db",
+                                                    "boxSizing": "border-box", "fontSize": "0.85rem"}),
+                ], style={"width": "110px"}),
                 html.Div([
                     html.Label("Surface interval (h:mm)",
                                style={"fontSize": "0.78rem", "fontWeight": 600, "color": INK,
@@ -121,7 +127,7 @@ def layout():
                               debounce=True, style={"width": "100%", "padding": "7px 9px",
                                                     "borderRadius": "8px", "border": "1px solid #d1d5db",
                                                     "boxSizing": "border-box", "fontSize": "0.85rem"}),
-                ], style={"width": "130px"}),
+                ], style={"width": "120px"}),
             ], id="usn-rep-wrap", style={"display": "none"}),
         ], className="no-print",
            style={"display": "flex", "gap": "18px", "alignItems": "flex-end",
@@ -253,33 +259,38 @@ def _rep_note(text, tone="teal"):
                            "padding": "8px 12px", "margin": "6px 0", "fontSize": "0.85rem"})
 
 
-def _rep_banner(prev, si_str, si_min, newg, clean, rnt, depth, unit):
-    dlab = f"{_depth(depth, unit)} {_ulabel(unit)}"
+def _rep_banner(prev_depth, prev_bt, prev_group, si_str, si_min, newg, clean, rnt, depth, unit):
+    tag = html.Span("Repetitive dive  ", style={"fontWeight": 700})
+    if prev_depth is None or prev_bt is None:
+        return _rep_note([tag, "select a previous dive (depth + bottom time) and a surface interval "
+                          "to compute your group and residual nitrogen time."], tone="muted")
+    prev_lab = f"{_depth(prev_depth, unit)} {_ulabel(unit)} / {int(prev_bt)} min"
+    if not prev_group:
+        return _rep_note([tag, f"previous dive {prev_lab}: could not determine a repetitive group "
+                          "(beyond the tables)."], tone="amber")
+    grp = html.Span(f"group {prev_group}", style={"fontWeight": 700})
     if si_min is None:
-        return _rep_note([html.Span("Repetitive dive  ", style={"fontWeight": 700}),
-                          f"previous group {prev} \u2014 enter a surface interval (h:mm) to compute "
-                          "the new group and residual nitrogen time."], tone="muted")
+        return _rep_note([tag, f"previous dive {prev_lab} \u2192 ", grp,
+                          ".  Enter a surface interval (h:mm) for the new group and RNT."], tone="muted")
     si_lab = f"{si_min // 60}:{si_min % 60:02d}"
     if si_min < 10:
-        return _rep_note([html.Span("Repetitive dive  ", style={"fontWeight": 700}),
-                          f"surface interval {si_lab} is under 0:10 \u2014 the USN treats this as one "
-                          "continuous dive (add bottom times, use the deeper depth), not a repetitive "
-                          "dive."], tone="amber")
+        return _rep_note([tag, f"surface interval {si_lab} is under 0:10 \u2014 the USN treats this as "
+                          "one continuous dive, not a repetitive dive."], tone="amber")
     if clean:
-        return _rep_note([html.Span("Repetitive dive  ", style={"fontWeight": 700}),
-                          f"previous group {prev} \u00b7 surface interval {si_lab} \u2192 no residual "
-                          "nitrogen. The interval is long enough that this is not a repetitive dive \u2014 "
-                          "use actual bottom times. All schedules shown."], tone="teal")
-    body = [html.Span("Repetitive dive  ", style={"fontWeight": 700}),
-            html.Span(f"group {prev} \u00b7 surface interval {si_lab} \u2192 "),
+        return _rep_note([tag, f"previous dive {prev_lab} \u2192 ", grp,
+                          f" \u00b7 surface interval {si_lab} \u2192 no residual nitrogen. Long enough "
+                          "that this is not a repetitive dive \u2014 use actual bottom times. "
+                          "All schedules shown."], tone="teal")
+    line = [tag, f"previous dive {prev_lab} \u2192 ", grp, f" \u00b7 surface interval {si_lab} \u2192 ",
             html.Span(f"new group {newg}", style={"fontWeight": 700, "color": TEAL}),
-            html.Span(f" \u00b7 residual N\u2082 time at {dlab} = {rnt} min" if rnt is not None
-                      else " \u00b7 RNT not determinable at this depth (see NDM 9-9.1)")]
+            html.Span(f" \u00b7 residual N\u2082 time at {_depth(depth, unit)} {_ulabel(unit)} = {rnt} min"
+                      if rnt is not None else " \u00b7 RNT not determinable at this depth")]
+    if rnt is None:
+        return _rep_note([html.Div(line)], tone="amber")
     tail = html.Div("The bottom-time column is total bottom time (RNT + actual). Schedules whose total "
                     "is \u2264 RNT are hidden; \u201cact\u201d is the actual bottom time left after "
                     "residual nitrogen.", style={"fontSize": "0.76rem", "color": MUTED, "marginTop": "3px"})
-    return _rep_note([html.Div(body), tail] if rnt is not None else [html.Div(body)],
-                     tone="teal" if rnt is not None else "amber")
+    return _rep_note([html.Div(line), tail], tone="teal")
 
 
 def _highlight(cells):
@@ -390,6 +401,7 @@ def _divider_row(r, ncol):
     Output("usn-depth-wrap", "style"),
     Output("usn-mode-wrap", "style"),
     Output("usn-rep-wrap", "style"),
+    Output("usn-prev-depth", "options"),
     Input("usn-table", "value"),
     Input("usn-unit", "value"),
 )
@@ -400,11 +412,13 @@ def _depths(code, unit):
     t = usn.ui_table(code) if code else None
     is_air = bool(t and t.get("variant") == "air")
     mode_style = {"display": "block"} if is_air else {"display": "none"}
-    rep_style = {"display": "flex", "gap": "12px"} if is_air else {"display": "none"}
+    rep_style = {"display": "flex", "gap": "12px", "flexWrap": "wrap"} if is_air else {"display": "none"}
+    prev_opts = ([{"label": f"{_depth(d, unit)} {_ulabel(unit)}", "value": d}
+                  for d in usn.air_dive_depths()] if is_air else [])
     if not depths:
-        return [], None, hidden, mode_style, rep_style
+        return [], None, hidden, mode_style, rep_style, prev_opts
     opts = [{"label": f"{_depth(d, unit)} {_ulabel(unit)}", "value": d} for d in depths]
-    return opts, depths[0], shown, mode_style, rep_style
+    return opts, depths[0], shown, mode_style, rep_style, prev_opts
 
 
 @callback(
@@ -413,10 +427,11 @@ def _depths(code, unit):
     Input("usn-depth", "value"),
     Input("usn-unit", "value"),
     Input("usn-sel", "data"),
-    Input("usn-rep-prev", "value"),
+    Input("usn-prev-depth", "value"),
+    Input("usn-prev-bt", "value"),
     Input("usn-rep-si", "value"),
 )
-def _show(code, depth, unit, sel, prev, si_str):
+def _show(code, depth, unit, sel, prev_depth, prev_bt, si_str):
     if not code:
         return _not_loaded()
     t = usn.ui_table(code)
@@ -429,21 +444,24 @@ def _show(code, depth, unit, sel, prev, si_str):
             return _not_loaded()
         sel_i = sel["i"] if (sel and sel.get("code") == code and sel.get("depth") == depth) else None
         is_air = t.get("variant") == "air"
-        rnt = newg = None
+        active = is_air and prev_depth is not None and prev_bt is not None
+        prev_group = rnt = newg = None
         clean = False
         si_min = None
-        if is_air and prev:
+        if active:
+            prev_group = usn.group_for_air_dive(prev_depth, prev_bt)
             si_min = _parse_si(si_str)
-            if si_min is not None and si_min >= 10:
-                newg = usn.new_group_air(prev, si_min)
+            if prev_group and si_min is not None and si_min >= 10:
+                newg = usn.new_group_air(prev_group, si_min)
                 if newg is None:
                     clean = True
                 else:
                     rnt = usn.rnt_for(newg, blk["depth"])
         sub = f"maximum diving depth {_depth(blk['depth'], unit)} {_ulabel(unit)}"
         children = [_rules_header(t, sub)]
-        if is_air and prev:
-            children.append(_rep_banner(prev, si_str, si_min, newg, clean, rnt, blk["depth"], unit))
+        if is_air:
+            children.append(_rep_banner(prev_depth, prev_bt, prev_group, si_str, si_min,
+                                        newg, clean, rnt, blk["depth"], unit))
         children.append(_block(t, blk, unit, sel_i, rnt))
         return html.Div(children, className="usn-table-print")
     return html.Div([_rules_header(t), _grid(t, unit)], className="usn-table-print")

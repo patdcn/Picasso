@@ -105,6 +105,73 @@ def new_group_air(prev, si_min, path=None):
     return None                          # beyond the last bound -> not a repetitive dive
 
 
+def air_dive_depths(path=None):
+    """Depths (fsw) available for the previous-dive group lookup (from 9-7)."""
+    data = load_tables(path)
+    tbls = {t["code"]: t for t in (data or {}).get("tables", [])}
+    ndl = tbls.get("USN-NDL")
+    return sorted(r[0] for r in ndl["rows"]) if ndl else []
+
+
+def group_for_air_dive(depth, bt, path=None):
+    """Repetitive group at the end of an air dive to `depth` (fsw) for bottom
+    time `bt` (min): from the no-decompression table (9-7) if within the no-stop
+    limit, otherwise from the air decompression table's rep-group column (9-9).
+    Returns a group letter or None."""
+    if bt is None:
+        return None
+    data = load_tables(path)
+    if not data:
+        return None
+    tbls = {t["code"]: t for t in data.get("tables", [])}
+    ndl = tbls.get("USN-NDL")
+    row = None
+    if ndl:
+        rows = sorted(ndl["rows"], key=lambda r: r[0])
+        row = next((r for r in rows if r[0] >= depth), rows[-1] if rows else None)
+    if row is not None:
+        limit_raw = row[1]
+        is_deco = False
+        try:
+            if bt > float(limit_raw):
+                is_deco = True
+        except (TypeError, ValueError):
+            is_deco = False                      # "Unlimited"
+        if not is_deco:
+            cap = None
+            for g, tv in zip(ndl["columns"][2:], row[2:]):
+                if tv in (None, ""):
+                    continue
+                if tv == "*":
+                    return g
+                try:
+                    v = int(tv)
+                except (TypeError, ValueError):
+                    continue
+                cap = g
+                if bt <= v:
+                    return g
+            return cap
+    # decompression dive -> rep-group column of 9-9
+    dk = tbls.get("USN-AIR-DECO")
+    if dk:
+        blks = sorted(dk.get("depths", []), key=lambda d: d["depth"])
+        blk = next((d for d in blks if d["depth"] >= depth), blks[-1] if blks else None)
+        best = None
+        if blk:
+            for r in blk["rows"]:
+                if r.get("type") == "air" and r.get("group"):
+                    try:
+                        rbt = float(r.get("bt"))
+                    except (TypeError, ValueError):
+                        continue
+                    if rbt >= bt:
+                        return r["group"]
+                    best = r["group"]
+        return best
+    return None
+
+
 def ui_block(code, depth=None, path=None):
     """For a deco_blocks table, return {'table':t,'block':selected-or-first}."""
     t = ui_table(code, path)
