@@ -59,6 +59,35 @@ def ui_depths(code, path=None):
     return [d["depth"] for d in t.get("depths", [])]
 
 
+def rnt_groups(path=None):
+    """Repetitive groups selectable for the air RNT calculator (A..O; Z excluded
+    since a group-Z diver may not make a repetitive dive)."""
+    data = load_tables(path)
+    rnt = (data or {}).get("rnt_air") or {}
+    groups = [g for g in rnt.get("groups", []) if g != "Z"]
+    # present A..O ascending
+    return sorted(groups)
+
+
+def rnt_for(group, depth, path=None):
+    """Residual nitrogen time (minutes) for repetitive group `group` at `depth`
+    (fsw), from Table 9-8 (air dives). Returns an int, or None if not
+    determinable from the table. Dives shallower than 30 fsw use the 30 fsw
+    values (the table's "\u2020" rule)."""
+    data = load_tables(path)
+    rnt = (data or {}).get("rnt_air") or {}
+    bg = rnt.get("by_group", {}).get(group)
+    if not bg:
+        return None
+    avail = sorted(int(x) for x in bg.keys())
+    if not avail:
+        return None
+    d = 30 if depth < 30 else depth
+    deeper = [x for x in avail if x >= d]
+    key = str(min(deeper) if deeper else max(avail))
+    return bg.get(key)
+
+
 def ui_block(code, depth=None, path=None):
     """For a deco_blocks table, return {'table':t,'block':selected-or-first}."""
     t = ui_table(code, path)

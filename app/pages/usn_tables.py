@@ -102,6 +102,14 @@ def layout():
                                inputStyle={"marginRight": "4px"},
                                labelStyle={"marginRight": "12px", "fontSize": "0.85rem"}),
             ], id="usn-mode-wrap", style={"display": "none"}),
+            html.Div([
+                html.Label("Repetitive dive", style={"fontSize": "0.78rem", "fontWeight": 600,
+                                                     "color": INK, "display": "block", "marginBottom": "3px"}),
+                dcc.Dropdown(id="usn-rep-group",
+                             options=[{"label": "none (single dive)", "value": ""}] +
+                                     [{"label": f"group {g}", "value": g} for g in "ABCDEFGHIJKLMNO"],
+                             value="", clearable=False, style={"fontSize": "0.8rem"}),
+            ], id="usn-rep-wrap", style={"width": "180px", "display": "none"}),
         ], className="no-print",
            style={"display": "flex", "gap": "18px", "alignItems": "flex-end",
                   "flexWrap": "wrap", "marginTop": "8px", "marginBottom": "6px"}),
@@ -197,9 +205,30 @@ def _grid(t, unit):
 
 
 # ---- air decompression per-depth block ----
-def _block(t, block, unit, sel_i=None):
-    return _block_air(t, block, unit, sel_i) if t.get("variant") == "air" \
+def _block(t, block, unit, sel_i=None, rnt=None):
+    return _block_air(t, block, unit, sel_i, rnt) if t.get("variant") == "air" \
         else _block_simple(t, block, unit, sel_i)
+
+
+def _bt_num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _rep_banner(rep, rnt, depth, unit):
+    return html.Div([
+        html.Span("Repetitive dive  ", style={"fontWeight": 700}),
+        html.Span(f"group {rep} \u00b7 residual N\u2082 time at {_depth(depth, unit)} "
+                  f"{_ulabel(unit)} = {rnt} min"),
+        html.Div("The bottom-time column is total bottom time (RNT + actual). Schedules whose "
+                 "total is \u2264 RNT are hidden; \u201cact\u201d is the actual bottom time you have "
+                 "left after residual nitrogen.",
+                 style={"fontSize": "0.76rem", "color": MUTED, "marginTop": "3px"}),
+    ], className="no-print", style={"background": "#e6f2f1", "border": f"1px solid {TEAL}",
+                                    "borderRadius": "8px", "padding": "8px 12px",
+                                    "margin": "6px 0", "fontSize": "0.85rem"})
 
 
 def _highlight(cells):
@@ -209,7 +238,7 @@ def _highlight(cells):
                    "borderBottom": f"2px solid {TEAL}"}
 
 
-def _block_air(t, block, unit, sel_i=None):
+def _block_air(t, block, unit, sel_i=None, rnt=None):
     sd = t["stop_depths"]
     ncol = 3 + len(sd) + 3
     thead = html.Thead([
@@ -225,13 +254,27 @@ def _block_air(t, block, unit, sel_i=None):
         html.Tr([html.Th(_depth(d, unit), style=_TH) for d in sd]),
     ])
     body = []
+    skip_pair = False
     for i, r in enumerate(block["rows"]):
-        if r.get("type") == "divider":
+        typ = r.get("type")
+        if typ == "divider":
             body.append(_divider_row(r, ncol))
+            skip_pair = False
             continue
-        is_air = r.get("type") == "air"
+        is_air = typ == "air"
+        btn = _bt_num(r.get("bt")) if is_air else None
+        if is_air:
+            skip_pair = rnt is not None and btn is not None and btn <= rnt
+        if skip_pair:                       # hide this air row and its paired air/O2 row
+            continue
         rb = {} if is_air else {"background": "#f1f5f9"}
-        cells = [_cell(r.get("bt", ""), {"fontWeight": 700, "background": HEAD} if is_air else rb),
+        bt_content = r.get("bt", "")
+        if is_air and rnt is not None and btn is not None:
+            bt_content = html.Span([
+                html.Span(str(r.get("bt", ""))), html.Br(),
+                html.Span(f"act {int(round(btn - rnt))}",
+                          style={"fontSize": "0.68rem", "color": TEAL, "fontWeight": 600})])
+        cells = [_cell(bt_content, {"fontWeight": 700, "background": HEAD} if is_air else rb),
                  _cell(r.get("tfs", ""), rb),
                  _cell(r.get("gas", ""), {"fontWeight": 600, **rb})]
         stops = r.get("stops", {})
@@ -295,6 +338,7 @@ def _divider_row(r, ncol):
     Output("usn-depth", "value"),
     Output("usn-depth-wrap", "style"),
     Output("usn-mode-wrap", "style"),
+    Output("usn-rep-wrap", "style"),
     Input("usn-table", "value"),
     Input("usn-unit", "value"),
 )
@@ -303,11 +347,13 @@ def _depths(code, unit):
     hidden = {"width": "150px", "display": "none"}
     shown = {"width": "150px", "display": "block"}
     t = usn.ui_table(code) if code else None
-    mode_style = {"display": "block"} if (t and t.get("variant") == "air") else {"display": "none"}
+    is_air = bool(t and t.get("variant") == "air")
+    mode_style = {"display": "block"} if is_air else {"display": "none"}
+    rep_style = {"width": "180px", "display": "block"} if is_air else {"width": "180px", "display": "none"}
     if not depths:
-        return [], None, hidden, mode_style
+        return [], None, hidden, mode_style, rep_style
     opts = [{"label": f"{_depth(d, unit)} {_ulabel(unit)}", "value": d} for d in depths]
-    return opts, depths[0], shown, mode_style
+    return opts, depths[0], shown, mode_style, rep_style
 
 
 @callback(
@@ -316,8 +362,9 @@ def _depths(code, unit):
     Input("usn-depth", "value"),
     Input("usn-unit", "value"),
     Input("usn-sel", "data"),
+    Input("usn-rep-group", "value"),
 )
-def _show(code, depth, unit, sel):
+def _show(code, depth, unit, sel, rep):
     if not code:
         return _not_loaded()
     t = usn.ui_table(code)
@@ -329,9 +376,14 @@ def _show(code, depth, unit, sel):
         if not blk:
             return _not_loaded()
         sel_i = sel["i"] if (sel and sel.get("code") == code and sel.get("depth") == depth) else None
+        is_air = t.get("variant") == "air"
+        rnt = usn.rnt_for(rep, blk["depth"]) if (is_air and rep) else None
         sub = f"maximum diving depth {_depth(blk['depth'], unit)} {_ulabel(unit)}"
-        return html.Div([_rules_header(t, sub), _block(t, blk, unit, sel_i)],
-                        className="usn-table-print")
+        children = [_rules_header(t, sub)]
+        if rnt is not None:
+            children.append(_rep_banner(rep, rnt, blk["depth"], unit))
+        children.append(_block(t, blk, unit, sel_i, rnt))
+        return html.Div(children, className="usn-table-print")
     return html.Div([_rules_header(t), _grid(t, unit)], className="usn-table-print")
 
 
