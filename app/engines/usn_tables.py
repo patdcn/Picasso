@@ -88,6 +88,23 @@ def rnt_for(group, depth, path=None):
     return bg.get(key)
 
 
+def new_group_air(prev, si_min, path=None):
+    """New repetitive group after a surface interval, from the credit half of
+    Table 9-8 (air). `si_min` = surface interval in minutes. Returns the new
+    group letter, or None when the interval is long enough that it is no longer
+    a repetitive dive (the table's "*" rule). Returns `prev` unchanged if the
+    group is unknown."""
+    data = load_tables(path)
+    sic = (data or {}).get("sic_air") or {}
+    ordered = sic.get(prev)
+    if not ordered:
+        return prev
+    for ng, upper in ordered:            # ascending upper bounds
+        if si_min <= upper:
+            return ng
+    return None                          # beyond the last bound -> not a repetitive dive
+
+
 def ui_block(code, depth=None, path=None):
     """For a deco_blocks table, return {'table':t,'block':selected-or-first}."""
     t = ui_table(code, path)
