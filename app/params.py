@@ -41,6 +41,18 @@ REGISTRY = [
     # modules empty -> appears in the Admin assumptions card but adds no per-page
     # "edit parameters" checkbox (it's a global figure, not a per-page parameter).
     ("usd_eur_rate",                "USD \u2192 EUR exchange rate", "EUR per USD", "Currency", 0.92, 0.001, ()),
+    # Dive planning (Air MG Diving). The timing assumptions are the restrictable
+    # parameters on the page; the remaining rows seed the scenario defaults.
+    ("dp_descent_rate",       "Descent to worksite",               "m/min",  "Dive planning", 10.0, 1,   ("/air-diving/dive-planning",)),
+    ("dp_arrive_min",         "Arrive at worksite",                "min",    "Dive planning", 3.0,  0.5, ("/air-diving/dive-planning",)),
+    ("dp_return_min",         "Return from worksite",              "min",    "Dive planning", 3.0,  0.5, ("/air-diving/dive-planning",)),
+    ("dp_undress_min",        "Undress",                           "min",    "Dive planning", 3.0,  0.5, ("/air-diving/dive-planning",)),
+    ("dp_turnaround_min",     "Turn-around (next diver ready)",    "min",    "Dive planning", 15.0, 1,   ("/air-diving/dive-planning",)),
+    ("dp_divers_per_shift",   "Divers per shift (default)",        "divers", "Dive planning", 8.0,  1,   ("/air-diving/dive-planning",)),
+    ("dp_repeats_per_diver",  "Repeat dives per diver (default)",  "dives",  "Dive planning", 1.0,  1,   ("/air-diving/dive-planning",)),
+    ("dp_start_hour",         "Shift start hour (default)",        "h",      "Dive planning", 6.0,  1,   ("/air-diving/dive-planning",)),
+    ("dp_tidal_windows",      "Tidal slack windows / day (default)", "windows", "Dive planning", 4.0, 1, ("/air-diving/dive-planning",)),
+    ("dp_tidal_window_min",   "Work window per tide (default)",    "min",    "Dive planning", 90.0, 5,   ("/air-diving/dive-planning",)),
 ]
 
 _DEFAULTS = {k: dflt for (k, _l, _u, _c, dflt, _s, _m) in REGISTRY}
