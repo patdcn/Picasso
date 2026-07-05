@@ -29,6 +29,11 @@ LINE = "#d1d5db"
 HEAD = "#dbe4ec"
 GRID = "#94a3b8"
 FRAME = "#334155"
+
+# Shared label for the header controls: fixed height so 1- and 2-line labels
+# reserve the same space and every input lines up.
+LBL = {"fontSize": "0.78rem", "fontWeight": 600, "color": INK, "display": "block",
+       "marginBottom": "4px", "lineHeight": "1.15", "minHeight": "2.3em"}
 FT_TO_M = 0.3048
 
 PDF_BTN_STYLE = {"padding": "8px 14px", "borderRadius": "8px", "border": "none",
@@ -72,20 +77,17 @@ def layout():
 
         html.Div([
             html.Div([
-                html.Label("Table", style={"fontSize": "0.78rem", "fontWeight": 600,
-                                           "color": INK, "display": "block", "marginBottom": "3px"}),
+                html.Label("Table", style=LBL),
                 dcc.Dropdown(id="usn-table", options=_table_options(), value=default,
                              clearable=False, style={"fontSize": "0.82rem"}),
             ], style={"width": "440px"}),
             html.Div([
-                html.Label("Depth", style={"fontSize": "0.78rem", "fontWeight": 600,
-                                           "color": INK, "display": "block", "marginBottom": "3px"}),
+                html.Label("Depth", style=LBL),
                 dcc.Dropdown(id="usn-depth", options=[], value=None, clearable=False,
                              style={"fontSize": "0.82rem"}),
             ], id="usn-depth-wrap", style={"width": "150px", "display": "none"}),
             html.Div([
-                html.Label("Units", style={"fontSize": "0.78rem", "fontWeight": 600,
-                                           "color": INK, "display": "block", "marginBottom": "3px"}),
+                html.Label("Units", style=LBL),
                 dcc.RadioItems(id="usn-unit",
                                options=[{"label": " m", "value": "m"}, {"label": " ft", "value": "ft"}],
                                value="m", inline=True,
@@ -93,8 +95,7 @@ def layout():
                                labelStyle={"marginRight": "12px", "fontSize": "0.85rem"}),
             ]),
             html.Div([
-                html.Label("Profile", style={"fontSize": "0.78rem", "fontWeight": 600,
-                                             "color": INK, "display": "block", "marginBottom": "3px"}),
+                html.Label("Profile", style=LBL),
                 dcc.RadioItems(id="usn-mode",
                                options=[{"label": " in-water", "value": "inwater"},
                                         {"label": " SurDO2", "value": "surdo2"}],
@@ -105,15 +106,13 @@ def layout():
             html.Div([
                 html.Div([
                     html.Label("Previous dive \u2014 depth",
-                               style={"fontSize": "0.78rem", "fontWeight": 600, "color": INK,
-                                      "display": "block", "marginBottom": "3px"}),
+                               style=LBL),
                     dcc.Dropdown(id="usn-prev-depth", options=[], placeholder="depth",
                                  clearable=True, style={"fontSize": "0.8rem"}),
                 ], style={"width": "130px"}),
                 html.Div([
                     html.Label("Previous bottom time",
-                               style={"fontSize": "0.78rem", "fontWeight": 600, "color": INK,
-                                      "display": "block", "marginBottom": "3px"}),
+                               style=LBL),
                     dcc.Input(id="usn-prev-bt", type="number", min=0, step=1, placeholder="min",
                               debounce=True, style={"width": "100%", "padding": "7px 9px",
                                                     "borderRadius": "8px", "border": "1px solid #d1d5db",
@@ -121,8 +120,7 @@ def layout():
                 ], style={"width": "110px"}),
                 html.Div([
                     html.Label("Surface interval (h:mm)",
-                               style={"fontSize": "0.78rem", "fontWeight": 600, "color": INK,
-                                      "display": "block", "marginBottom": "3px"}),
+                               style=LBL),
                     dcc.Input(id="usn-rep-si", type="text", placeholder="e.g. 1:30", value="",
                               debounce=True, style={"width": "100%", "padding": "7px 9px",
                                                     "borderRadius": "8px", "border": "1px solid #d1d5db",
@@ -130,7 +128,7 @@ def layout():
                 ], style={"width": "120px"}),
             ], id="usn-rep-wrap", style={"display": "none"}),
         ], className="no-print",
-           style={"display": "flex", "gap": "18px", "alignItems": "flex-end",
+           style={"display": "flex", "gap": "18px", "alignItems": "flex-start",
                   "flexWrap": "wrap", "marginTop": "8px", "marginBottom": "6px"}),
 
         html.Div(id="usn-output", style={"marginTop": "14px"}),
