@@ -71,6 +71,14 @@ def layout():
                "planning only \u2014 not for operational decompression.",
                style={"color": MUTED, "maxWidth": "74ch", "lineHeight": 1.5}),
 
+        html.Div([
+            dcc.Checklist(id="cmp-dvis5",
+                          options=[{"label": " DVIS5 / IMCA exposure limits", "value": "on"}],
+                          value=["on"], inputStyle={"marginRight": "6px"},
+                          labelStyle={"fontSize": "0.82rem", "fontWeight": 600, "color": INK,
+                                      "display": "inline-flex", "alignItems": "center"}),
+        ], className="no-print", style={"marginTop": "6px", "marginBottom": "2px"}),
+
         html.Div([_slot(0), _slot(1), _slot(2)], className="no-print",
                  style={"display": "flex", "gap": "14px", "flexWrap": "wrap",
                         "marginTop": "8px", "marginBottom": "10px"}),
@@ -108,25 +116,35 @@ def _hint():
     Output({"type": "cmp-depth", "k": MATCH}, "options"),
     Output({"type": "cmp-depth", "k": MATCH}, "value"),
     Input({"type": "cmp-table", "k": MATCH}, "value"),
+    Input("cmp-dvis5", "value"),
     prevent_initial_call=True,
 )
-def _depths(value):
+def _depths(value, dvis5):
     if not value:
         return [], None
-    return [{"label": _dlabel(value, d), "value": d} for d in profiles.depths(value)], None
+    apply_limit = bool(dvis5)
+    opts = []
+    for d in profiles.depths(value):
+        o = {"label": _dlabel(value, d), "value": d}
+        if apply_limit and profiles.dvis5_limit(value, d) is None:
+            o["disabled"] = True            # beyond surface-supplied range -> SAT
+            o["label"] = _dlabel(value, d) + "  \u2014 SAT"
+        opts.append(o)
+    return opts, None
 
 
 @callback(
     Output({"type": "cmp-row", "k": MATCH}, "options"),
     Output({"type": "cmp-row", "k": MATCH}, "value"),
     Input({"type": "cmp-depth", "k": MATCH}, "value"),
+    Input("cmp-dvis5", "value"),
     State({"type": "cmp-table", "k": MATCH}, "value"),
     prevent_initial_call=True,
 )
-def _rows(depth, value):
+def _rows(depth, dvis5, value):
     if not value or depth is None:
         return [], None
-    return profiles.rows(value, depth), None
+    return profiles.rows(value, depth, apply_limit=bool(dvis5)), None
 
 
 @callback(

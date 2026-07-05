@@ -142,6 +142,73 @@ def _num(v):
         return None
 
 
+# --- HSE DVIS5 (Diving Information Sheet No.5) exposure limits ---------------
+# Maximum planned bottom time (surface to the start of decompression, minutes)
+# for surface-supplied air / nitrox (EAD) diving, using the DVIS5 Table 1 column
+# "Surface decompression and in-water decompression" -- the column that applies
+# to every table currently populated (both in-water and SurDO2 schedules).
+#
+# The table intentionally stops at 51 m / 170 fsw: surface-supplied air is not
+# permitted deeper under UK rules -- that regime becomes closed-bell /
+# saturation -- so any deeper schedule is treated as outside the limits (the
+# lookups return None, which the pages render as "no schedule selectable").
+#
+# Rows are (metres, fsw, limit_min). The metric and fsw keys are aligned exactly
+# as tabulated, so DCD looks up by metres and USN by fsw with no unit-conversion
+# drift (e.g. 50 fsw -> 180 min, matching the sheet, not 15.24 m rounded up).
+DVIS5_SURD_LIMITS = [
+    (12, 40, 240), (15, 50, 180), (18, 60, 120), (21, 70, 90),
+    (24, 80, 70), (27, 90, 60), (30, 100, 50), (33, 110, 40),
+    (36, 120, 35), (39, 130, 30), (42, 140, 30), (45, 150, 25),
+    (48, 160, 25), (51, 170, 20),
+]
+DVIS5_MAX_M = 51
+DVIS5_MAX_FSW = 170
+
+
+def _dvis5_lookup(depth, key):
+    """Applicable DVIS5 SurD/in-water bottom-time limit (min) for `depth`,
+    matching on the metres column (key=0) or the fsw column (key=1). A depth
+    that falls between tabulated rows rounds up to the next-deeper row (the
+    conservative choice). Returns None when the depth is beyond the table."""
+    d = _num(depth)
+    if d is None:
+        return None
+    for row in DVIS5_SURD_LIMITS:
+        if d <= row[key]:
+            return row[2]
+    return None
+
+
+def dvis5_limit_m(depth_m):
+    """DVIS5 SurD/in-water bottom-time limit (min) for a metric depth (DCD)."""
+    return _dvis5_lookup(depth_m, 0)
+
+
+def dvis5_limit_fsw(depth_fsw):
+    """DVIS5 SurD/in-water bottom-time limit (min) for an fsw depth (USN)."""
+    return _dvis5_lookup(depth_fsw, 1)
+
+
+def dvis5_limit(value, depth):
+    """DVIS5 limit (min) for a selectable-table value and its native depth
+    (metres for DCD, fsw for USN). None => the depth is beyond the DVIS5 table
+    (surface-supplied air not permitted; closed-bell / saturation regime)."""
+    if not value or depth is None:
+        return None
+    return dvis5_limit_m(depth) if value.split("|")[0] == "dcd" else dvis5_limit_fsw(depth)
+
+
+def dvis5_over(value, depth, bt):
+    """True when bottom time `bt` (min) exceeds the DVIS5 limit for this
+    table+depth, or when the depth is beyond the table altogether."""
+    lim = dvis5_limit(value, depth)
+    if lim is None:
+        return True
+    b = _num(bt)
+    return b is not None and b > lim
+
+
 def _dcd_inwater(family, block, row):
     bottom = block["depth"]
     gas = "nitrox" if (family.get("gas") or "").startswith("nitrox") else "air"
@@ -260,8 +327,22 @@ def depths(value):
     return dcd.ui_depths(code) if source == "dcd" else usn.ui_depths(code)
 
 
-def rows(value, depth):
+def rows(value, depth, apply_limit=False):
+    """Selectable schedule rows for a table+depth. When apply_limit is True,
+    rows whose bottom time exceeds the DVIS5 / IMCA limit (or every row, when the
+    depth is beyond the table) are marked disabled so the Compare dropdowns grey
+    them out and make them non-selectable."""
     source, code, _mode = value.split("|")
+    lim = dvis5_limit(value, depth) if apply_limit else None
+
+    def _disabled(bt):
+        if not apply_limit:
+            return False
+        if lim is None:                     # depth beyond the DVIS5 table
+            return True
+        b = _num(bt)
+        return b is not None and b > lim
+
     out = []
     if source == "dcd":
         t = dcd.ui_table(code, depth)
@@ -270,10 +351,15 @@ def rows(value, depth):
             return []
         for i, r in enumerate(blk["rows"]):
             if t["kind"] == "inwater":
-                lbl = f"{r.get('bt')} min" + ("  (backup)" if r.get("backup") else "")
+                bt = r.get("bt")
+                lbl = f"{bt} min" + ("  (backup)" if r.get("backup") else "")
             else:
-                lbl = f"{r[0]} min"
-            out.append({"label": lbl, "value": i})
+                bt = r[0]
+                lbl = f"{bt} min"
+            opt = {"label": lbl, "value": i}
+            if _disabled(bt):
+                opt["disabled"] = True
+            out.append(opt)
     else:
         res = usn.ui_block(code, depth)
         blk = res.get("block") if res else None
@@ -283,7 +369,10 @@ def rows(value, depth):
             if r.get("type") in ("divider", "airo2"):
                 continue
             if r.get("bt"):
-                out.append({"label": f"{r['bt']} min", "value": i})
+                opt = {"label": f"{r['bt']} min", "value": i}
+                if _disabled(r.get("bt")):
+                    opt["disabled"] = True
+                out.append(opt)
     return out
 
 

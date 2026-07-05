@@ -29,6 +29,15 @@ TEAL = "#0f766e"
 LINE = "#d1d5db"
 BACKUP_BG = "#f1f5f9"
 HEAD_BG = "#f8fafc"
+DVIS_BG = "#f3f4f6"      # greyed-out (over DVIS5 limit) row background
+DVIS_FG = "#aeb4bd"      # greyed-out row text
+
+
+def _btnum(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
 
 PDF_BTN_STYLE = {
     "padding": "8px 14px", "borderRadius": "8px", "border": "none",
@@ -75,6 +84,14 @@ def layout():
                       "DCD15", disabled=True, width="230px"),
             _dropdown("dcd-family", "Table family", _family_options(), default_code, width="360px"),
             _dropdown("dcd-depth", "Depth", [], None, width="150px"),
+            html.Div([
+                dcc.Checklist(
+                    id="dcd-dvis5",
+                    options=[{"label": " DVIS5 / IMCA exposure limits", "value": "on"}],
+                    value=["on"], inputStyle={"marginRight": "6px"},
+                    labelStyle={"fontSize": "0.82rem", "fontWeight": 600, "color": INK,
+                                "display": "inline-flex", "alignItems": "center"}),
+            ], style={"display": "flex", "alignItems": "center", "paddingBottom": "6px"}),
         ], className="no-print",
            style={"display": "flex", "gap": "16px", "alignItems": "flex-end",
                   "flexWrap": "wrap", "marginTop": "8px", "marginBottom": "6px"}),
@@ -166,14 +183,20 @@ def _highlight(cells):
                    "borderBottom": f"2px solid {TEAL}"}
 
 
-def _prow(cells, i, sel_i):
+def _prow(cells, i, sel_i, over=False):
+    if over:                                     # beyond DVIS5 limit: grey + no id
+        for c in cells:
+            c.style = {**(c.style or {}), "background": DVIS_BG, "color": DVIS_FG}
+        return html.Tr(cells, className="dvis5-over",
+                       style={"cursor": "not-allowed"},
+                       title="Beyond DVIS5 / IMCA exposure limit")
     if i == sel_i:
         _highlight(cells)
     return html.Tr(cells, id={"type": "dcd-prow", "i": i}, n_clicks=0,
                    className="dcd-prow", style={"cursor": "pointer"})
 
 
-def _grid_inwater(t, block, sel_i=None):
+def _grid_inwater(t, block, sel_i=None, apply_limit=False, limit=None):
     sd = t["stop_depths"]
     thead = html.Thead([
         html.Tr([
@@ -198,7 +221,9 @@ def _grid_inwater(t, block, sel_i=None):
             cells.append(_cell(r["stops"].get(str(d), ""), {"background": "#fbfdff", **row_bg, **thick}))
         cells.append(_cell(r.get("deco"), {"color": TEAL, "fontWeight": 600, **row_bg, **thick}))
         cells.append(_cell(r.get("otu"), {**row_bg, **thick}))
-        body.append(_prow(cells, i, sel_i))
+        btv = _btnum(r.get("bt"))
+        over = apply_limit and (limit is None or (btv is not None and btv > limit))
+        body.append(_prow(cells, i, sel_i, over))
     return html.Div([_table(thead, body),
                      html.Div("Bold rule = air back-up line (in-water air only, as O2 / "
                               "surface-decompression back-up).",
@@ -206,7 +231,7 @@ def _grid_inwater(t, block, sel_i=None):
                      if bold_done else None])
 
 
-def _grid_surfaceox(t, block, sel_i=None):
+def _grid_surfaceox(t, block, sel_i=None, apply_limit=False, limit=None):
     cols = t["columns"]
     di = t["deco_i"]
     iw_idx = [i for i in range(2, di) if cols[i].lower().startswith("iw")]
@@ -235,7 +260,9 @@ def _grid_surfaceox(t, block, sel_i=None):
             cells.append(_cell(r[i] if i < len(r) else "", {"background": "#fbfdff"}))
         cells.append(_cell(r[di] if di < len(r) else "", {"color": TEAL, "fontWeight": 600}))
         cells.append(_cell(r[t["otu_i"]] if t["otu_i"] < len(r) else ""))
-        body.append(_prow(cells, j, sel_i))
+        btv = _btnum(r[0] if len(r) > 0 else None)
+        over = apply_limit and (limit is None or (btv is not None and btv > limit))
+        body.append(_prow(cells, j, sel_i, over))
     return _table(thead, body)
 
 
@@ -250,16 +277,39 @@ def _grid_reference(t):
     return _table(thead, body)
 
 
-def _render(t, sel_i=None):
+def _dvis5_note(apply_limit, limit, beyond, depth):
+    if not apply_limit:
+        return None
+    if beyond:
+        msg = (f"DVIS5 / IMCA exposure limits: {depth} m is beyond the surface-supplied "
+               "air range (maximum 51 m) \u2014 this depth requires closed-bell / saturation "
+               "diving, so no schedule is selectable here.")
+        bg, bd, fg = "#fef2f2", "#fecaca", "#991b1b"
+    else:
+        msg = ("DVIS5 / IMCA exposure limits applied \u2014 maximum planned bottom time at "
+               f"{depth} m is {limit} min (surface-decompression / in-water column). Longer "
+               "schedules are greyed out and cannot be selected.")
+        bg, bd, fg = "#eff6ff", "#bfdbfe", "#1e3a8a"
+    return html.Div(msg, className="no-print",
+                    style={"background": bg, "border": f"1px solid {bd}", "color": fg,
+                           "borderRadius": "8px", "padding": "8px 12px",
+                           "fontSize": "0.8rem", "margin": "6px 0"})
+
+
+def _render(t, sel_i=None, apply_limit=False):
     if t["kind"] == "reference":
         return html.Div([_rules_header(t), _grid_reference(t)], className="dcd-table-print")
     block = t.get("block")
     if not block:
         return _not_loaded()
     depth = block["depth"]
-    grid = _grid_inwater(t, block, sel_i) if t["kind"] == "inwater" \
-        else _grid_surfaceox(t, block, sel_i)
-    return html.Div([_rules_header(t, depth), grid], className="dcd-table-print")
+    limit = profiles.dvis5_limit_m(depth) if apply_limit else None
+    beyond = apply_limit and limit is None
+    grid = _grid_inwater(t, block, sel_i, apply_limit, limit) if t["kind"] == "inwater" \
+        else _grid_surfaceox(t, block, sel_i, apply_limit, limit)
+    note = _dvis5_note(apply_limit, limit, beyond, depth)
+    parts = [_rules_header(t, depth)] + ([note] if note else []) + [grid]
+    return html.Div(parts, className="dcd-table-print")
 
 
 @callback(
@@ -280,15 +330,16 @@ def _populate_depths(code):
     Input("dcd-family", "value"),
     Input("dcd-depth", "value"),
     Input("dcd-sel", "data"),
+    Input("dcd-dvis5", "value"),
 )
-def _show(code, depth, sel):
+def _show(code, depth, sel, dvis5):
     if not code:
         return _not_loaded()
     t = dcd.ui_table(code, depth)
     if not t:
         return _not_loaded()
     sel_i = sel["i"] if (sel and sel.get("code") == code and sel.get("depth") == depth) else None
-    return _render(t, sel_i)
+    return _render(t, sel_i, apply_limit=bool(dvis5))
 
 
 
@@ -320,9 +371,10 @@ def _select_row(_nclicks, code, depth):
     Output("dcd-sel", "data", allow_duplicate=True),
     Input("dcd-family", "value"),
     Input("dcd-depth", "value"),
+    Input("dcd-dvis5", "value"),
     prevent_initial_call=True,
 )
-def _clear_sel(_code, _depth):
+def _clear_sel(_code, _depth, _dvis5):
     return None
 
 

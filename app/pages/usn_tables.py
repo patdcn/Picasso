@@ -29,6 +29,8 @@ LINE = "#d1d5db"
 HEAD = "#dbe4ec"
 GRID = "#94a3b8"
 FRAME = "#334155"
+DVIS_BG = "#f3f4f6"     # greyed-out (over DVIS5 limit) row background
+DVIS_FG = "#aeb4bd"     # greyed-out row text
 
 # Shared label for the header controls: fixed height so 1- and 2-line labels
 # reserve the same space and every input lines up.
@@ -93,6 +95,14 @@ def layout():
                                value="m", inline=True,
                                inputStyle={"marginRight": "4px"},
                                labelStyle={"marginRight": "12px", "fontSize": "0.85rem"}),
+            ]),
+            html.Div([
+                html.Label("Exposure limits", style=LBL),
+                dcc.Checklist(id="usn-dvis5",
+                              options=[{"label": " DVIS5 / IMCA exposure limits", "value": "on"}],
+                              value=["on"], inputStyle={"marginRight": "6px"},
+                              labelStyle={"fontSize": "0.82rem", "fontWeight": 600, "color": INK,
+                                          "display": "inline-flex", "alignItems": "center"}),
             ]),
             html.Div([
                 html.Label("Profile", style=LBL),
@@ -221,10 +231,31 @@ def _grid(t, unit):
                             style={"borderCollapse": "collapse", "border": f"2px solid {FRAME}"}))
 
 
+def _dvis5_note(apply_limit, limit, beyond, depth_fsw, unit):
+    if not apply_limit:
+        return None
+    dstr = f"{_depth(depth_fsw, unit)} {_ulabel(unit)}"
+    if beyond:
+        msg = ("DVIS5 / IMCA exposure limits: " + dstr + " is beyond the surface-supplied air "
+               "range (maximum 51 m / 170 fsw) \u2014 this depth requires closed-bell / "
+               "saturation diving, so no schedule is selectable here.")
+        bg, bd, fg = "#fef2f2", "#fecaca", "#991b1b"
+    else:
+        msg = ("DVIS5 / IMCA exposure limits applied \u2014 maximum planned bottom time at "
+               + dstr + f" is {limit} min (surface-decompression / in-water column). Longer "
+               "schedules are greyed out and cannot be selected.")
+        bg, bd, fg = "#eff6ff", "#bfdbfe", "#1e3a8a"
+    return html.Div(msg, className="no-print",
+                    style={"background": bg, "border": f"1px solid {bd}", "color": fg,
+                           "borderRadius": "8px", "padding": "8px 12px",
+                           "fontSize": "0.8rem", "margin": "6px 0"})
+
+
 # ---- air decompression per-depth block ----
-def _block(t, block, unit, sel_i=None, rnt=None):
-    return _block_air(t, block, unit, sel_i, rnt) if t.get("variant") == "air" \
-        else _block_simple(t, block, unit, sel_i)
+def _block(t, block, unit, sel_i=None, rnt=None, apply_limit=False, limit=None):
+    return _block_air(t, block, unit, sel_i, rnt, apply_limit, limit) \
+        if t.get("variant") == "air" \
+        else _block_simple(t, block, unit, sel_i, apply_limit, limit)
 
 
 def _bt_num(v):
@@ -298,7 +329,7 @@ def _highlight(cells):
                    "borderBottom": f"2px solid {TEAL}"}
 
 
-def _block_air(t, block, unit, sel_i=None, rnt=None):
+def _block_air(t, block, unit, sel_i=None, rnt=None, apply_limit=False, limit=None):
     sd = t["stop_depths"]
     ncol = 3 + len(sd) + 3
     thead = html.Thead([
@@ -315,16 +346,19 @@ def _block_air(t, block, unit, sel_i=None, rnt=None):
     ])
     body = []
     skip_pair = False
+    over_current = False
     for i, r in enumerate(block["rows"]):
         typ = r.get("type")
         if typ == "divider":
             body.append(_divider_row(r, ncol))
             skip_pair = False
+            over_current = False
             continue
         is_air = typ == "air"
         btn = _bt_num(r.get("bt")) if is_air else None
         if is_air:
             skip_pair = rnt is not None and btn is not None and btn <= rnt
+            over_current = apply_limit and (limit is None or (btn is not None and btn > limit))
         if skip_pair:                       # hide this air row and its paired air/O2 row
             continue
         rb = {} if is_air else {"background": "#f1f5f9"}
@@ -343,6 +377,13 @@ def _block_air(t, block, unit, sel_i=None, rnt=None):
         cells.append(_cell(r.get("tat", ""), {"color": TEAL, "fontWeight": 600, **rb}))
         cells.append(_cell(r.get("periods", ""), rb))
         cells.append(_cell(r.get("group", ""), {"fontWeight": 600, **rb}))
+        if over_current:                    # beyond DVIS5 limit: grey + non-clickable
+            for c in cells:
+                c.style = {**(c.style or {}), "background": DVIS_BG, "color": DVIS_FG}
+            body.append(html.Tr(cells, className="dvis5-over",
+                                style={"cursor": "not-allowed"},
+                                title="Beyond DVIS5 / IMCA exposure limit"))
+            continue
         if i == sel_i:
             _highlight(cells)
         body.append(html.Tr(cells, id={"type": "usn-prow", "i": i}, n_clicks=0,
@@ -351,7 +392,7 @@ def _block_air(t, block, unit, sel_i=None, rnt=None):
                             style={"borderCollapse": "collapse", "border": f"2px solid {FRAME}"}))
 
 
-def _block_simple(t, block, unit, sel_i=None):
+def _block_simple(t, block, unit, sel_i=None, apply_limit=False, limit=None):
     sd = t["stop_depths"]
     ncol = 2 + len(sd) + 2
     thead = html.Thead([
@@ -376,6 +417,15 @@ def _block_simple(t, block, unit, sel_i=None):
             cells.append(_cell(stops.get(str(d), ""), {"background": "#fbfdff"}))
         cells.append(_cell(r.get("tat", ""), {"color": TEAL, "fontWeight": 600}))
         cells.append(_cell(r.get("group", ""), {"fontWeight": 600}))
+        btn = _bt_num(r.get("bt"))
+        over = apply_limit and (limit is None or (btn is not None and btn > limit))
+        if over:                            # beyond DVIS5 limit: grey + non-clickable
+            for c in cells:
+                c.style = {**(c.style or {}), "background": DVIS_BG, "color": DVIS_FG}
+            body.append(html.Tr(cells, className="dvis5-over",
+                                style={"cursor": "not-allowed"},
+                                title="Beyond DVIS5 / IMCA exposure limit"))
+            continue
         if i == sel_i:
             _highlight(cells)
         body.append(html.Tr(cells, id={"type": "usn-prow", "i": i}, n_clicks=0,
@@ -428,8 +478,9 @@ def _depths(code, unit):
     Input("usn-prev-depth", "value"),
     Input("usn-prev-bt", "value"),
     Input("usn-rep-si", "value"),
+    Input("usn-dvis5", "value"),
 )
-def _show(code, depth, unit, sel, prev_depth, prev_bt, si_str):
+def _show(code, depth, unit, sel, prev_depth, prev_bt, si_str, dvis5):
     if not code:
         return _not_loaded()
     t = usn.ui_table(code)
@@ -455,12 +506,18 @@ def _show(code, depth, unit, sel, prev_depth, prev_bt, si_str):
                     clean = True
                 else:
                     rnt = usn.rnt_for(newg, blk["depth"])
+        apply_limit = bool(dvis5)
+        limit = profiles.dvis5_limit_fsw(blk["depth"]) if apply_limit else None
+        beyond = apply_limit and limit is None
         sub = f"maximum diving depth {_depth(blk['depth'], unit)} {_ulabel(unit)}"
         children = [_rules_header(t, sub)]
         if is_air:
             children.append(_rep_banner(prev_depth, prev_bt, prev_group, si_str, si_min,
                                         newg, clean, rnt, blk["depth"], unit))
-        children.append(_block(t, blk, unit, sel_i, rnt))
+        note = _dvis5_note(apply_limit, limit, beyond, blk["depth"], unit)
+        if note:
+            children.append(note)
+        children.append(_block(t, blk, unit, sel_i, rnt, apply_limit, limit))
         return html.Div(children, className="usn-table-print")
     return html.Div([_rules_header(t), _grid(t, unit)], className="usn-table-print")
 
@@ -493,9 +550,10 @@ def _select_row(_nclicks, code, depth):
     Output("usn-sel", "data", allow_duplicate=True),
     Input("usn-table", "value"),
     Input("usn-depth", "value"),
+    Input("usn-dvis5", "value"),
     prevent_initial_call=True,
 )
-def _clear_sel(_code, _depth):
+def _clear_sel(_code, _depth, _dvis5):
     return None
 
 
