@@ -351,18 +351,18 @@ def rows(value, depth, apply_limit=False):
             return []
         for i, r in enumerate(blk["rows"]):
             if t["kind"] == "inwater":
-                # The air back-up line is a separate schedule (shown with a bold
-                # rule on the DCD page); keep the Compare list to the primary
-                # in-water schedules for the selected table only.
-                if r.get("backup"):
-                    continue
                 bt = r.get("bt")
+                is_backup = bool(r.get("backup"))
             else:
                 bt = r[0]
+                is_backup = False
             opt = {"label": f"{bt} min", "value": i}
-            if _disabled(bt):
+            if _disabled(bt):                       # beyond the DVIS5 limit
                 opt["disabled"] = True
                 opt["title"] = "DVIS5 limited"
+            elif is_backup:                         # air back-up line: show, but not a primary pick
+                opt["disabled"] = True
+                opt["title"] = "air back-up (not selectable)"
             out.append(opt)
     else:
         res = usn.ui_block(code, depth)
