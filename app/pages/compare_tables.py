@@ -82,7 +82,9 @@ def layout():
 
 def _dlabel(value, d):
     source = value.split("|")[0]
-    return f"{d} m" if source == "dcd" else f"{d} fsw"
+    if source == "dcd":
+        return f"{d} m"
+    return f"{round(d * 0.3048)} m"        # USN native fsw -> metres
 
 
 def _short(value):
