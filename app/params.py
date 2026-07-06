@@ -58,7 +58,7 @@ REGISTRY = [
     ("dp_rmv_working",        "Breathing rate - working diver",    "L/min",  "Dive gas", 40.0, 1, ("/air-diving/dive-planning",)),
     ("dp_rmv_deco",           "Breathing rate - deco diver",       "L/min",  "Dive gas", 30.0, 1, ("/air-diving/dive-planning",)),
     ("dp_quad_residual_bar",  "Residual quad pressure",            "bar",    "Dive gas", 40.0, 5, ("/air-diving/dive-planning",)),
-    # Saturation gas — BUKOM `Minimum Gas` (BSS-402 / IMCA D050) coefficients.
+    # Saturation gas — minimum-gas model coefficients (IMCA D050 framework).
     # These are the model constants behind the SAT minimum-gas calculator; the
     # per-job figures (depths, deco time, divers) are entered on the page. All
     # are locked for accounts without the /diving/sat-gas edit-parameters grant.

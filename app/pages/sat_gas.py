@@ -2,7 +2,7 @@
 SAT Diving — saturation gas calculator.
 
 Two tools on one page:
-  1. Minimum gas onboard — the BUKOM `Minimum Gas` model (BSS-402 / IMCA D050):
+  1. Minimum gas onboard — the IMCA D050 minimum-quantities model:
      the bottom-mix and oxygen volumes that must remain onboard once the system
      is at depth, below which diving stops and decompression starts. Per-job
      figures are entered here; the model coefficients are tunable parameters
@@ -31,7 +31,7 @@ INK = "#0f172a"
 GRID = "#e2e8f0"
 AMBER = "#b45309"
 
-# SAT coefficient param key -> min_gas_bukom keyword argument.
+# SAT coefficient param key -> min_gas keyword argument.
 KEY_TO_KW = {
     "sat_dive_rmv": "dive_rmv_lpm",
     "sat_dive_run_min": "dive_run_min",
@@ -169,7 +169,7 @@ def _coefficients_panel():
         ], style={"marginBottom": "8px"}))
 
     body = [
-        _section("Gas-model coefficients (BUKOM / BSS-402)"),
+        _section("Gas-model coefficients (IMCA D050)"),
         note,
         html.Div(fields, style={"display": "grid",
                                 "gridTemplateColumns": "repeat(auto-fill,minmax(170px,1fr))",
@@ -230,10 +230,9 @@ def _blowdown_panel():
 def layout():
     return html.Div([
         html.H3("SAT gas"),
-        html.P(["Minimum gas onboard (BUKOM ", html.Code("Minimum Gas"),
-                ", BSS-402 / IMCA D050) and blowdown mix for saturation operations. "
-                "Select a SAT system for its floodable and bell volumes, or override "
-                "the volume directly."],
+        html.P("Minimum gas onboard (IMCA D050 minimum quantities) and blowdown mix "
+               "for saturation operations. Select a SAT system for its floodable and "
+               "bell volumes, or override the volume directly.",
                style={"color": MUTED, "maxWidth": "720px"}),
 
         html.Div([
@@ -243,9 +242,9 @@ def layout():
                      style={"flex": "1 1 420px", "minWidth": "360px"}),
         ], style={"display": "flex", "gap": "18px", "flexWrap": "wrap"}),
 
-        html.Div("Indicative planning only. Figures follow the Boskalis BSS-402 "
-                 "(issue 2018.02.14) / IMCA D050 minimum-gas model; the diving "
-                 "supervisor and gas man remain responsible for the gas plan.",
+        html.Div("Indicative planning only. Figures follow the IMCA D050 minimum-gas "
+                 "framework; the diving supervisor and gas man remain responsible for "
+                 "the gas plan.",
                  style={"fontSize": "0.74rem", "color": MUTED, "marginTop": "10px",
                         "paddingTop": "12px", "borderTop": f"1px solid {GRID}"}),
     ], style={"maxWidth": "1000px"})
@@ -354,8 +353,8 @@ def _compute_mingas(storage, working, sysvol, decoh, divers, lockout, bellcfg, c
                 kw[kwname] = params.get_float(_id["key"])
 
     bells = 2 if bellcfg == "twin" else 1
-    res = eng.min_gas_bukom(storage, working, sysvol, decoh, divers,
-                            bells=bells, divers_per_bell=lockout, **kw)
+    res = eng.min_gas(storage, working, sysvol, decoh, divers,
+                      bells=bells, divers_per_bell=lockout, **kw)
     return html.Div([
         _section("Minimum gas onboard"),
         html.Div(f"Storage {storage:g} m \u00b7 working {working:g} m \u00b7 "

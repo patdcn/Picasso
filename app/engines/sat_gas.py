@@ -1,20 +1,18 @@
 """
 Saturation gas calculations.
 
-MINIMUM GAS (must-have-onboard reserve) follows the Boskalis BSS-402
-(issue 2018.02.14) / IMCA D050 "Minimum Gas" model as implemented in the DCN
-deco workbook's `Minimum Gas` sheet. These are the volumes that must remain
-onboard once the system is at depth; below them, diving stops and decompression
-starts. Every coefficient is supplied by the caller (from app.params) so the
-Boskalis-specific numbers stay visible and tunable rather than buried here.
+MINIMUM GAS (must-have-onboard reserve) follows the IMCA D050 "minimum
+quantities of gas required offshore" framework: the bottom-mix and oxygen
+volumes that must remain onboard once the system is at depth, below which diving
+stops and decompression starts. Every coefficient is supplied by the caller
+(from app.params) so the site-specific numbers stay visible and tunable rather
+than buried here.
 
-The ISS workbook's separate "job gas order" model is intentionally NOT used:
-per the DCN decision the minimum gas figure is BUKOM only.
+The secondary "job gas order" model is intentionally NOT used: per the DCN
+decision the minimum gas figure is the minimum-quantities model only.
 
-BLOWDOWN MIX reproduces the workbook's gas-mixing identities (single-gas
-blowdown to establish a chamber PPO2, and a two-gas fill to make a target mix).
-The blowdown formula is identical in the BUKOM `General Calculations` sheet and
-the ISS `Gas Mixing` sheet.
+BLOWDOWN MIX reproduces the standard gas-mixing identities (single-gas blowdown
+to establish a chamber PPO2, and a two-gas fill to make a target mix).
 
 Conventions: depths in metres sea water (MSW); ATA = depth/10 + 1; O2 fractions
 as plain percent numbers (e.g. 7.5 for 7.5%); PPO2 in millibar; volumes in m3
@@ -29,9 +27,9 @@ def ata(depth_m):
 
 
 # --------------------------------------------------------------------------- #
-# Minimum gas — BUKOM `Minimum Gas` (BSS-402 / IMCA D050)
+# Minimum gas — IMCA D050 minimum-quantities model
 # --------------------------------------------------------------------------- #
-def min_gas_bukom(
+def min_gas(
     storage_m,
     working_m,
     system_vol_m3,
@@ -60,9 +58,9 @@ def min_gas_bukom(
     o2_reserve=90.0,
 ):
     """
-    Return the BUKOM minimum-gas breakdown for a saturation spread.
+    Return the minimum-gas breakdown for a saturation spread.
 
-    Reproduces the `Minimum Gas` sheet exactly at the default coefficients:
+    At the default coefficients the components are:
 
         Dive gas    = W_ata * (rmv * divers_per_bell) * run_min /1000 * runs * bells
         BIBS        = S_ata * (bibs_lpm * 60 * bibs_hours)/1000 * divers
