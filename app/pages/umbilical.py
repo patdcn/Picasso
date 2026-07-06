@@ -62,48 +62,79 @@ def _result_card(card_id, title, accent, arrow):
               "padding": "14px 18px", "flex": "1 1 240px", "minWidth": "230px"})
 
 
-def _subtable(keys, mapping, depth_sign, unit, dist_label):
-    """One half of a reference table, values formatted in the chosen unit."""
-    def val(x):
-        return f"{x / eng.FT_PER_M:.1f}" if unit == "msw" else f"{x:.0f}"
-    depth_u = "m" if unit == "msw" else "fsw"
-    dist_u = "m" if unit == "msw" else "ft"
+# Metric reference table: round storage steps over the tables' valid range.
+# (850 fsw = 259 m is the downward table's deepest row, so cap at 255 m.)
+METRIC_MIN_M = 10
+METRIC_MAX_M = 255
+METRIC_STEP_M = 5
+
+
+def _table_rows(mapping, depth_sign, unit):
+    """(storage, distance, depth) as display strings.
+
+    fsw : the table exactly as published (10-fsw storage rows, integer feet).
+    msw : re-tabulated at round metric storage depths via the SAME engine the
+          calculator uses, so the reference table and the result cards agree.
+    """
+    rows = []
+    if unit == "msw":
+        d = float(METRIC_MIN_M)
+        while d <= METRIC_MAX_M + 1e-9:
+            e = eng.envelope(eng.msw_to_fsw(d))
+            if depth_sign > 0:
+                dist = e["down_dist_fsw"] / eng.FT_PER_M
+                depth = e["max_desc_fsw"] / eng.FT_PER_M
+            else:
+                dist = e["up_dist_fsw"] / eng.FT_PER_M
+                depth = e["max_asc_fsw"] / eng.FT_PER_M
+            rows.append((f"{d:.0f}", f"{dist:.1f}", f"{depth:.1f}"))
+            d += METRIC_STEP_M
+    else:
+        for s in sorted(mapping):
+            dist = mapping[s]
+            depth = s + dist if depth_sign > 0 else s - dist
+            rows.append((f"{s:.0f}", f"{dist:.0f}", f"{depth:.0f}"))
+    return rows
+
+
+def _subtable(rows, headers):
+    """One half of a reference table from pre-formatted (storage, dist, depth) rows."""
     head = {"padding": "5px 10px 5px 0", "fontSize": "0.72rem", "fontWeight": 700,
             "textAlign": "right", "color": INK, "borderBottom": f"1px solid {GRID}"}
     head0 = {**head, "textAlign": "left"}
     cell = {"padding": "1px 10px 1px 0", "fontSize": "0.76rem", "textAlign": "right"}
     cell0 = {**cell, "textAlign": "left", "color": MUTED}
-    rows = []
-    for s in keys:
-        dist = mapping[s]
-        depth = s + dist if depth_sign > 0 else s - dist
-        rows.append(html.Tr([
-            html.Td(val(s), style=cell0),
-            html.Td(val(dist), style=cell),
-            html.Td(val(depth), style={**cell, "fontWeight": 600}),
-        ]))
+    trs = [html.Tr([
+        html.Td(s, style=cell0),
+        html.Td(dist, style=cell),
+        html.Td(depth, style={**cell, "fontWeight": 600}),
+    ]) for (s, dist, depth) in rows]
     return html.Table(
-        [html.Thead(html.Tr([
-            html.Th(f"Storage ({depth_u})", style=head0),
-            html.Th(f"{dist_label} ({dist_u})", style=head),
-            html.Th(f"Depth ({depth_u})", style=head)]))]
-        + [html.Tbody(rows)],
+        [html.Thead(html.Tr([html.Th(headers[0], style=head0),
+                             html.Th(headers[1], style=head),
+                             html.Th(headers[2], style=head)]))]
+        + [html.Tbody(trs)],
         style={"borderCollapse": "collapse", "flex": "1 1 auto"})
 
 
 def _ref_table(section, title, mapping, dist_label, depth_sign, unit):
-    """A USN reference table split into two halves (mirrors the manual's own
-    two-column layout, and keeps the printed table to a single page)."""
-    keys = sorted(mapping)
-    mid = (len(keys) + 1) // 2
+    """A reference table split into two halves (mirrors the manual's own two-column
+    layout, and keeps the printed table to a single page)."""
+    rows = _table_rows(mapping, depth_sign, unit)
+    su = "m" if unit == "msw" else "fsw"
+    du = "m" if unit == "msw" else "ft"
+    headers = (f"Storage ({su})", f"{dist_label} ({du})", f"Depth ({su})")
+    caption = (f"Computed at round {METRIC_STEP_M} m storage depths "
+               "(from the fsw source)" if unit == "msw" else "As published (fsw)")
+    mid = (len(rows) + 1) // 2
     return html.Div([
         html.Div([html.Span(f"{section}  ", style={"fontWeight": 700, "color": ACCENT}),
-                  title], style={"fontSize": "0.85rem", "marginBottom": "6px"}),
+                  title], style={"fontSize": "0.85rem", "marginBottom": "2px"}),
+        html.Div(caption, style={"fontSize": "0.72rem", "color": MUTED,
+                                 "marginBottom": "6px"}),
         html.Div(
-            html.Div([
-                _subtable(keys[:mid], mapping, depth_sign, unit, dist_label),
-                _subtable(keys[mid:], mapping, depth_sign, unit, dist_label),
-            ], style={"display": "flex", "gap": "18px"}),
+            html.Div([_subtable(rows[:mid], headers), _subtable(rows[mid:], headers)],
+                     style={"display": "flex", "gap": "18px"}),
             className="de-print-expand",
             style={"maxHeight": "340px", "overflowY": "auto",
                    "border": f"1px solid {GRID}", "borderRadius": "10px",
