@@ -276,3 +276,11 @@ a.nav-footer-addr:hover { color: #0f766e; text-decoration: underline; }
   .print-disc-label { font-weight: 700; color: #374151; }
   .print-copyright { font-size: 8px; color: #6b7280; margin-top: 4px; }
 }
+
+/* Dive Planning: keep the dive-table dropdown options on a single line
+   (widen the menu beyond the narrow scenario panel rather than wrapping). */
+#dp-table .Select-menu-outer { min-width: 420px; z-index: 30; }
+#dp-table .VirtualizedSelectOption,
+#dp-table .Select-menu-outer .Select-option {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}

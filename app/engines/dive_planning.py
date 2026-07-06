@@ -237,3 +237,63 @@ def build_gantt_figure(plan, cfg):
                    showgrid=False, zeroline=False, fixedrange=True, tickfont=dict(size=11)),
     )
     return fig
+
+
+# --------------------------------------------------------------------------- #
+# Dive-gas usage (breathing + deco), derived from the schedule legs.
+# Consumption per leg = surface breathing rate (RMV) x absolute pressure at
+# depth (depth_m/10 + 1 bar) x duration. Working RMV covers the bottom portion
+# (descent + bottom hold); deco RMV covers the ascent, in-water stops and
+# chamber. Gas type comes from each leg (air / o2 / nitrox / heliox); the 1.5 min
+# out-of-water surface interval (gas "surface") is ambient and excluded.
+# --------------------------------------------------------------------------- #
+M_PER_FT = 0.3048
+QUAD_L = 16 * 200 * 47          # 16 bottles x 200 bar x 47 L = 150 400 L free gas per quad
+GAS_LABEL = {"air": "Air", "o2": "Oxygen", "nitrox": "Nitrox", "heliox": "Heliox"}
+
+
+def gas_use_per_dive(legs, native_unit, rmv_work, rmv_deco):
+    """Return {'bottom': {gas: litres}, 'deco': {gas: litres}} for one dive."""
+    bottom, deco = {}, {}
+    depth = 0.0                                   # native units
+    for i, leg in enumerate(legs or []):
+        gas = leg.get("gas", "air")
+        if leg["kind"] == "move":
+            to = leg["to"]
+            ft_from = depth if native_unit == "fsw" else depth / M_PER_FT
+            ft_to = to if native_unit == "fsw" else to / M_PER_FT
+            dt = abs(ft_to - ft_from) / (leg.get("rate_fpm") or 30)
+            at = (depth + to) / 2.0               # average depth over the move
+            depth = to
+        else:
+            dt = leg.get("min") or 0
+            at = depth
+        if gas == "surface" or dt <= 0:
+            continue
+        depth_m = at if native_unit == "m" else at * M_PER_FT
+        pressure = depth_m / 10.0 + 1.0
+        if i <= 1:                                # descent move + bottom hold
+            bucket, rmv = bottom, rmv_work
+        else:                                     # ascent / stops / chamber
+            bucket, rmv = deco, rmv_deco
+        bucket[gas] = bucket.get(gas, 0.0) + rmv * pressure * dt
+    return {"bottom": bottom, "deco": deco}
+
+
+def gas_use_day(legs, native_unit, n_dives, rmv_work, rmv_deco):
+    """Scale one dive's gas use to the whole day and add quad counts.
+    Returns {'bottom': [{gas,label,litres,quads}], 'deco': [...],
+    'quads_total': float}."""
+    per = gas_use_per_dive(legs, native_unit, rmv_work, rmv_deco)
+    out, quads_total = {}, 0.0
+    for role in ("bottom", "deco"):
+        rows = []
+        for gas, litres in sorted(per[role].items(), key=lambda kv: -kv[1]):
+            L = litres * n_dives
+            q = L / QUAD_L
+            quads_total += q
+            rows.append({"gas": gas, "label": GAS_LABEL.get(gas, gas.title()),
+                         "litres": L, "quads": q})
+        out[role] = rows
+    out["quads_total"] = quads_total
+    return out

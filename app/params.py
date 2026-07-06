@@ -53,6 +53,10 @@ REGISTRY = [
     ("dp_start_hour",         "Shift start hour (default)",        "h",      "Dive planning", 6.0,  1,   ("/air-diving/dive-planning",)),
     ("dp_tidal_windows",      "Tidal slack windows / day (default)", "windows", "Dive planning", 4.0, 1, ("/air-diving/dive-planning",)),
     ("dp_tidal_window_min",   "Work window per tide (default)",    "min",    "Dive planning", 90.0, 5,   ("/air-diving/dive-planning",)),
+    # Dive-gas breathing rates (atmospheric / surface RMV; multiplied by the
+    # absolute pressure at depth to get real consumption). Editable = restrictable.
+    ("dp_rmv_working",        "Breathing rate - working diver",    "L/min",  "Dive gas", 40.0, 1, ("/air-diving/dive-planning",)),
+    ("dp_rmv_deco",           "Breathing rate - deco diver",       "L/min",  "Dive gas", 30.0, 1, ("/air-diving/dive-planning",)),
 ]
 
 _DEFAULTS = {k: dflt for (k, _l, _u, _c, dflt, _s, _m) in REGISTRY}
