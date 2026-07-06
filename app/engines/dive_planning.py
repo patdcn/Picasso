@@ -241,63 +241,75 @@ def build_gantt_figure(plan, cfg):
 
 # --------------------------------------------------------------------------- #
 # Dive-gas usage (breathing + deco), derived from the schedule legs.
-# Consumption per leg = surface breathing rate (RMV) x absolute pressure at
-# depth (depth_m/10 + 1 bar) x duration. Working RMV covers the bottom portion
-# (descent + bottom hold); deco RMV covers the ascent, in-water stops and
-# chamber. Gas type comes from each leg (air / o2 / nitrox / heliox); the 1.5 min
-# out-of-water surface interval (gas "surface") is ambient and excluded.
+# Consumption = surface breathing rate (RMV) x absolute pressure (depth_m/10 + 1
+# bar) x time, taken over the time spent at depth (the hold legs). The bottom
+# hold uses the working RMV; every stop / chamber hold uses the deco RMV. Gas
+# type comes from each leg (air / o2 / nitrox / heliox). Air is compressor / LP
+# supply so it is not counted in quads; every other gas is. Litres are then
+# multiplied by the number of diver-dives (dives x divers in the water).
 # --------------------------------------------------------------------------- #
 M_PER_FT = 0.3048
-QUAD_L = 16 * 200 * 47          # 16 bottles x 200 bar x 47 L = 150 400 L free gas per quad
+QUAD_BOTTLES = 16              # bottles per quad
+QUAD_BOTTLE_L = 47            # water capacity per bottle (L)
+QUAD_FILL_BAR = 200          # nominal fill pressure (bar)
 GAS_LABEL = {"air": "Air", "o2": "Oxygen", "nitrox": "Nitrox", "heliox": "Heliox"}
 
 
+def quad_usable_l(residual_bar=40.0):
+    """Usable free gas per quad = bottles x capacity x (fill - residual). A quad
+    is never drawn below the residual pressure, so that gas isn't usable."""
+    return QUAD_BOTTLES * QUAD_BOTTLE_L * (QUAD_FILL_BAR - float(residual_bar))
+
+
 def gas_use_per_dive(legs, native_unit, rmv_work, rmv_deco):
-    """Return {'bottom': {gas: litres}, 'deco': {gas: litres}} for one dive."""
+    """Return {'bottom': {gas: litres}, 'deco': {gas: litres}} for one diver, one
+    dive. Consumption is taken over the *hold* legs (time spent at a depth): the
+    first hold is the bottom (working rate); every later hold is a stop or chamber
+    period (deco rate). Short ascent/descent transits are not counted, matching
+    the standard stop-by-stop planning calc."""
     bottom, deco = {}, {}
-    depth = 0.0                                   # native units
-    for i, leg in enumerate(legs or []):
-        gas = leg.get("gas", "air")
-        if leg["kind"] == "move":
-            to = leg["to"]
-            ft_from = depth if native_unit == "fsw" else depth / M_PER_FT
-            ft_to = to if native_unit == "fsw" else to / M_PER_FT
-            dt = abs(ft_to - ft_from) / (leg.get("rate_fpm") or 30)
-            at = (depth + to) / 2.0               # average depth over the move
-            depth = to
-        else:
-            dt = leg.get("min") or 0
-            at = depth
-        if gas == "surface" or dt <= 0:
+    hold_i = 0
+    for leg in legs or []:
+        if leg["kind"] != "hold":
             continue
-        depth_m = at if native_unit == "m" else at * M_PER_FT
+        gas = leg.get("gas", "air")
+        dt = leg.get("min") or 0
+        if gas == "surface" or dt <= 0:
+            hold_i += 1
+            continue
+        d = leg.get("depth", 0.0)
+        depth_m = d if native_unit == "m" else d * M_PER_FT
         pressure = depth_m / 10.0 + 1.0
-        if i <= 1:                                # descent move + bottom hold
-            bucket, rmv = bottom, rmv_work
-        else:                                     # ascent / stops / chamber
-            bucket, rmv = deco, rmv_deco
-        bucket[gas] = bucket.get(gas, 0.0) + rmv * pressure * dt
+        if hold_i == 0:                           # bottom hold
+            bottom[gas] = bottom.get(gas, 0.0) + rmv_work * pressure * dt
+        else:                                     # in-water stop or chamber period
+            deco[gas] = deco.get(gas, 0.0) + rmv_deco * pressure * dt
+        hold_i += 1
     return {"bottom": bottom, "deco": deco}
 
 
-def gas_use_day(legs, native_unit, n_dives, rmv_work, rmv_deco, surface_deco=False):
-    """Scale one dive's gas use to the whole day. Quads are counted for O2 only
-    (breathing air/mix comes off the compressor/LP supply); for surface deco the
-    ascent air is left out of the deco mix. Returns
-    {'bottom': [{gas,label,litres,quads}], 'deco': [...], 'quads_total': float}."""
+def gas_use_day(legs, native_unit, diver_dives, rmv_work, rmv_deco,
+                surface_deco=False, residual_bar=40.0):
+    """Scale one diver's gas use by the number of diver-dives (dives x divers in
+    the water) to the whole day. Quads are counted for every bottled gas except
+    air (air comes off the compressor / LP supply); for surface deco the ascent
+    air is left out of the deco mix. Returns {'bottom': [{gas,label,litres,quads}],
+    'deco': [...], 'quads_total': float, 'quad_usable': float}."""
     per = gas_use_per_dive(legs, native_unit, rmv_work, rmv_deco)
+    usable = quad_usable_l(residual_bar)
     out, quads_total = {}, 0.0
     for role in ("bottom", "deco"):
         rows = []
         for gas, litres in sorted(per[role].items(), key=lambda kv: -kv[1]):
             if role == "deco" and surface_deco and gas != "o2":
                 continue                          # leave surface-deco air out of the deco mix
-            L = litres * n_dives
-            q = (L / QUAD_L) if gas == "o2" else None   # quads only for O2
+            L = litres * diver_dives
+            q = (L / usable) if gas != "air" else None   # air = compressor supply, no quads
             if q is not None:
                 quads_total += q
             rows.append({"gas": gas, "label": GAS_LABEL.get(gas, gas.title()),
                          "litres": L, "quads": q})
         out[role] = rows
     out["quads_total"] = quads_total
+    out["quad_usable"] = usable
     return out

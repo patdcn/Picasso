@@ -57,6 +57,7 @@ REGISTRY = [
     # absolute pressure at depth to get real consumption). Editable = restrictable.
     ("dp_rmv_working",        "Breathing rate - working diver",    "L/min",  "Dive gas", 40.0, 1, ("/air-diving/dive-planning",)),
     ("dp_rmv_deco",           "Breathing rate - deco diver",       "L/min",  "Dive gas", 30.0, 1, ("/air-diving/dive-planning",)),
+    ("dp_quad_residual_bar",  "Residual quad pressure",            "bar",    "Dive gas", 40.0, 5, ("/air-diving/dive-planning",)),
 ]
 
 _DEFAULTS = {k: dflt for (k, _l, _u, _c, dflt, _s, _m) in REGISTRY}

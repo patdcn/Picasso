@@ -237,6 +237,10 @@ def _gas_panel():
         note,
         n("dp-rmv-work", "Working diver", "dp_rmv_working"),
         n("dp-rmv-deco", "Deco diver", "dp_rmv_deco"),
+        _field("Residual quad pressure  [bar]",
+               dcc.Input(id="dp-quad-residual", type="number", value=params.get_float("dp_quad_residual_bar"),
+                         step=5, min=0, debounce=True, disabled=locked, style=NUM),
+               hint="left in a quad and not usable"),
     ]
     if not locked:
         body += [html.Button("Save as defaults", id="dp-gas-save", n_clicks=0,
@@ -400,11 +404,11 @@ def _card(title, value):
     Input("dp-standby", "value"), Input("dp-tidal", "value"), Input("dp-windows", "value"),
     Input("dp-window-min", "value"), Input("dp-descent-rate", "value"), Input("dp-arrive", "value"),
     Input("dp-return", "value"), Input("dp-undress", "value"), Input("dp-turnaround", "value"),
-    Input("dp-rmv-work", "value"), Input("dp-rmv-deco", "value"),
+    Input("dp-rmv-work", "value"), Input("dp-rmv-deco", "value"), Input("dp-quad-residual", "value"),
     State("dp-table", "value"), State("dp-depth", "value"), State("dp-dvis5", "value"),
 )
 def _compute(ri, shift_h, start, team, iw, repeats, standby, tidal, windows, window_min,
-             desc_rate, arrive, ret, undress, turn, rmv_work, rmv_deco, value, depth, dvis5):
+             desc_rate, arrive, ret, undress, turn, rmv_work, rmv_deco, residual, value, depth, dvis5):
     if not value or depth is None or ri is None:
         return "", _hint("Choose a table, depth and bottom time to lay out the day."), "", "", ""
 
@@ -492,9 +496,12 @@ def _compute(ri, shift_h, start, team, iw, repeats, standby, tidal, windows, win
     # ---- Dive Gas Use ----------------------------------------------------- #
     rmv_w = f(rmv_work, 40.0)
     rmv_d = f(rmv_deco, 30.0)
+    resid = f(residual, 40.0)
     cat = profiles.table_category(value)
     surface_deco = cat == "surdo2"
-    gu = dpe.gas_use_day(legs, unit, t["n_dives"], rmv_w, rmv_d, surface_deco=surface_deco)
+    diver_dives = sum(len(d["crew"]) for d in plan["dives"])   # dives x divers in the water
+    gu = dpe.gas_use_day(legs, unit, diver_dives, rmv_w, rmv_d,
+                         surface_deco=surface_deco, residual_bar=resid)
     period = "24 h" if int(shift_h or 12) == 24 else "12 h"
 
     def _gas_rows(rows):
@@ -522,17 +529,19 @@ def _compute(ri, shift_h, start, team, iw, repeats, standby, tidal, windows, win
         html.Div([
             html.Span("Dive gas use", style={"fontSize": "0.72rem", "textTransform": "uppercase",
                                              "letterSpacing": "0.03em", "color": MUTED}),
-            html.Span(f"  per {period} \u00b7 {t['n_dives']} dives \u00b7 {rmv_w:.0f}/{rmv_d:.0f} L/min "
-                      f"work/deco \u00b7 quad = 16\u00d7200 bar\u00d747 L = {dpe.QUAD_L:,} L",
+            html.Span(f"  per {period} \u00b7 {t['n_dives']} dives ({diver_dives} diver-dives) \u00b7 "
+                      f"{rmv_w:.0f}/{rmv_d:.0f} L/min work/deco \u00d7 (depth/10 + 1 bar) \u00d7 min. "
+                      f"Quad = {dpe.QUAD_BOTTLES}\u00d7{dpe.QUAD_BOTTLE_L} L\u00d7({dpe.QUAD_FILL_BAR}\u2212{resid:.0f} bar) "
+                      f"= {gu['quad_usable']:,.0f} L usable; air is off the compressor (no quads).",
                       style={"fontSize": "0.72rem", "color": MUTED}),
         ], style={"marginBottom": "8px"}),
         html.Div([
             _mix_block("Breathing mix", "bottom gas", gu["bottom"]),
             _mix_block("Deco mix", deco_sub, gu["deco"]),
         ], style={"display": "flex", "gap": "18px", "flexWrap": "wrap"}),
-        html.Div([html.Span("Total O\u2082 ", style={"color": MUTED}),
+        html.Div([html.Span("Total ", style={"color": MUTED}),
                   html.B(f"{gu['quads_total']:.2f} quads"),
-                  html.Span(f" / {period}", style={"color": MUTED})],
+                  html.Span(f" / {period}  (bottled gas only)", style={"color": MUTED})],
                  style={"marginTop": "8px", "paddingTop": "6px", "borderTop": "1px solid #f1f5f9",
                         "fontSize": "0.9rem", "fontVariantNumeric": "tabular-nums"}),
     ], style={"background": "#fff", "border": "1px solid #e5e7eb", "borderRadius": "10px",
@@ -576,13 +585,14 @@ def _save_assumptions(_n, desc, arrive, ret, undress, turn):
 @callback(
     Output("dp-gas-status", "children"),
     Input("dp-gas-save", "n_clicks"),
-    State("dp-rmv-work", "value"), State("dp-rmv-deco", "value"),
+    State("dp-rmv-work", "value"), State("dp-rmv-deco", "value"), State("dp-quad-residual", "value"),
     prevent_initial_call=True,
 )
-def _save_gas(_n, rmv_work, rmv_deco):
+def _save_gas(_n, rmv_work, rmv_deco, residual):
     if not auth.may_edit_params(auth.current_user(), MODULE):
         return html.Span("Not permitted.", style={"color": "#b91c1c"})
-    n, msg = params.set_many({"dp_rmv_working": rmv_work, "dp_rmv_deco": rmv_deco})
+    n, msg = params.set_many({"dp_rmv_working": rmv_work, "dp_rmv_deco": rmv_deco,
+                              "dp_quad_residual_bar": residual})
     return html.Span(msg, style={"color": TEAL if n else "#b91c1c"})
 
 
