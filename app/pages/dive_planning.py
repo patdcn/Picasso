@@ -53,49 +53,112 @@ def _bt_of(value, depth, ri):
     return None
 
 
-def _strip_prow_ids(node):
-    """Recursively remove the clickable pattern-ids from a reused DCD/USN table
-    so the embedded copy is static (no foreign callbacks fire)."""
-    cid = getattr(node, "id", None)
-    if isinstance(cid, dict) and cid.get("type") in ("dcd-prow", "usn-prow"):
-        try:
-            node.id = None
-            node.n_clicks = None
-        except Exception:
-            pass
-    ch = getattr(node, "children", None)
-    if isinstance(ch, (list, tuple)):
-        for c in ch:
-            _strip_prow_ids(c)
-    elif ch is not None:
-        _strip_prow_ids(ch)
+_STH = {"padding": "3px 7px", "border": "1px solid #cbd5e1", "background": "#eef2f7",
+        "fontSize": "0.72rem", "fontWeight": 700, "textAlign": "center", "whiteSpace": "nowrap"}
+_STD = {"padding": "3px 7px", "border": "1px solid #e2e8f0", "fontSize": "0.72rem",
+        "textAlign": "center", "fontVariantNumeric": "tabular-nums", "whiteSpace": "nowrap"}
+_SHL = {"background": "#d1eee9", "color": TEAL, "fontWeight": 700,
+        "borderTop": f"2px solid {TEAL}", "borderBottom": f"2px solid {TEAL}"}
+_SDIV = {"background": "#f1f5f9", "color": MUTED, "fontWeight": 700, "fontSize": "0.7rem",
+         "padding": "2px 7px", "textAlign": "left", "border": "1px solid #e2e8f0"}
 
 
-def _schedule_table(value, depth, ri, dvis5):
-    """Static copy of the selected schedule with the chosen bottom-time row
-    highlighted, reusing the DCD / USN page renderers."""
+def _m_from_fsw(d):
+    try:
+        return str(round(float(d) * 0.3048))
+    except (TypeError, ValueError):
+        return str(d)
+
+
+def _dcd_grid(t, block):
+    """Return (headers, rows) where each row is (block_index|None, [cells], is_divider)."""
+    if t["kind"] == "inwater":
+        sd = t["stop_depths"]
+        headers = ["dive time", "till 1st stop"] + [str(d) for d in sd] + ["total deco", "OTU"]
+        rows = []
+        for i, r in enumerate(block["rows"]):
+            cells = [r.get("bt"), r.get("till")] + [r.get("stops", {}).get(str(d), "") for d in sd] \
+                + [r.get("deco"), r.get("otu")]
+            rows.append((i, cells, False))
+        return headers, rows
+    cols, di, oi = t["columns"], t["deco_i"], t["otu_i"]
+
+    def _lab(i):
+        c = cols[i]
+        return c[3:].strip() if c.lower().startswith("iw ") else c
+    headers = ["dive time", "till 1st stop"] + [_lab(i) for i in range(2, di)] + ["total deco", "OTU"]
+    rows = []
+    for j, r in enumerate(block["rows"]):
+        cells = [r[0] if len(r) > 0 else "", r[1] if len(r) > 1 else ""] \
+            + [(r[i] if i < len(r) else "") for i in range(2, di)] \
+            + [(r[di] if di < len(r) else ""), (r[oi] if oi < len(r) else "")]
+        rows.append((j, cells, False))
+    return headers, rows
+
+
+def _usn_grid(t, block):
+    sd = t["stop_depths"]
+    air = t.get("variant") == "air"
+    stop_hdr = [_m_from_fsw(d) for d in sd]
+    if air:
+        headers = ["bottom time", "to 1st stop", "gas"] + stop_hdr + ["total ascent", "O\u2082 periods", "group"]
+    else:
+        headers = ["bottom time", "to 1st stop"] + stop_hdr + ["total ascent", "group"]
+    rows = []
+    for i, r in enumerate(block["rows"]):
+        if r.get("type") == "divider":
+            rows.append((None, [r.get("label", "")], True))
+            continue
+        stops = r.get("stops", {})
+        if air:
+            cells = [r.get("bt", ""), r.get("tfs", ""), r.get("gas", "")] \
+                + [stops.get(str(d), "") for d in sd] \
+                + [r.get("tat", ""), r.get("periods", ""), r.get("group", "")]
+        else:
+            cells = [r.get("bt", ""), r.get("tfs", "")] + [stops.get(str(d), "") for d in sd] \
+                + [r.get("tat", ""), r.get("group", "")]
+        rows.append((i, cells, False))
+    return headers, rows
+
+
+def _build_schedule(headers, rows, ri):
+    thead = html.Thead(html.Tr([html.Th(h, style=_STH) for h in headers]))
+    body = []
+    for idx, cells, is_div in rows:
+        if is_div:
+            body.append(html.Tr(html.Td(cells[0], colSpan=len(headers), style=_SDIV)))
+            continue
+        sel = idx == ri
+        tds = []
+        for c in cells:
+            st = {**_STD, **_SHL} if sel else dict(_STD)
+            tds.append(html.Td("" if c is None or c == "" else c, style=st))
+        body.append(html.Tr(tds))
+    return html.Table([thead, html.Tbody(body)],
+                      style={"borderCollapse": "collapse", "border": "2px solid #cbd5e1"})
+
+
+def _schedule_table(value, depth, ri):
+    """Static copy of the selected schedule (from the table engine's block data)
+    with the chosen bottom-time row highlighted."""
     source, code, _mode = value.split("|")
-    apply_limit = bool(dvis5)
     try:
         if source == "dcd":
-            from app.pages import dcd_tables as dpg
             from app.engines import dcd_tables as dcd
             t = dcd.ui_table(code, depth)
-            if not t:
+            block = t.get("block") if t else None
+            if not block:
                 return None
-            comp = dpg._render(t, sel_i=ri, apply_limit=apply_limit)
+            headers, rows = _dcd_grid(t, block)
         else:
-            from app.pages import usn_tables as upg
             from app.engines import usn_tables as usn
             t = usn.ui_table(code)
             res = usn.ui_block(code, depth)
             block = res.get("block") if res else None
             if not t or not block:
                 return None
-            limit = profiles.dvis5_limit(value, depth) if apply_limit else None
-            comp = upg._block(t, block, "m", sel_i=ri, apply_limit=apply_limit, limit=limit)
-        _strip_prow_ids(comp)
-        return comp
+            headers, rows = _usn_grid(t, block)
+        return _build_schedule(headers, rows, ri)
     except Exception:
         return None
 
@@ -476,7 +539,7 @@ def _compute(ri, shift_h, start, team, iw, repeats, standby, tidal, windows, win
               "padding": "10px 14px", "marginTop": "10px"})
 
     # ---- embedded copy of the selected schedule, chosen row highlighted ----- #
-    sched_tbl = _schedule_table(value, depth, ri, dvis5)
+    sched_tbl = _schedule_table(value, depth, ri)
     if sched_tbl is not None:
         schedule = html.Div([
             html.Div("Selected schedule \u2014 the highlighted line is the planned bottom time",
