@@ -62,38 +62,53 @@ def _result_card(card_id, title, accent, arrow):
               "padding": "14px 18px", "flex": "1 1 240px", "minWidth": "230px"})
 
 
-def _ref_table(section, title, mapping, dist_header, depth_sign):
-    """One USN reference table: storage / excursion distance / excursion depth."""
-    head_cell = {"padding": "5px 12px 5px 0", "fontSize": "0.76rem",
-                 "fontWeight": 700, "textAlign": "right", "color": INK,
-                 "borderBottom": f"1px solid {GRID}"}
-    head_cell0 = {**head_cell, "textAlign": "left"}
-    cell = {"padding": "2px 12px 2px 0", "fontSize": "0.78rem", "textAlign": "right"}
+def _subtable(keys, mapping, depth_sign, unit, dist_label):
+    """One half of a reference table, values formatted in the chosen unit."""
+    def val(x):
+        return f"{x / eng.FT_PER_M:.1f}" if unit == "msw" else f"{x:.0f}"
+    depth_u = "m" if unit == "msw" else "fsw"
+    dist_u = "m" if unit == "msw" else "ft"
+    head = {"padding": "5px 10px 5px 0", "fontSize": "0.72rem", "fontWeight": 700,
+            "textAlign": "right", "color": INK, "borderBottom": f"1px solid {GRID}"}
+    head0 = {**head, "textAlign": "left"}
+    cell = {"padding": "1px 10px 1px 0", "fontSize": "0.76rem", "textAlign": "right"}
     cell0 = {**cell, "textAlign": "left", "color": MUTED}
     rows = []
-    for s in sorted(mapping):
+    for s in keys:
         dist = mapping[s]
         depth = s + dist if depth_sign > 0 else s - dist
         rows.append(html.Tr([
-            html.Td(f"{s}", style=cell0),
-            html.Td(f"{dist}", style=cell),
-            html.Td(f"{depth}", style={**cell, "fontWeight": 600}),
+            html.Td(val(s), style=cell0),
+            html.Td(val(dist), style=cell),
+            html.Td(val(depth), style={**cell, "fontWeight": 600}),
         ]))
+    return html.Table(
+        [html.Thead(html.Tr([
+            html.Th(f"Storage ({depth_u})", style=head0),
+            html.Th(f"{dist_label} ({dist_u})", style=head),
+            html.Th(f"Depth ({depth_u})", style=head)]))]
+        + [html.Tbody(rows)],
+        style={"borderCollapse": "collapse", "flex": "1 1 auto"})
+
+
+def _ref_table(section, title, mapping, dist_label, depth_sign, unit):
+    """A USN reference table split into two halves (mirrors the manual's own
+    two-column layout, and keeps the printed table to a single page)."""
+    keys = sorted(mapping)
+    mid = (len(keys) + 1) // 2
     return html.Div([
         html.Div([html.Span(f"{section}  ", style={"fontWeight": 700, "color": ACCENT}),
                   title], style={"fontSize": "0.85rem", "marginBottom": "6px"}),
         html.Div(
-            html.Table(
-                [html.Thead(html.Tr([
-                    html.Th("Storage (fsw)", style=head_cell0),
-                    html.Th(dist_header, style=head_cell),
-                    html.Th("Excursion depth (fsw)", style=head_cell)]))]
-                + [html.Tbody(rows)],
-                style={"borderCollapse": "collapse", "width": "100%"}),
-            style={"maxHeight": "320px", "overflowY": "auto",
+            html.Div([
+                _subtable(keys[:mid], mapping, depth_sign, unit, dist_label),
+                _subtable(keys[mid:], mapping, depth_sign, unit, dist_label),
+            ], style={"display": "flex", "gap": "18px"}),
+            className="de-print-expand",
+            style={"maxHeight": "340px", "overflowY": "auto",
                    "border": f"1px solid {GRID}", "borderRadius": "10px",
                    "padding": "8px 12px"}),
-    ], style={"flex": "1 1 320px", "minWidth": "300px"})
+    ], style={"flex": "1 1 340px", "minWidth": "320px"})
 
 
 # --------------------------------------------------------------------------- #
@@ -166,14 +181,8 @@ def layout():
                          style={"cursor": "pointer", "fontSize": "0.9rem",
                                 "fontWeight": 700, "color": ACCENT,
                                 "margin": "18px 0 10px"}),
-            html.Div([
-                _ref_table("Table 13-7",
-                           "Unlimited-Duration Downward Excursion Limits",
-                           eng.DOWNWARD, "Deepest excursion distance (ft)", +1),
-                _ref_table("Table 13-8",
-                           "Unlimited-Duration Upward Excursion Limits",
-                           eng.UPWARD, "Shallowest excursion distance (ft)", -1),
-            ], style={"display": "flex", "gap": "22px", "flexWrap": "wrap"}),
+            html.Div(id="de-ref-tables",
+                     style={"display": "flex", "gap": "22px", "flexWrap": "wrap"}),
         ], open=True),
 
         _rules_block(),
@@ -259,6 +268,11 @@ def _both(fsw):
     return f"{eng.fsw_to_msw(fsw):.1f} m ({fsw:.0f} fsw)"
 
 
+def _row_str(fsw, unit):
+    """Table row (a fsw index) shown in the selected unit."""
+    return f"{eng.fsw_to_msw(fsw):.1f} m ({fsw:.0f} fsw)" if unit == "msw" else f"{fsw:.0f} fsw"
+
+
 @callback(
     Output("de-desc-depth", "children"),
     Output("de-desc-dist", "children"),
@@ -284,7 +298,7 @@ def _compute(unit, depth):
                     f"({e['down_dist_fsw']:.0f} ft)" if unit == "msw"
                     else f"{e['down_dist_fsw']:.0f} ft "
                          f"({eng.fsw_to_msw(e['down_dist_fsw']):.1f} m)"))
-    desc_row = f"Table 13-7 row: {e['down_row_fsw']:.0f} fsw  \u00b7  = {_both(e['max_desc_fsw'])}"
+    desc_row = f"Table 13-7 \u00b7 row {_row_str(e['down_row_fsw'], unit)}"
 
     asc_depth = _depth_str(e["max_asc_fsw"], unit)
     asc_dist = ("excursion up "
@@ -292,7 +306,7 @@ def _compute(unit, depth):
                    f"({e['up_dist_fsw']:.0f} ft)" if unit == "msw"
                    else f"{e['up_dist_fsw']:.0f} ft "
                         f"({eng.fsw_to_msw(e['up_dist_fsw']):.1f} m)"))
-    asc_row = f"Table 13-8 row: {e['up_row_fsw']:.0f} fsw  \u00b7  = {_both(e['max_asc_fsw'])}"
+    asc_row = f"Table 13-8 \u00b7 row {_row_str(e['up_row_fsw'], unit)}"
 
     note = (f"Storage depth {_both(e['storage_fsw'])}. Excursion window "
             f"{_depth_str(e['max_asc_fsw'], unit)} \u2192 "
@@ -303,6 +317,23 @@ def _compute(unit, depth):
                  "values are clamped to the nearest table row.")
 
     return (desc_depth, desc_dist, desc_row, asc_depth, asc_dist, asc_row, note)
+
+
+# --------------------------------------------------------------------------- #
+# Reference tables: rebuilt in the selected unit (fsw as printed, or converted
+# to metres). Split into two halves so the full tables print on one page.
+# --------------------------------------------------------------------------- #
+@callback(
+    Output("de-ref-tables", "children"),
+    Input("de-unit", "value"),
+)
+def _ref_tables(unit):
+    return [
+        _ref_table("Table 13-7", "Unlimited-Duration Downward Excursion Limits",
+                   eng.DOWNWARD, "Deepest excursion distance", +1, unit),
+        _ref_table("Table 13-8", "Unlimited-Duration Upward Excursion Limits",
+                   eng.UPWARD, "Shallowest excursion distance", -1, unit),
+    ]
 
 
 # --------------------------------------------------------------------------- #
