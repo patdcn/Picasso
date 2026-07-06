@@ -53,6 +53,53 @@ def _bt_of(value, depth, ri):
     return None
 
 
+def _strip_prow_ids(node):
+    """Recursively remove the clickable pattern-ids from a reused DCD/USN table
+    so the embedded copy is static (no foreign callbacks fire)."""
+    cid = getattr(node, "id", None)
+    if isinstance(cid, dict) and cid.get("type") in ("dcd-prow", "usn-prow"):
+        try:
+            node.id = None
+            node.n_clicks = None
+        except Exception:
+            pass
+    ch = getattr(node, "children", None)
+    if isinstance(ch, (list, tuple)):
+        for c in ch:
+            _strip_prow_ids(c)
+    elif ch is not None:
+        _strip_prow_ids(ch)
+
+
+def _schedule_table(value, depth, ri, dvis5):
+    """Static copy of the selected schedule with the chosen bottom-time row
+    highlighted, reusing the DCD / USN page renderers."""
+    source, code, _mode = value.split("|")
+    apply_limit = bool(dvis5)
+    try:
+        if source == "dcd":
+            from app.pages import dcd_tables as dpg
+            from app.engines import dcd_tables as dcd
+            t = dcd.ui_table(code, depth)
+            if not t:
+                return None
+            comp = dpg._render(t, sel_i=ri, apply_limit=apply_limit)
+        else:
+            from app.pages import usn_tables as upg
+            from app.engines import usn_tables as usn
+            t = usn.ui_table(code)
+            res = usn.ui_block(code, depth)
+            block = res.get("block") if res else None
+            if not t or not block:
+                return None
+            limit = profiles.dvis5_limit(value, depth) if apply_limit else None
+            comp = upg._block(t, block, "m", sel_i=ri, apply_limit=apply_limit, limit=limit)
+        _strip_prow_ids(comp)
+        return comp
+    except Exception:
+        return None
+
+
 def _field(label, comp, hint=None):
     return html.Div([
         html.Label(label, style={"fontSize": "0.78rem", "fontWeight": 600, "color": INK}),
@@ -222,6 +269,7 @@ def layout():
                 html.Div(id="dp-gantt"),
                 html.Div(id="dp-totals"),
                 html.Div(id="dp-gasuse"),
+                html.Div(id="dp-schedule"),
             ], className="diving-main", style={"flex": "1 1 auto", "minWidth": "0"}),
         ], style={"display": "flex", "gap": "18px", "marginTop": "8px", "alignItems": "flex-start"}),
         reports.print_footer(),
@@ -283,26 +331,27 @@ def _card(title, value):
 @callback(
     Output("dp-timing", "children"), Output("dp-gantt", "children"),
     Output("dp-totals", "children"), Output("dp-gasuse", "children"),
+    Output("dp-schedule", "children"),
     Input("dp-row", "value"), Input("dp-shift", "value"), Input("dp-start", "value"),
     Input("dp-team", "value"), Input("dp-iw", "value"), Input("dp-repeats", "value"),
     Input("dp-standby", "value"), Input("dp-tidal", "value"), Input("dp-windows", "value"),
     Input("dp-window-min", "value"), Input("dp-descent-rate", "value"), Input("dp-arrive", "value"),
     Input("dp-return", "value"), Input("dp-undress", "value"), Input("dp-turnaround", "value"),
     Input("dp-rmv-work", "value"), Input("dp-rmv-deco", "value"),
-    State("dp-table", "value"), State("dp-depth", "value"),
+    State("dp-table", "value"), State("dp-depth", "value"), State("dp-dvis5", "value"),
 )
 def _compute(ri, shift_h, start, team, iw, repeats, standby, tidal, windows, window_min,
-             desc_rate, arrive, ret, undress, turn, rmv_work, rmv_deco, value, depth):
+             desc_rate, arrive, ret, undress, turn, rmv_work, rmv_deco, value, depth, dvis5):
     if not value or depth is None or ri is None:
-        return "", _hint("Choose a table, depth and bottom time to lay out the day."), "", ""
+        return "", _hint("Choose a table, depth and bottom time to lay out the day."), "", "", ""
 
     legs, unit = profiles.legs_for(value, depth, ri)
     if not legs:
-        return "", _hint("No schedule for that selection."), "", ""
+        return "", _hint("No schedule for that selection."), "", "", ""
 
     bt = _bt_of(value, depth, ri)
     if bt is None:
-        return "", _hint("Couldn't read the bottom time for that row."), "", ""
+        return "", _hint("Couldn't read the bottom time for that row."), "", "", ""
 
     water = [l for l in legs if l.get("phase") == "water"]
     surface = [l for l in legs if l.get("phase") == "surface"]
@@ -339,9 +388,9 @@ def _compute(ri, shift_h, start, team, iw, repeats, standby, tidal, windows, win
 
     if plan["flags"]["neg_work"]:
         return "", _hint("Bottom time is too short for this depth - descent, arrive and return "
-                         "leave no working time. Pick a longer bottom time."), "", ""
+                         "leave no working time. Pick a longer bottom time."), "", "", ""
     if plan["flags"]["team_too_small"]:
-        return "", _hint("Not enough working divers to crew a dive with this standby / divers-per-dive."), "", ""
+        return "", _hint("Not enough working divers to crew a dive with this standby / divers-per-dive."), "", "", ""
 
     def r1(x):
         return f"{x:.1f}"
@@ -380,18 +429,21 @@ def _compute(ri, shift_h, start, team, iw, repeats, standby, tidal, windows, win
     # ---- Dive Gas Use ----------------------------------------------------- #
     rmv_w = f(rmv_work, 40.0)
     rmv_d = f(rmv_deco, 30.0)
-    gu = dpe.gas_use_day(legs, unit, t["n_dives"], rmv_w, rmv_d)
+    cat = profiles.table_category(value)
+    surface_deco = cat == "surdo2"
+    gu = dpe.gas_use_day(legs, unit, t["n_dives"], rmv_w, rmv_d, surface_deco=surface_deco)
     period = "24 h" if int(shift_h or 12) == 24 else "12 h"
 
     def _gas_rows(rows):
         out = []
         for r in rows:
+            quads = f"{r['quads']:.2f} quads" if r["quads"] is not None else ""
             out.append(html.Div([
                 html.Span(r["label"], style={"flex": "0 0 78px", "fontWeight": 600}),
                 html.Span(f"{r['litres']:,.0f} L", style={"flex": "1 1 auto", "textAlign": "right",
                                                           "fontVariantNumeric": "tabular-nums"}),
-                html.Span(f"{r['quads']:.2f} quads", style={"flex": "0 0 96px", "textAlign": "right",
-                                                            "color": MUTED, "fontVariantNumeric": "tabular-nums"}),
+                html.Span(quads, style={"flex": "0 0 96px", "textAlign": "right",
+                                        "color": MUTED, "fontVariantNumeric": "tabular-nums"}),
             ], style={"display": "flex", "gap": "8px", "fontSize": "0.85rem", "padding": "2px 0"}))
         return out or [html.Div("\u2014", style={"color": MUTED, "fontSize": "0.85rem"})]
 
@@ -402,8 +454,7 @@ def _compute(ri, shift_h, start, team, iw, repeats, standby, tidal, windows, win
             *_gas_rows(rows),
         ], style={"flex": "1 1 220px", "minWidth": "200px"})
 
-    cat = profiles.table_category(value)
-    deco_sub = "surface deco: air + O\u2082" if cat == "surdo2" else "in-water: air / O\u2082 / nitrox"
+    deco_sub = "surface deco: O\u2082 (air excluded)" if surface_deco else "in-water: air / O\u2082 / nitrox"
     gasuse = html.Div([
         html.Div([
             html.Span("Dive gas use", style={"fontSize": "0.72rem", "textTransform": "uppercase",
@@ -416,7 +467,7 @@ def _compute(ri, shift_h, start, team, iw, repeats, standby, tidal, windows, win
             _mix_block("Breathing mix", "bottom gas", gu["bottom"]),
             _mix_block("Deco mix", deco_sub, gu["deco"]),
         ], style={"display": "flex", "gap": "18px", "flexWrap": "wrap"}),
-        html.Div([html.Span("Total ", style={"color": MUTED}),
+        html.Div([html.Span("Total O\u2082 ", style={"color": MUTED}),
                   html.B(f"{gu['quads_total']:.2f} quads"),
                   html.Span(f" / {period}", style={"color": MUTED})],
                  style={"marginTop": "8px", "paddingTop": "6px", "borderTop": "1px solid #f1f5f9",
@@ -424,7 +475,20 @@ def _compute(ri, shift_h, start, team, iw, repeats, standby, tidal, windows, win
     ], style={"background": "#fff", "border": "1px solid #e5e7eb", "borderRadius": "10px",
               "padding": "10px 14px", "marginTop": "10px"})
 
-    return timing, gantt, totals, gasuse
+    # ---- embedded copy of the selected schedule, chosen row highlighted ----- #
+    sched_tbl = _schedule_table(value, depth, ri, dvis5)
+    if sched_tbl is not None:
+        schedule = html.Div([
+            html.Div("Selected schedule \u2014 the highlighted line is the planned bottom time",
+                     style={"fontSize": "0.72rem", "textTransform": "uppercase", "letterSpacing": "0.03em",
+                            "color": MUTED, "margin": "0 0 6px"}),
+            html.Div(sched_tbl, style={"overflowX": "auto"}),
+        ], style={"background": "#fff", "border": "1px solid #e5e7eb", "borderRadius": "10px",
+                  "padding": "12px 14px", "marginTop": "10px"})
+    else:
+        schedule = ""
+
+    return timing, gantt, totals, gasuse, schedule
 
 
 # --------------------------------------------------------------------------- #

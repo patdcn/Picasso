@@ -280,18 +280,22 @@ def gas_use_per_dive(legs, native_unit, rmv_work, rmv_deco):
     return {"bottom": bottom, "deco": deco}
 
 
-def gas_use_day(legs, native_unit, n_dives, rmv_work, rmv_deco):
-    """Scale one dive's gas use to the whole day and add quad counts.
-    Returns {'bottom': [{gas,label,litres,quads}], 'deco': [...],
-    'quads_total': float}."""
+def gas_use_day(legs, native_unit, n_dives, rmv_work, rmv_deco, surface_deco=False):
+    """Scale one dive's gas use to the whole day. Quads are counted for O2 only
+    (breathing air/mix comes off the compressor/LP supply); for surface deco the
+    ascent air is left out of the deco mix. Returns
+    {'bottom': [{gas,label,litres,quads}], 'deco': [...], 'quads_total': float}."""
     per = gas_use_per_dive(legs, native_unit, rmv_work, rmv_deco)
     out, quads_total = {}, 0.0
     for role in ("bottom", "deco"):
         rows = []
         for gas, litres in sorted(per[role].items(), key=lambda kv: -kv[1]):
+            if role == "deco" and surface_deco and gas != "o2":
+                continue                          # leave surface-deco air out of the deco mix
             L = litres * n_dives
-            q = L / QUAD_L
-            quads_total += q
+            q = (L / QUAD_L) if gas == "o2" else None   # quads only for O2
+            if q is not None:
+                quads_total += q
             rows.append({"gas": gas, "label": GAS_LABEL.get(gas, gas.title()),
                          "litres": L, "quads": q})
         out[role] = rows
