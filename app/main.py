@@ -34,6 +34,9 @@ params.init_db()
 from app import activity  # noqa: E402
 activity.init_db()
 
+from app import sat_system  # noqa: E402
+sat_system.init_db()
+
 from app.nav import build_nav  # noqa: E402
 
 # ---- serve GA reference files from the data volume (read-only, safe filenames) ----

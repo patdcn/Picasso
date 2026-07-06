@@ -35,6 +35,13 @@ def layout():
                  "diving-bell comparison tools.",
                  "/admin/params", "Open cost & timing assumptions"),
 
+        hub_card("SAT systems",
+                 ["Define saturation spreads used by the ", html.Code("SAT gas"),
+                  " calculator \u2014 build the floodable volume from named components "
+                  "(chambers, TUP, bell, HRL\u2026), set bell volume, single/twin "
+                  "configuration and default depths."],
+                 "/admin/sat-system", "Open SAT systems"),
+
         hub_card("Data volume files",
                  ["Browse and manage the persistent ", html.Code("/data"),
                   " volume \u2014 upload (drag & drop), create folders, move, rename and delete. "

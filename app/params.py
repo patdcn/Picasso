@@ -58,6 +58,24 @@ REGISTRY = [
     ("dp_rmv_working",        "Breathing rate - working diver",    "L/min",  "Dive gas", 40.0, 1, ("/air-diving/dive-planning",)),
     ("dp_rmv_deco",           "Breathing rate - deco diver",       "L/min",  "Dive gas", 30.0, 1, ("/air-diving/dive-planning",)),
     ("dp_quad_residual_bar",  "Residual quad pressure",            "bar",    "Dive gas", 40.0, 5, ("/air-diving/dive-planning",)),
+    # Saturation gas — BUKOM `Minimum Gas` (BSS-402 / IMCA D050) coefficients.
+    # These are the model constants behind the SAT minimum-gas calculator; the
+    # per-job figures (depths, deco time, divers) are entered on the page. All
+    # are locked for accounts without the /diving/sat-gas edit-parameters grant.
+    ("sat_dive_rmv",          "Bell breathing rate (per diver)",   "L/min",       "Saturation gas", 40.0,  1,    ("/diving/sat-gas",)),
+    ("sat_dive_run_min",      "Bell-run duration (reserve)",       "min",         "Saturation gas", 480.0, 15,   ("/diving/sat-gas",)),
+    ("sat_dive_runs",         "Bell runs held in reserve",         "runs",        "Saturation gas", 2.0,   1,    ("/diving/sat-gas",)),
+    ("sat_bibs_lpm",          "BIBS flow (per diver)",             "L/min",       "Saturation gas", 20.0,  1,    ("/diving/sat-gas",)),
+    ("sat_bibs_hours",        "BIBS duration (per diver)",         "h",           "Saturation gas", 4.0,   0.5,  ("/diving/sat-gas",)),
+    ("sat_blowdowns",         "System blowdowns held",             "blowdowns",   "Saturation gas", 1.0,   1,    ("/diving/sat-gas",)),
+    ("sat_lineloss_m3_day",   "Line loss",                         "m\u00b3/day", "Saturation gas", 30.0,  1,    ("/diving/sat-gas",)),
+    ("sat_lineloss_cycles",   "Decompression cycles (line loss)",  "cycles",      "Saturation gas", 2.0,   1,    ("/diving/sat-gas",)),
+    ("sat_therapeutic_lpm",   "Therapeutic flow",                  "L/min",       "Saturation gas", 20.0,  1,    ("/diving/sat-gas",)),
+    ("sat_therapeutic_min",   "Therapeutic minutes (per diver)",   "min",         "Saturation gas", 200.0, 10,   ("/diving/sat-gas",)),
+    ("sat_o2_metabolic",      "Metabolic O\u2082",                 "m\u00b3/diver/day", "Saturation gas", 0.72, 0.01, ("/diving/sat-gas",)),
+    ("sat_o2_deco_coeff",     "Decompression O\u2082 coefficient", "coeff",       "Saturation gas", 0.5,   0.05, ("/diving/sat-gas",)),
+    ("sat_o2_ppo2_coeff",     "PPO\u2082 build-up O\u2082 coefficient", "coeff",  "Saturation gas", 0.1,   0.01, ("/diving/sat-gas",)),
+    ("sat_o2_reserve",        "O\u2082 reserve",                   "m\u00b3",     "Saturation gas", 90.0,  5,    ("/diving/sat-gas",)),
 ]
 
 _DEFAULTS = {k: dflt for (k, _l, _u, _c, dflt, _s, _m) in REGISTRY}
