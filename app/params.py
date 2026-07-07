@@ -76,6 +76,24 @@ REGISTRY = [
     ("sat_o2_deco_coeff",     "Decompression O\u2082 coefficient", "coeff",       "Saturation gas", 0.5,   0.05, ("/diving/sat-gas",)),
     ("sat_o2_ppo2_coeff",     "PPO\u2082 build-up O\u2082 coefficient", "coeff",  "Saturation gas", 0.1,   0.01, ("/diving/sat-gas",)),
     ("sat_o2_reserve",        "O\u2082 reserve",                   "m\u00b3",     "Saturation gas", 90.0,  5,    ("/diving/sat-gas",)),
+    # Saturation consumption / cost model coefficients (ported from the Picasso
+    # gas workbook). Per-job figures and volumes are entered on the page; these
+    # are the assumptions, locked for accounts without the edit grant.
+    ("sat_c_o2_resting",      "O\u2082 resting / deco",            "L/min",   "Saturation consumption", 0.8,   0.1,  ("/diving/sat-consumption",)),
+    ("sat_c_o2_moderate",     "O\u2082 moderate activity",         "L/min",   "Saturation consumption", 2.5,   0.1,  ("/diving/sat-consumption",)),
+    ("sat_c_br_working",      "Heliox breathing rate (working)",   "L/min",   "Saturation consumption", 40.0,  1,    ("/diving/sat-consumption",)),
+    ("sat_c_br_bellman",      "Heliox breathing rate (bellman)",   "L/min",   "Saturation consumption", 25.0,  1,    ("/diving/sat-consumption",)),
+    ("sat_c_sodasorb_pp_day", "Sodasorb per occupant / day",       "unit/day","Saturation consumption", 0.36,  0.01, ("/diving/sat-consumption",)),
+    ("sat_c_loss_chamber",    "General chamber loss",              "frac/day","Saturation consumption", 0.005, 0.001,("/diving/sat-consumption",)),
+    ("sat_c_loss_diver",      "General bell / diver loss",         "frac",    "Saturation consumption", 0.01,  0.001,("/diving/sat-consumption",)),
+    ("sat_c_reclaim",         "Reclaim efficiency (all)",          "frac",    "Saturation consumption", 0.90,  0.01, ("/diving/sat-consumption",)),
+    ("sat_c_blowdown_ppo2",   "Blowdown target PPO\u2082",         "bar",     "Saturation consumption", 0.4,   0.05, ("/diving/sat-consumption",)),
+    ("sat_c_mix_a_o2",        "Blowdown mix A O\u2082",            "frac",    "Saturation consumption", 0.20,  0.01, ("/diving/sat-consumption",)),
+    ("sat_c_mix_b_o2",        "Blowdown mix B O\u2082",            "frac",    "Saturation consumption", 0.02,  0.01, ("/diving/sat-consumption",)),
+    ("sat_c_deco_ppo2",       "Decompression PPO\u2082",           "bar",     "Saturation consumption", 0.5,   0.05, ("/diving/sat-consumption",)),
+    ("sat_c_cost_heliox",     "Heliox unit cost",                  "\u20ac/m\u00b3", "Saturation consumption", 25.0, 1, ("/diving/sat-consumption",)),
+    ("sat_c_cost_o2",         "Oxygen unit cost",                  "\u20ac/m\u00b3", "Saturation consumption", 6.0,  1, ("/diving/sat-consumption",)),
+    ("sat_c_cost_sodasorb",   "Sodasorb unit cost",                "\u20ac/kg",      "Saturation consumption", 11.0, 1, ("/diving/sat-consumption",)),
 ]
 
 _DEFAULTS = {k: dflt for (k, _l, _u, _c, dflt, _s, _m) in REGISTRY}
