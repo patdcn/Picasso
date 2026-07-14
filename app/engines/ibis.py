@@ -386,6 +386,14 @@ def _classify(l, tok_foreign="foreign", tok_vessel="vsl"):
     return {"origin": origin, "vessel": vessel}
 
 
+def node_class(n, tok_foreign="foreign", tok_vessel="vsl"):
+    """Origin (Local/Foreign, from LocatieCode) and vessel flag (from the ALT
+    code) for a leaf Node - used by the Calculation table's Location / Vessel
+    columns and by the levy scoping. Same rule as the quote engine."""
+    return _classify({"desc": n.desc, "loc": n.loc or "", "alt": n.alt or ""},
+                     tok_foreign, tok_vessel)
+
+
 def _q_leaves(m: Model):
     out = []
     for n in m.leaves():
@@ -554,20 +562,39 @@ def report_items(m: Model):
 # --------------------------------------------------------------------------- #
 # Excel export  (live formulas; Excel recalculates on open)
 # --------------------------------------------------------------------------- #
-def to_xlsx(m: Model, R, wage_rates=None) -> bytes:
+def to_xlsx(m: Model, R, wage_rates=None, ccy=None, valutas=None, calc=None) -> bytes:
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter as CL
 
     wage_rates = wage_rates or {w["code"]: w["rate"] for w in m.wages}
     st_r = R["sr"]
     non_vat = [(i, l) for i, l in enumerate(_ordered_levies(R)) if not l.get("vat")]
-    vat_lv = next((l for _, l in enumerate(_ordered_levies(R)) if l.get("vat")), None)
+    vat_lv = next((l for l in _ordered_levies(R) if l.get("vat")), None)
     vat_dec = ((float(vat_lv.get("rate") or 0)) / 100) if vat_lv else 0
 
-    # column layout (0-based)
-    iS, iItem, iDesc, iCT, iOrg, iVes, iAant, iUnit, iCost, iMk, iSales, iStaart, iGross = range(13)
-    iLevy0 = 13
+    # --- currency: convert monetary inputs by koers factor, format with symbol
+    valutas = valutas or m.valutas
+    calc = calc or m.header["calc_ccy"]
+    ccy = ccy or calc
+    try:
+        factor = valutas[ccy]["koers"] / valutas[calc]["koers"]
+    except Exception:
+        factor = 1.0
+    sym = valutas.get(ccy, {}).get("teken", "")
+    money_fmt = (f'"{sym}"#,##0.00' if sym else '#,##0.00')
+
+    def conv(x):
+        return None if x is None else r5(x * factor)
+
+    # sorted wage order -> row on the Hourly rates sheet (for the personnel link)
+    wages_sorted = sorted(m.wages, key=lambda a: (a["desc"] or ""))
+    wage_row = {w["code"]: 4 + i for i, w in enumerate(wages_sorted)}
+
+    # column layout (0-based)  -- Uren inserted after Aantal
+    (iS, iItem, iDesc, iCT, iOrg, iVes, iAant, iUren, iUnit,
+     iCost, iMk, iSales, iStaart, iGross) = range(14)
+    iLevy0 = 14
     P = len(non_vat)
     iSub, iVat, iNet = iLevy0 + P, iLevy0 + P + 1, iLevy0 + P + 2
     NCOL = iNet + 1
@@ -576,13 +603,13 @@ def to_xlsx(m: Model, R, wage_rates=None) -> bytes:
     ws = wb.active
     ws.title = "Quote lines"
     head = ["S", "Item", "Description", "Cost type", "Origin", "Vessel", "Aantal",
-            "Unit cost", "Cost", "Markup %", "Sales", "Staart", "Gross"]
+            "Uren", f"Unit cost ({ccy})", f"Cost ({ccy})", "Markup %",
+            f"Sales ({ccy})", f"Staart ({ccy})", f"Gross ({ccy})"]
     for _, lv in non_vat:
-        head.append(lv["name"])
-    head += ["Subtotal excl VAT", "VAT", "Net price"]
+        head.append(f"{lv['name']} ({ccy})")
+    head += [f"Subtotal excl VAT ({ccy})", f"VAT ({ccy})", f"Net price ({ccy})"]
 
     bold = Font(name="Arial", bold=True)
-    reg = Font(name="Arial")
     hdr_fill = PatternFill("solid", fgColor="1f2937")
     hdr_font = Font(name="Arial", bold=True, color="FFFFFF")
     for j, htxt in enumerate(head, start=1):
@@ -592,8 +619,6 @@ def to_xlsx(m: Model, R, wage_rates=None) -> bytes:
 
     per_line = R["per_line"]
     q_leaf = {l["id"]: l for l in R["leaves"]}
-    money_fmt = '#,##0.00'
-    rows_written = [1]  # header row index
     item_no = [0]
 
     def eff_rate(lv, lf):
@@ -610,7 +635,7 @@ def to_xlsx(m: Model, R, wage_rates=None) -> bytes:
         if n.group:
             kids = [walk(c) for c in n.children]
             ri = ws.max_row + 1
-            row = ws.cell(row=ri, column=iS + 1, value=n.level + 1)
+            ws.cell(row=ri, column=iS + 1, value=n.level + 1)
             ws.cell(row=ri, column=iDesc + 1, value=pad(n.level) + n.desc).font = bold
             mval = n.mult if n.mult is not None else 1
             sc = abs(mval - 1) > 1e-9
@@ -623,8 +648,7 @@ def to_xlsx(m: Model, R, wage_rates=None) -> bytes:
                 if parts:
                     inner = "+".join(parts)
                     f = f"={mval}*({inner})" if sc else "=" + inner
-                    cc = ws.cell(row=ri, column=ci + 1, value=f)
-                    cc.number_format = money_fmt
+                    ws.cell(row=ri, column=ci + 1, value=f).number_format = money_fmt
             return {"row": ri, "v": v}
         lf = q_leaf.get(nid)
         if not lf:
@@ -636,7 +660,6 @@ def to_xlsx(m: Model, R, wage_rates=None) -> bytes:
         cl = _classify(lf)
         cost, sales = pl["cost"], pl["sell"]
         mk = (sales / cost - 1) * 100 if cost > 1e-9 else 0
-        unit = (cost / lf["aantal"]) if (lf["aantal"] and abs(lf["aantal"]) > 1e-9) else cost
         ri = ws.max_row + 1
         R_ = ri
         ws.cell(row=ri, column=iItem + 1, value=item_no[0])
@@ -645,29 +668,47 @@ def to_xlsx(m: Model, R, wage_rates=None) -> bytes:
         ws.cell(row=ri, column=iOrg + 1, value=cl["origin"])
         ws.cell(row=ri, column=iVes + 1, value="Yes" if cl["vessel"] else "")
         ws.cell(row=ri, column=iAant + 1, value=lf["aantal"])
-        ws.cell(row=ri, column=iUnit + 1, value=round(unit * 1e5) / 1e5)
-        c_cost = ws.cell(row=ri, column=iCost + 1, value=f"={CL(iUnit+1)}{R_}*{CL(iAant+1)}{R_}")
+
+        # personnel -> hourly-rate link: Cost = Uren * rate(Hourly rates) [+ other]
+        pers_cost = sum(c["cost"] for c in n.costlines if c["cat"] == "Arbeid")
+        code = n.uurloon_code
+        linked = bool(code and code in wage_row and n.hours and pers_cost > 1e-9)
+        if linked:
+            other = cost - pers_cost
+            ws.cell(row=ri, column=iUren + 1, value=r2(n.hours))
+            rate_ref = f"'Hourly rates'!$D${wage_row[code]}"
+            addend = f"+{conv(other)}" if abs(other) > 1e-9 else ""
+            ws.cell(row=ri, column=iCost + 1,
+                    value=f"={CL(iUren+1)}{R_}*{rate_ref}{addend}").number_format = money_fmt
+        else:
+            unit = (cost / lf["aantal"]) if (lf["aantal"] and abs(lf["aantal"]) > 1e-9) else cost
+            ws.cell(row=ri, column=iUnit + 1, value=conv(unit))
+            ws.cell(row=ri, column=iCost + 1,
+                    value=f"={CL(iUnit+1)}{R_}*{CL(iAant+1)}{R_}").number_format = money_fmt
+
         ws.cell(row=ri, column=iMk + 1, value=round(mk * 1e4) / 1e4)
-        c_sales = ws.cell(row=ri, column=iSales + 1,
-                          value=f"={CL(iCost+1)}{R_}*(1+{CL(iMk+1)}{R_}/100)")
-        c_st = ws.cell(row=ri, column=iStaart + 1, value=f"={CL(iSales+1)}{R_}*{st_r}")
-        c_gr = ws.cell(row=ri, column=iGross + 1, value=f"={CL(iSales+1)}{R_}+{CL(iStaart+1)}{R_}")
+        ws.cell(row=ri, column=iSales + 1,
+                value=f"={CL(iCost+1)}{R_}*(1+{CL(iMk+1)}{R_}/100)").number_format = money_fmt
+        ws.cell(row=ri, column=iStaart + 1,
+                value=f"={CL(iSales+1)}{R_}*{st_r}").number_format = money_fmt
+        ws.cell(row=ri, column=iGross + 1,
+                value=f"={CL(iSales+1)}{R_}+{CL(iStaart+1)}{R_}").number_format = money_fmt
         v = {iCost: cost, iSales: sales, iStaart: pl["staart"], iGross: pl["gross"]}
         for k, (idx, lv) in enumerate(non_vat):
             col = iLevy0 + k
             er = eff_rate(lv, lf)
             ws.cell(row=ri, column=col + 1,
-                    value=f"=SUM({CL(iGross+1)}{R_}:{CL(col)}{R_})*{er}")
+                    value=f"=SUM({CL(iGross+1)}{R_}:{CL(col)}{R_})*{er}").number_format = money_fmt
             v[col] = pl["levy"].get(idx, 0)
         ws.cell(row=ri, column=iSub + 1,
-                value=f"=SUM({CL(iGross+1)}{R_}:{CL(iLevy0+P)}{R_})")
+                value=f"=SUM({CL(iGross+1)}{R_}:{CL(iLevy0+P)}{R_})").number_format = money_fmt
         v[iSub] = pl["sub"]
-        ws.cell(row=ri, column=iVat + 1, value=f"={CL(iSub+1)}{R_}*{vat_dec}")
+        ws.cell(row=ri, column=iVat + 1,
+                value=f"={CL(iSub+1)}{R_}*{vat_dec}").number_format = money_fmt
         v[iVat] = pl["vat"]
-        ws.cell(row=ri, column=iNet + 1, value=f"={CL(iSub+1)}{R_}+{CL(iVat+1)}{R_}")
+        ws.cell(row=ri, column=iNet + 1,
+                value=f"={CL(iSub+1)}{R_}+{CL(iVat+1)}{R_}").number_format = money_fmt
         v[iNet] = pl["sub"] + pl["vat"]
-        for ci in (iCost, iSales, iStaart, iGross, iSub, iVat, iNet, *[iLevy0 + k for k in range(P)]):
-            ws.cell(row=ri, column=ci + 1).number_format = money_fmt
         return {"row": R_, "v": v}
 
     roots = [walk(t) for t in m.top]
@@ -680,20 +721,19 @@ def to_xlsx(m: Model, R, wage_rates=None) -> bytes:
             c.number_format = money_fmt
             c.font = bold
 
-    # hourly rates sheet
+    # hourly rates sheet (rate column is the link target for personnel lines)
     wr = wb.create_sheet("Hourly rates")
-    wr.cell(row=1, column=1, value=f"Hourly rates  {m.header['name']}").font = bold
-    for j, htxt in enumerate(["Code", "Description", "Hours", "Hourly rate",
-                              "Day rate (12h)", "Labour cost"], start=1):
+    wr.cell(row=1, column=1, value=f"Hourly rates  {m.header['name']}  ({ccy})").font = bold
+    for j, htxt in enumerate(["Code", "Description", "Hours", f"Hourly rate ({ccy})",
+                              f"Day rate 12h ({ccy})", f"Labour cost ({ccy})"], start=1):
         wr.cell(row=3, column=j, value=htxt).font = bold
     ri = 4
-    for w in sorted(m.wages, key=lambda a: (a["desc"] or "")):
+    for w in wages_sorted:
         rate = wage_rates.get(w["code"], w["rate"]) or 0
-        hrs = w["hours"] or 0
         wr.cell(row=ri, column=1, value=w["code"])
         wr.cell(row=ri, column=2, value=w["desc"] or "")
-        wr.cell(row=ri, column=3, value=hrs)
-        wr.cell(row=ri, column=4, value=r2(rate)).number_format = money_fmt
+        wr.cell(row=ri, column=3, value=w["hours"] or 0)
+        wr.cell(row=ri, column=4, value=conv(rate)).number_format = money_fmt
         wr.cell(row=ri, column=5, value=f"=D{ri}*12").number_format = money_fmt
         wr.cell(row=ri, column=6, value=f"=C{ri}*D{ri}").number_format = money_fmt
         ri += 1
@@ -701,6 +741,8 @@ def to_xlsx(m: Model, R, wage_rates=None) -> bytes:
     # summary sheet
     sm = wb.create_sheet("Summary")
     sm.cell(row=1, column=1, value=f"Quote summary  {m.header['name']}").font = bold
+    sm.cell(row=2, column=1, value="Currency")
+    sm.cell(row=2, column=2, value=ccy).font = bold
     rows = [("Cost (raw)", R["raw_cost"]), ("Markup", R["markup"]),
             ("Net of line items (sales)", R["sells_base"]),
             ("Staart (overhead / profit / CAR)", R["staart_amt"]),
@@ -710,15 +752,14 @@ def to_xlsx(m: Model, R, wage_rates=None) -> bytes:
             rows.append((s["lv"]["name"], s["amt"]))
     rows += [("Totaal excl BTW", R["excl"]), ("VAT", R["vat_amt"]),
              ("Totaal incl BTW (quote)", R["incl"])]
-    ri = 3
+    ri = 4
     for label, val in rows:
         sm.cell(row=ri, column=1, value=label)
         if val is not None:
-            sm.cell(row=ri, column=2, value=r2(val)).number_format = money_fmt
+            sm.cell(row=ri, column=2, value=conv(val)).number_format = money_fmt
         ri += 1
 
-    # widths
-    for col, w in {"A": 6, "B": 8, "C": 40}.items():
+    for col, w in {"A": 6, "B": 8, "C": 42}.items():
         ws.column_dimensions[col].width = w
     buf = io.BytesIO()
     wb.save(buf)

@@ -96,7 +96,8 @@ def _stores():
         dcc.Store(id="ib-levies", storage_type="memory", data=[]),
         dcc.Store(id="ib-staart", storage_type="memory", data=None),
         dcc.Store(id="ib-view", storage_type="memory", data="calc"),
-        dcc.Store(id="ib-path", storage_type="memory", data=[]),
+        dcc.Store(id="ib-expanded", storage_type="memory", data=[]),
+        dcc.Store(id="ib-linefilter", storage_type="memory", data=None),
         dcc.Store(id="ib-typesel", storage_type="memory", data=[]),
         dcc.Store(id="ib-report", storage_type="memory", data={"mode": "cat", "cat": None, "res": None, "path": []}),
         dcc.Download(id="ib-dl-xlsx"),
@@ -197,71 +198,94 @@ def _mfmt(v, cc):
     return _money(v, cc["ccy"], cc["valutas"], cc["calc"])
 
 
-def _calc_tab(m, R, cc, path, typesel):
-    # breadcrumbs + chapter nav
-    crumbs = [html.A("Full calculation", id={"type": "ib-crumb", "i": -1},
-                     style={"color": TEAL, "cursor": "pointer"})]
-    for i, nid in enumerate(path):
-        crumbs.append(html.Span(" › ", style={"color": MUTED}))
-        crumbs.append(html.A(f"{m.nodes[nid].num} {m.nodes[nid].desc}",
-                             id={"type": "ib-crumb", "i": i}, style={"color": TEAL, "cursor": "pointer"}))
+def _path_of(m, n):
+    out, x = [], m.parent.get(n.id)
+    while x is not None:
+        out.append(m.nodes[x].desc)
+        x = m.parent.get(x)
+    return list(reversed(out))
+
+
+def _calc_tab(m, R, cc, expanded, typesel, linefilter, descriptions):
+    expanded = set(expanded or [])
     chips = [html.Button(t, id={"type": "ib-chip", "t": t}, n_clicks=0,
                          style={**BTN_GHOST, "borderColor": CAT_COLOR[t],
                                 "color": "#fff" if t in typesel else CAT_COLOR[t],
                                 "background": CAT_COLOR[t] if t in typesel else "#fff"})
              for t in TYPES]
+    controls = html.Div([
+        dcc.Dropdown(id="ib-linefilter-dd",
+                     options=[{"label": d, "value": d} for d in descriptions],
+                     value=linefilter, clearable=True,
+                     placeholder="filter: pick a line to see it in every position…",
+                     style={"flex": "1 1 340px", "minWidth": "260px", "fontSize": "0.8rem"}),
+        html.Div(chips, style={"display": "flex", "gap": "6px", "flexWrap": "wrap"}),
+    ], style={"display": "flex", "gap": "12px", "alignItems": "center",
+              "justifyContent": "space-between", "flexWrap": "wrap", "marginBottom": "8px"})
 
-    scope = path[-1] if path else None
-    kids = m.nodes[scope].children if scope else m.top
+    head = html.Thead(html.Tr([
+        _th("LINE"), _th("DESCRIPTION"), _th("LOCATION"), _th("VESSEL"),
+        _th("AANTAL", True), _th("UREN", True), _th("UNIT PRICE", True),
+        _th("COST PRICE", True), _th("MARKUP", True), _th("NET PRICE", True)]))
 
     rows = []
-    for nid in kids:
-        n = m.nodes[nid]
-        if typesel and not _node_has_type(m, n, typesel):
-            continue
-        if n.group:
-            mult = ""
-            if n.mult is not None and abs(n.mult - 1) > 1e-6:
-                mult = _badge(f"× {n.mult:g}", "#7c3aed")
-            rows.append(html.Tr([
-                _td(html.Span(n.num, style={"color": MUTED, "fontFamily": "ui-monospace,monospace"})),
-                _td([html.Span("▸ ", style={"color": TEAL}), html.B(n.desc), mult]),
-                _td("", right=True), _td("", right=True), _td("", right=True),
-                _td(html.B(_mfmt(n.cost, cc)), right=True, color=COST_FG),
-                _td("", right=True),
-                _td(html.B(_mfmt(n.net, cc)), right=True, color=NET_FG),
-            ], id={"type": "ib-drill", "id": nid}, n_clicks=0, className="ib-grouprow",
-                style={"background": PANEL2, "cursor": "pointer"}))
-        else:
-            rows.extend(_leaf_rows(n, cc))
+    if linefilter:
+        occ = [n for n in m.nodes.values()
+               if not n.group and n.desc == linefilter and n.costlines]
+        for n in occ:
+            rows.extend(_leaf_rows(m, n, cc, indent=0, path=_path_of(m, n)))
+        foottotal = sum((n.net or 0) * m.eff_mult(n.id) for n in occ)
+        footlabel = (f"Filtered net total — {len(occ)} occurrence"
+                     f"{'' if len(occ) == 1 else 's'} of “{linefilter}”, multiplicity-adjusted")
+    else:
+        def walk(nid):
+            n = m.nodes[nid]
+            if typesel and not _node_has_type(m, n, typesel):
+                return
+            if n.group:
+                is_exp = nid in expanded
+                mult = (_badge(f"× {n.mult:g}", "#7c3aed")
+                        if (n.mult is not None and abs(n.mult - 1) > 1e-6) else "")
+                caret = "▾ " if is_exp else "▸ "
+                rows.append(html.Tr([
+                    _td(html.Span(n.num, style={"color": MUTED, "fontFamily": "ui-monospace,monospace"})),
+                    _td([html.Span(caret, style={"color": TEAL, "fontWeight": 700}),
+                         html.B(n.desc), mult], paddingLeft=f"{12 + n.level * 16}px"),
+                    _td(""), _td(""), _td("", right=True), _td("", right=True), _td("", right=True),
+                    _td(html.B(_mfmt(n.cost, cc)), right=True, color=COST_FG),
+                    _td("", right=True),
+                    _td(html.B(_mfmt(n.net, cc)), right=True, color=NET_FG),
+                ], id={"type": "ib-drill", "id": nid}, n_clicks=0, className="ib-grouprow",
+                    style={"background": PANEL2, "cursor": "pointer"}))
+                if is_exp:
+                    for c in n.children:
+                        walk(c)
+            else:
+                rows.extend(_leaf_rows(m, n, cc, indent=n.level))
+        for t in m.top:
+            walk(t)
+        foottotal = sum((m.nodes[t].net or 0) for t in m.top)
+        footlabel = "Net total (all chapters, before Staart)"
 
     if not rows:
-        rows = [html.Tr([_td("No lines match the current filter.", color=MUTED)],
-                        )]
+        rows = [html.Tr([_td("No lines match the current filter.", color=MUTED)])]
 
-    footlabel = "Section net total" if path else "Net total (all chapters, before Staart)"
-    foottotal = (m.nodes[scope].net if scope else sum((m.nodes[t].net or 0) for t in m.top))
+    hint = ("Showing every position of the selected line. Clear the filter to return to the tree."
+            if linefilter else
+            "Click a chapter to expand it in place; click a line's description to see that line in "
+            "every position. Aantal / Unit Price / Markup are editable — Personnel unit price is "
+            "wage-derived (read-only). Cost = Unit × Aantal; Net = Cost × (1 + Markup).")
 
     return html.Div([
-        html.Div([html.Div(crumbs, style={"fontSize": "0.82rem"}),
-                  html.Div(chips, style={"display": "flex", "gap": "6px", "flexWrap": "wrap"})],
-                 style={"display": "flex", "justifyContent": "space-between", "gap": "12px",
-                        "alignItems": "center", "flexWrap": "wrap", "marginBottom": "8px"}),
-        html.Div(html.Table([
-            html.Thead(html.Tr([_th("LINE"), _th("DESCRIPTION"), _th("AANTAL", True),
-                                _th("UREN", True), _th("UNIT PRICE", True), _th("COST PRICE", True),
-                                _th("MARKUP", True), _th("NET PRICE", True)])),
-            html.Tbody(rows),
-        ], style={"width": "100%", "borderCollapse": "collapse", "background": "#fff"}),
-            style={"maxHeight": "56vh", "overflow": "auto", "border": f"1px solid {LINE}",
-                   "borderRadius": "10px"}),
+        controls,
+        html.Div(html.Table([head, html.Tbody(rows)],
+                            style={"width": "100%", "borderCollapse": "collapse", "background": "#fff"}),
+                 style={"maxHeight": "56vh", "overflow": "auto", "border": f"1px solid {LINE}",
+                        "borderRadius": "10px"}),
         html.Div([html.Span(footlabel + ": ", style={"color": MUTED}),
                   html.B(_mfmt(foottotal, cc), style={"color": NET_FG})],
                  style={"marginTop": "8px", "fontSize": "0.85rem"}),
-        html.Div("Click Aantal, Unit Price or Markup to edit. Cost = Unit × Aantal; "
-                 "Net = Cost × (1 + Markup). Personnel unit price is wage-derived (read-only). "
-                 "Edits recompute totals and staart live.",
-                 style={"fontSize": "0.72rem", "color": MUTED, "marginTop": "4px"}),
+        html.Div(hint, style={"fontSize": "0.72rem", "color": MUTED, "marginTop": "4px"}),
     ])
 
 
@@ -278,18 +302,26 @@ def _node_has_type(m, n, typesel):
     return False
 
 
-def _leaf_rows(n, cc):
-    """One row per cost line (so aantal spans; each cost type editable)."""
+def _leaf_rows(m, n, cc, indent=0, path=None):
+    """One row per cost line. Location (LocatieCode) and Vessel (ALT code) plus
+    the numeric editors sit on the first row; extra cost types add rows beneath.
+    The description is clickable to filter on that line across the calculation."""
     out = []
+    cls = ibis.node_class(n)
+    loc_txt = cls["origin"]
+    ves_txt = "✓" if cls["vessel"] else ""
     first = True
     for cl in n.costlines:
-        aantal_cell = ""
-        uren_cell = ""
+        num_cell = aantal_cell = uren_cell = loc_cell = ves_cell = ""
         if first:
+            num_cell = html.Span(n.num, style={"color": MUTED, "fontFamily": "ui-monospace,monospace"})
             aantal_cell = dcc.Input(id={"type": "ib-ed", "id": n.id, "f": "aantal", "cat": "_"},
                                     value=n.aantal, type="number", debounce=True, style=CELL)
             uren_cell = _num(n.hours) if n.hours else ""
-        # unit price editable unless Personnel
+            loc_cell = html.Span(loc_txt, style={
+                "color": "#b45309" if loc_txt == "Foreign" else MUTED,
+                "fontSize": "0.72rem", "fontWeight": 600})
+            ves_cell = html.Span(ves_txt, style={"color": TEAL, "fontWeight": 700})
         if cl["type"] == "Personnel":
             unit_cell = html.Span(_mfmt(cl["unit"], cc), style={"color": MUTED})
         else:
@@ -299,12 +331,20 @@ def _leaf_rows(n, cc):
         mk_cell = dcc.Input(id={"type": "ib-ed", "id": n.id, "f": "markup", "cat": cl["cat"]},
                             value=cl["markup"], type="number", debounce=True,
                             style={**CELL, "width": "58px"})
-        desc = [n.desc, _badge(cl["type"], CAT_COLOR[cl["type"]])] if first else \
-            [html.Span("", style={"paddingLeft": "0"}), _badge(cl["type"], CAT_COLOR[cl["type"]])]
+        if first:
+            desc_children = []
+            if path:
+                desc_children.append(html.Span(" › ".join(path) + "  ",
+                                               style={"color": MUTED, "fontSize": "0.68rem"}))
+            desc_children.append(html.A(n.desc, id={"type": "ib-linepick", "id": n.id},
+                                        style={"cursor": "pointer", "color": INK}))
+            desc_children.append(_badge(cl["type"], CAT_COLOR[cl["type"]]))
+        else:
+            desc_children = [_badge(cl["type"], CAT_COLOR[cl["type"]])]
         out.append(html.Tr([
-            _td(html.Span(n.num, style={"color": MUTED, "fontFamily": "ui-monospace,monospace"})
-                if first else ""),
-            _td(desc),
+            _td(num_cell),
+            _td(desc_children, paddingLeft=f"{12 + indent * 16}px"),
+            _td(loc_cell), _td(ves_cell),
             _td(aantal_cell, right=True),
             _td(uren_cell, right=True, color=MUTED),
             _td(unit_cell, right=True),
@@ -582,11 +622,11 @@ _TBL = {"width": "100%", "borderCollapse": "collapse", "background": "#fff",
     Output("ib-c-staart", "children"), Output("ib-c-levy", "children"),
     Output("ib-c-net", "children"), Output("ib-content", "children"),
     Input("ib-file", "data"), Input("ib-ccy-sel", "value"), Input("ib-view", "data"),
-    Input("ib-path", "data"), Input("ib-typesel", "data"), Input("ib-edits", "data"),
-    Input("ib-wages", "data"), Input("ib-levies", "data"), Input("ib-staart", "data"),
-    Input("ib-report", "data"),
+    Input("ib-expanded", "data"), Input("ib-typesel", "data"), Input("ib-linefilter", "data"),
+    Input("ib-edits", "data"), Input("ib-wages", "data"), Input("ib-levies", "data"),
+    Input("ib-staart", "data"), Input("ib-report", "data"),
 )
-def _render(fstore, ccy, view, path, typesel, edits, wages, levies, staart, rep):
+def _render(fstore, ccy, view, expanded, typesel, linefilter, edits, wages, levies, staart, rep):
     if not fstore or not fstore.get("b64"):
         return ("Drop an IBIS .xtb here to begin", "", "—", "—", "—", "—", "—", None)
     raw, m = _model(fstore)
@@ -609,7 +649,9 @@ def _render(fstore, ccy, view, path, typesel, edits, wages, levies, staart, rep)
     elif view == "report":
         content = _report_tab(m, cc, rep or {"mode": "cat"})
     else:
-        content = _calc_tab(m, R, cc, path or [], typesel or [])
+        descriptions = sorted({n.desc for n in m.nodes.values()
+                               if not n.group and n.costlines and n.desc})
+        content = _calc_tab(m, R, cc, expanded or [], typesel or [], linefilter, descriptions)
 
     sub = (f"IBIS calculation · version {m.header['versie']} · "
            f"{str(m.header['datum']).replace('T', ' ')} · calc currency {calc}")
@@ -643,12 +685,13 @@ def _apply_wages(m, wages):
           Output("ib-ccy-sel", "options"), Output("ib-ccy-sel", "value"),
           Output("ib-edits", "data"), Output("ib-wages", "data"),
           Output("ib-levies", "data"), Output("ib-staart", "data"),
-          Output("ib-path", "data"), Output("ib-msg", "children"),
+          Output("ib-expanded", "data"), Output("ib-linefilter", "data"),
+          Output("ib-msg", "children"),
           Input("ib-upload", "contents"), State("ib-upload", "filename"),
           prevent_initial_call=True)
 def _upload(contents, filename):
     if not contents:
-        return (no_update,) * 9
+        return (no_update,) * 10
     try:
         _hdr, payload = contents.split(",", 1)
         raw = base64.b64decode(payload)
@@ -659,10 +702,10 @@ def _upload(contents, filename):
         # The staart (Algemene kosten / Winst en Risico / CAR) stays in the .xtb and
         # drives the STAART card + Staart tab - it is never a levy.
         return ({"name": filename, "b64": payload}, opts, m.header["calc_ccy"],
-                {}, {}, [], None, [], msg)
+                {}, {}, [], None, [], None, msg)
     except Exception as e:
         return (no_update, no_update, no_update, no_update, no_update, no_update,
-                no_update, no_update, f"Could not read this file: {e}")
+                no_update, no_update, no_update, f"Could not read this file: {e}")
 
 
 @callback(Output("ib-view", "data"), Input({"type": "ib-tab", "v": ALL}, "n_clicks"),
@@ -672,22 +715,38 @@ def _tab(_n):
     return t["v"] if t and any(_n) else no_update
 
 
-# --- drill navigation ------------------------------------------------------ #
-@callback(Output("ib-path", "data", allow_duplicate=True),
+# --- expand / collapse tree + line filter ---------------------------------- #
+@callback(Output("ib-expanded", "data", allow_duplicate=True),
           Input({"type": "ib-drill", "id": ALL}, "n_clicks"),
-          Input({"type": "ib-crumb", "i": ALL}, "n_clicks"),
-          State("ib-path", "data"), prevent_initial_call=True)
-def _drill(dn, cn, path):
+          State("ib-expanded", "data"), prevent_initial_call=True)
+def _expand(_n, expanded):
     t = ctx.triggered_id
-    if not t:
+    if not t or not any(v for v in _n if v):
         return no_update
-    path = path or []
-    if t["type"] == "ib-drill" and any(v for v in dn if v):
-        return path + [t["id"]]
-    if t["type"] == "ib-crumb" and any(v for v in cn if v):
-        i = t["i"]
-        return [] if i < 0 else path[:i + 1]
-    return no_update
+    exp = list(expanded or [])
+    if t["id"] in exp:
+        exp.remove(t["id"])
+    else:
+        exp.append(t["id"])
+    return exp
+
+
+@callback(Output("ib-linefilter", "data", allow_duplicate=True),
+          Input("ib-linefilter-dd", "value"), prevent_initial_call=True)
+def _linefilter(v):
+    return v
+
+
+@callback(Output("ib-linefilter", "data", allow_duplicate=True),
+          Input({"type": "ib-linepick", "id": ALL}, "n_clicks"),
+          State("ib-file", "data"), prevent_initial_call=True)
+def _linepick(_n, fstore):
+    t = ctx.triggered_id
+    if not t or not any(v for v in _n if v) or not fstore:
+        return no_update
+    _raw, m = _model(fstore)
+    n = m.nodes.get(t["id"])
+    return n.desc if n else no_update
 
 
 @callback(Output("ib-typesel", "data"), Input({"type": "ib-chip", "t": ALL}, "n_clicks"),
@@ -852,9 +911,9 @@ def _reset(_n):
 @callback(Output("ib-dl-xlsx", "data"), Output("ib-msg", "children", allow_duplicate=True),
           Input("ib-btn-xlsx", "n_clicks"),
           State("ib-file", "data"), State("ib-edits", "data"), State("ib-wages", "data"),
-          State("ib-levies", "data"), State("ib-staart", "data"),
+          State("ib-levies", "data"), State("ib-staart", "data"), State("ib-ccy-sel", "value"),
           prevent_initial_call=True)
-def _dl_xlsx(_n, fstore, edits, wages, levies, staart):
+def _dl_xlsx(_n, fstore, edits, wages, levies, staart, ccy):
     if not fstore:
         return no_update, "Load a file first."
     _raw, m = _model(fstore)
@@ -862,8 +921,10 @@ def _dl_xlsx(_n, fstore, edits, wages, levies, staart):
         _apply_wages(m, wages)
     R = ibis.compute(m, edits=edits or {}, staart_override=staart, levies=levies or [])
     wr = {**{w["code"]: w["rate"] for w in m.wages}, **(wages or {})}
-    xb = ibis.to_xlsx(m, R, wage_rates=wr)
-    fname = "".join(ch if ch.isalnum() else "_" for ch in (m.header["name"] or "quote")) + "_quote.xlsx"
+    ccy = ccy or m.header["calc_ccy"]
+    xb = ibis.to_xlsx(m, R, wage_rates=wr, ccy=ccy, valutas=m.valutas, calc=m.header["calc_ccy"])
+    fname = ("".join(ch if ch.isalnum() else "_" for ch in (m.header["name"] or "quote"))
+             + f"_quote_{ccy}.xlsx")
     return dcc.send_bytes(lambda buf: buf.write(xb), fname), f"Exported {fname}"
 
 
