@@ -180,21 +180,22 @@ def layout(**_):
         ], style={"display": "flex", "gap": "6px", "marginBottom": "12px", "flexWrap": "wrap"}),
 
         html.Div(id="ib-content"),
-    ], style={"padding": "18px 22px", "maxWidth": "1280px"})
+    ], style={"padding": "18px 22px", "maxWidth": "1560px"})
 
 
 # --------------------------------------------------------------------------- #
 # tab renderers  (all take the parsed model + compute result R + ccy context)
 # --------------------------------------------------------------------------- #
 def _th(txt, right=False):
-    return html.Th(txt, style={"textAlign": "right" if right else "left", "padding": "6px 8px",
+    return html.Th(txt, style={"textAlign": "right" if right else "left", "padding": "6px 10px",
                                "fontSize": "0.7rem", "color": MUTED, "borderBottom": f"2px solid {LINE}",
-                               "position": "sticky", "top": 0, "background": "#fff"})
+                               "position": "sticky", "top": 0, "background": "#fff",
+                               "whiteSpace": "nowrap"})
 
 
 def _td(child, right=False, **extra):
-    st = {"padding": "5px 8px", "fontSize": "0.8rem", "textAlign": "right" if right else "left",
-          "borderBottom": f"1px solid {LINE}"}
+    st = {"padding": "5px 10px", "fontSize": "0.8rem", "textAlign": "right" if right else "left",
+          "borderBottom": f"1px solid {LINE}", "whiteSpace": "nowrap"}
     st.update(extra)
     return html.Td(child, style=st)
 
@@ -289,7 +290,7 @@ def _calc_tab(m, R, cc, expanded, typesel, linefilter, descriptions, zoom):
                          html.Span([html.B(n.desc), mult], id={"type": "ib-zoom-in", "id": nid},
                                    n_clicks=0, title="zoom into this section",
                                    style={"cursor": "pointer"})],
-                        paddingLeft=f"{12 + indent * 16}px"),
+                        paddingLeft=f"{12 + indent * 16}px", whiteSpace="normal", maxWidth="440px"),
                     _td(""), _td(""), _td("", right=True), _td("", right=True), _td("", right=True),
                     _td(html.B(_mfmt(n.cost, cc)), right=True, color=COST_FG),
                     _td("", right=True),
@@ -390,7 +391,8 @@ def _leaf_rows(m, n, cc, indent=0, path=None):
         tr_kwargs = {"id": f"ibrow-{n.id}"} if first else {}
         out.append(html.Tr([
             _td(num_cell),
-            _td(desc_children, paddingLeft=f"{12 + indent * 16}px"),
+            _td(desc_children, paddingLeft=f"{12 + indent * 16}px",
+                whiteSpace="normal", maxWidth="440px"),
             _td(loc_cell), _td(ves_cell),
             _td(aantal_cell, right=True),
             _td(uren_cell, right=True, color=MUTED),
