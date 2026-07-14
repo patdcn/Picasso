@@ -95,7 +95,6 @@ def _stores():
         dcc.Store(id="ib-wages", storage_type="memory", data={}),
         dcc.Store(id="ib-levies", storage_type="memory", data=[]),
         dcc.Store(id="ib-staart", storage_type="memory", data=None),
-        dcc.Store(id="ib-ccy", storage_type="memory"),
         dcc.Store(id="ib-view", storage_type="memory", data="calc"),
         dcc.Store(id="ib-path", storage_type="memory", data=[]),
         dcc.Store(id="ib-typesel", storage_type="memory", data=[]),
@@ -226,13 +225,13 @@ def _calc_tab(m, R, cc, path, typesel):
                 mult = _badge(f"× {n.mult:g}", "#7c3aed")
             rows.append(html.Tr([
                 _td(html.Span(n.num, style={"color": MUTED, "fontFamily": "ui-monospace,monospace"})),
-                _td(html.A(["▸ ", html.B(n.desc), mult], id={"type": "ib-drill", "id": nid},
-                           style={"color": INK, "cursor": "pointer"})),
+                _td([html.Span("▸ ", style={"color": TEAL}), html.B(n.desc), mult]),
                 _td("", right=True), _td("", right=True), _td("", right=True),
                 _td(html.B(_mfmt(n.cost, cc)), right=True, color=COST_FG),
                 _td("", right=True),
                 _td(html.B(_mfmt(n.net, cc)), right=True, color=NET_FG),
-            ], style={"background": PANEL2}))
+            ], id={"type": "ib-drill", "id": nid}, n_clicks=0, className="ib-grouprow",
+                style={"background": PANEL2, "cursor": "pointer"}))
         else:
             rows.extend(_leaf_rows(n, cc))
 
@@ -385,10 +384,12 @@ def _quote_tab(m, R, cc, levies):
     for key, p in presets.items():
         preset_bar.append(html.Button(p["name"], id={"type": "ib-preset", "k": key}, n_clicks=0,
                                        style={**BTN_GHOST, "fontSize": "0.75rem"}))
-    preset_bar.append(html.Button("From file staart", id={"type": "ib-preset", "k": "_file"},
-                                   n_clicks=0, style={**BTN_GHOST, "fontSize": "0.75rem"}))
     preset_bar.append(html.Button("Clear", id={"type": "ib-preset", "k": "_clear"}, n_clicks=0,
                                    style={**BTN_GHOST, "fontSize": "0.75rem", "color": "#b91c1c"}))
+    preset_bar.append(html.Span("Levies are quote/Excel-only — the staart (overhead / profit / CAR) "
+                                "stays in the .xtb and is shown on its own tab.",
+                                style={"color": MUTED, "fontSize": "0.72rem", "flexBasis": "100%",
+                                       "marginTop": "2px"}))
 
     lrows = []
     for i, lv in enumerate(levies):
@@ -579,16 +580,15 @@ _TBL = {"width": "100%", "borderCollapse": "collapse", "background": "#fff",
     Output("ib-name", "children"), Output("ib-sub", "children"),
     Output("ib-c-cost", "children"), Output("ib-c-markup", "children"),
     Output("ib-c-staart", "children"), Output("ib-c-levy", "children"),
-    Output("ib-c-net", "children"), Output("ib-ccy-sel", "options"),
-    Output("ib-content", "children"),
-    Input("ib-file", "data"), Input("ib-ccy", "data"), Input("ib-view", "data"),
+    Output("ib-c-net", "children"), Output("ib-content", "children"),
+    Input("ib-file", "data"), Input("ib-ccy-sel", "value"), Input("ib-view", "data"),
     Input("ib-path", "data"), Input("ib-typesel", "data"), Input("ib-edits", "data"),
     Input("ib-wages", "data"), Input("ib-levies", "data"), Input("ib-staart", "data"),
     Input("ib-report", "data"),
 )
 def _render(fstore, ccy, view, path, typesel, edits, wages, levies, staart, rep):
     if not fstore or not fstore.get("b64"):
-        return ("Drop an IBIS .xtb here to begin", "", "—", "—", "—", "—", "—", [], None)
+        return ("Drop an IBIS .xtb here to begin", "", "—", "—", "—", "—", "—", None)
     raw, m = _model(fstore)
     calc = m.header["calc_ccy"]
     ccy = ccy or calc
@@ -599,7 +599,6 @@ def _render(fstore, ccy, view, path, typesel, edits, wages, levies, staart, rep)
         _apply_wages(m, wages)
         R = ibis.compute(m, edits=edits or {}, staart_override=staart, levies=levies or [])
     hc = ibis.header_cards(R)
-    opts = [{"label": c, "value": c} for c in m.valutas]
 
     if view == "wage":
         content = _wage_tab(m, wages or {}, cc)
@@ -615,7 +614,7 @@ def _render(fstore, ccy, view, path, typesel, edits, wages, levies, staart, rep)
     sub = (f"IBIS calculation · version {m.header['versie']} · "
            f"{str(m.header['datum']).replace('T', ' ')} · calc currency {calc}")
     return (m.header["name"], sub, _mfmt(hc["cost"], cc), _mfmt(hc["markup"], cc),
-            _mfmt(hc["staart"], cc), _mfmt(hc["levy"], cc), _mfmt(hc["net"], cc), opts, content)
+            _mfmt(hc["staart"], cc), _mfmt(hc["levy"], cc), _mfmt(hc["net"], cc), content)
 
 
 def _apply_wages(m, wages):
@@ -640,31 +639,30 @@ def _apply_wages(m, wages):
 # --------------------------------------------------------------------------- #
 # upload + currency + tabs
 # --------------------------------------------------------------------------- #
-@callback(Output("ib-file", "data"), Output("ib-ccy", "data"), Output("ib-edits", "data"),
-          Output("ib-wages", "data"), Output("ib-levies", "data"), Output("ib-staart", "data"),
+@callback(Output("ib-file", "data"),
+          Output("ib-ccy-sel", "options"), Output("ib-ccy-sel", "value"),
+          Output("ib-edits", "data"), Output("ib-wages", "data"),
+          Output("ib-levies", "data"), Output("ib-staart", "data"),
           Output("ib-path", "data"), Output("ib-msg", "children"),
           Input("ib-upload", "contents"), State("ib-upload", "filename"),
           prevent_initial_call=True)
 def _upload(contents, filename):
     if not contents:
-        return (no_update,) * 8
+        return (no_update,) * 9
     try:
         _hdr, payload = contents.split(",", 1)
         raw = base64.b64decode(payload)
         m = ibis.load(raw)
-        seeded = ibis.levies_from_staart(m) or []
+        opts = [{"label": c, "value": c} for c in m.valutas]
         msg = f"{filename} — loaded. {m.header['name']} v{m.header['versie']}, {len(m.nodes)} lines."
-        return ({"name": filename, "b64": payload}, m.header["calc_ccy"], {}, {}, seeded,
-                None, [], msg)
+        # Levies start EMPTY: they live outside the .xtb and only in the quote/Excel.
+        # The staart (Algemene kosten / Winst en Risico / CAR) stays in the .xtb and
+        # drives the STAART card + Staart tab - it is never a levy.
+        return ({"name": filename, "b64": payload}, opts, m.header["calc_ccy"],
+                {}, {}, [], None, [], msg)
     except Exception as e:
-        return (no_update, no_update, no_update, no_update, no_update, no_update, no_update,
-                f"Could not read this file: {e}")
-
-
-@callback(Output("ib-ccy", "data", allow_duplicate=True), Input("ib-ccy-sel", "value"),
-          prevent_initial_call=True)
-def _ccy(v):
-    return v or no_update
+        return (no_update, no_update, no_update, no_update, no_update, no_update,
+                no_update, no_update, f"Could not read this file: {e}")
 
 
 @callback(Output("ib-view", "data"), Input({"type": "ib-tab", "v": ALL}, "n_clicks"),
@@ -758,19 +756,14 @@ def _staart_edit(values, ids, fstore, cur):
 # --- levies ---------------------------------------------------------------- #
 @callback(Output("ib-levies", "data", allow_duplicate=True),
           Input({"type": "ib-preset", "k": ALL}, "n_clicks"),
-          State("ib-file", "data"), prevent_initial_call=True)
-def _preset(_n, fstore):
+          prevent_initial_call=True)
+def _preset(_n):
     t = ctx.triggered_id
     if not t or not any(_n):
         return no_update
     k = t["k"]
     if k == "_clear":
         return []
-    if k == "_file":
-        if not fstore:
-            return no_update
-        _raw, m = _model(fstore)
-        return ibis.levies_from_staart(m) or []
     p = ibis.bid_presets().get(k)
     return [dict(x) for x in p["levies"]] if p else no_update
 
