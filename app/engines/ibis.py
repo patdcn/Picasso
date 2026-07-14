@@ -688,7 +688,21 @@ def to_xlsx(m: Model, R, wage_rates=None, ccy=None, valutas=None, calc=None) -> 
         pers_cost = sum(c["cost"] for c in n.costlines if c["cat"] == "Arbeid")
         code = n.uurloon_code
         linked = bool(code and code in wage_row and n.hours and pers_cost > 1e-9)
-        if linked:
+        a = lf["aantal"] or 0
+        has_a = bool(a and abs(a) > 1e-9)
+        if linked and has_a:
+            # Uren = Aantal * norm(hours per unit); Cost = Uren * rate [+ other/unit * Aantal]
+            norm = n.hours / a
+            other_unit = (cost - pers_cost) / a
+            rate_ref = f"'Hourly rates'!$D${wage_row[code]}"
+            ws.cell(row=ri, column=iUren + 1,
+                    value=f"={CL(iAant+1)}{R_}*{r5(norm)}").number_format = "#,##0.##"
+            addend = (f"+{conv(other_unit)}*{CL(iAant+1)}{R_}"
+                      if abs(other_unit) > 1e-9 else "")
+            ws.cell(row=ri, column=iCost + 1,
+                    value=f"={CL(iUren+1)}{R_}*{rate_ref}{addend}").number_format = money_fmt
+        elif linked:
+            # no aantal to scale on: hours static
             other = cost - pers_cost
             ws.cell(row=ri, column=iUren + 1, value=r2(n.hours))
             rate_ref = f"'Hourly rates'!$D${wage_row[code]}"
@@ -696,7 +710,7 @@ def to_xlsx(m: Model, R, wage_rates=None, ccy=None, valutas=None, calc=None) -> 
             ws.cell(row=ri, column=iCost + 1,
                     value=f"={CL(iUren+1)}{R_}*{rate_ref}{addend}").number_format = money_fmt
         else:
-            unit = (cost / lf["aantal"]) if (lf["aantal"] and abs(lf["aantal"]) > 1e-9) else cost
+            unit = (cost / a) if has_a else cost
             ws.cell(row=ri, column=iUnit + 1, value=conv(unit))
             ws.cell(row=ri, column=iCost + 1,
                     value=f"={CL(iUnit+1)}{R_}*{CL(iAant+1)}{R_}").number_format = money_fmt
@@ -992,7 +1006,7 @@ def write_xtb(orig: bytes, m: Model, edits=None, wage_rates=None,
 
 def _write_staart(con, top_rows):
     c = con.cursor()
-    bid = con.execute("SELECT Id FROM Begrotingen LIMIT 1").fetchone()["Id"]
+    bid = con.execute("SELECT BegrotingId FROM Begrotingen LIMIT 1").fetchone()["BegrotingId"]
     sec, afd = -26, 1
     ex = con.execute("SELECT SectieId,Afdrukken FROM BegrotingBladen LIMIT 1").fetchone()
     if ex:

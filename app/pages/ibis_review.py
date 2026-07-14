@@ -20,7 +20,8 @@ written back to a NEW .xtb (Versie bumped; the original is untouched).
 import base64
 
 import dash
-from dash import html, dcc, Input, Output, State, callback, no_update, ALL, ctx
+from dash import (html, dcc, Input, Output, State, callback, no_update, ALL, ctx,
+                  clientside_callback)
 
 from app import auth
 from app.engines import ibis
@@ -97,12 +98,15 @@ def _stores():
         dcc.Store(id="ib-staart", storage_type="memory", data=None),
         dcc.Store(id="ib-view", storage_type="memory", data="calc"),
         dcc.Store(id="ib-expanded", storage_type="memory", data=[]),
+        dcc.Store(id="ib-zoom", storage_type="memory", data=None),
+        dcc.Store(id="ib-scrollto", storage_type="memory", data=None),
         dcc.Store(id="ib-linefilter", storage_type="memory", data=None),
         dcc.Store(id="ib-typesel", storage_type="memory", data=[]),
         dcc.Store(id="ib-classedits", storage_type="memory", data={}),
         dcc.Store(id="ib-report", storage_type="memory", data={"mode": "cat", "cat": None, "res": None, "path": []}),
         dcc.Download(id="ib-dl-xlsx"),
         dcc.Download(id="ib-dl-xtb"),
+        html.Div(id="ib-scroll-dummy", style={"display": "none"}),
     ])
 
 
@@ -207,22 +211,45 @@ def _path_of(m, n):
     return list(reversed(out))
 
 
-def _calc_tab(m, R, cc, expanded, typesel, linefilter, descriptions):
+def _calc_tab(m, R, cc, expanded, typesel, linefilter, descriptions, zoom):
     expanded = set(expanded or [])
+    zoom_n = m.nodes.get(zoom) if zoom is not None else None
+    if zoom_n is None or not zoom_n.group:
+        zoom, zoom_n = None, None
+
     chips = [html.Button(t, id={"type": "ib-chip", "t": t}, n_clicks=0,
                          style={**BTN_GHOST, "borderColor": CAT_COLOR[t],
                                 "color": "#fff" if t in typesel else CAT_COLOR[t],
                                 "background": CAT_COLOR[t] if t in typesel else "#fff"})
              for t in TYPES]
+    all_expanded = len(expanded) > 0
+    expall = html.Button("Collapse all" if all_expanded else "Expand all",
+                         id="ib-expandall", n_clicks=0, style={**BTN_GHOST, "fontSize": "0.75rem"})
     controls = html.Div([
         dcc.Dropdown(id="ib-linefilter-dd",
                      options=[{"label": d, "value": d} for d in descriptions],
                      value=linefilter, clearable=True,
                      placeholder="filter: pick a line to see it in every position…",
-                     style={"flex": "1 1 340px", "minWidth": "260px", "fontSize": "0.8rem"}),
-        html.Div(chips, style={"display": "flex", "gap": "6px", "flexWrap": "wrap"}),
+                     style={"flex": "1 1 300px", "minWidth": "240px", "fontSize": "0.8rem"}),
+        html.Div([expall] + chips, style={"display": "flex", "gap": "6px", "flexWrap": "wrap"}),
     ], style={"display": "flex", "gap": "12px", "alignItems": "center",
               "justifyContent": "space-between", "flexWrap": "wrap", "marginBottom": "8px"})
+
+    # zoom breadcrumb
+    crumbs = None
+    if zoom_n is not None:
+        chain, x = [], zoom
+        while x is not None:
+            chain.append(x)
+            x = m.parent.get(x)
+        chain.reverse()
+        parts = [html.A("Full calculation", id={"type": "ib-crumb", "id": "root"},
+                        n_clicks=0, style={"color": TEAL, "cursor": "pointer"})]
+        for cid in chain:
+            parts.append(html.Span(" › ", style={"color": MUTED}))
+            parts.append(html.A(m.nodes[cid].desc, id={"type": "ib-crumb", "id": cid}, n_clicks=0,
+                                style={"color": TEAL if cid != zoom else INK, "cursor": "pointer"}))
+        crumbs = html.Div(parts, style={"fontSize": "0.82rem", "marginBottom": "6px"})
 
     head = html.Thead(html.Tr([
         _th("LINE"), _th("DESCRIPTION"), _th("LOCATION"), _th("VESSEL"),
@@ -239,47 +266,60 @@ def _calc_tab(m, R, cc, expanded, typesel, linefilter, descriptions):
         footlabel = (f"Filtered net total — {len(occ)} occurrence"
                      f"{'' if len(occ) == 1 else 's'} of “{linefilter}”, multiplicity-adjusted")
     else:
+        roots = zoom_n.children if zoom_n is not None else m.top
+        base = min((m.nodes[r].level for r in roots), default=0)
+
         def walk(nid):
             n = m.nodes[nid]
             if typesel and not _node_has_type(m, n, typesel):
                 return
+            indent = max(0, n.level - base)
             if n.group:
                 is_exp = nid in expanded
                 mult = (_badge(f"× {n.mult:g}", "#7c3aed")
                         if (n.mult is not None and abs(n.mult - 1) > 1e-6) else "")
-                caret = "▾ " if is_exp else "▸ "
+                caret = "▾" if is_exp else "▸"
                 rows.append(html.Tr([
                     _td(html.Span(n.num, style={"color": MUTED, "fontFamily": "ui-monospace,monospace"})),
-                    _td([html.Span(caret, style={"color": TEAL, "fontWeight": 700}),
-                         html.B(n.desc), mult], paddingLeft=f"{12 + n.level * 16}px"),
+                    _td([html.Span(caret, id={"type": "ib-arrow", "id": nid}, n_clicks=0,
+                                   title="collapse / expand",
+                                   style={"color": TEAL, "fontWeight": 700, "cursor": "pointer",
+                                          "fontSize": "1.05rem", "display": "inline-block",
+                                          "width": "16px", "marginRight": "4px"}),
+                         html.Span([html.B(n.desc), mult], id={"type": "ib-zoom-in", "id": nid},
+                                   n_clicks=0, title="zoom into this section",
+                                   style={"cursor": "pointer"})],
+                        paddingLeft=f"{12 + indent * 16}px"),
                     _td(""), _td(""), _td("", right=True), _td("", right=True), _td("", right=True),
                     _td(html.B(_mfmt(n.cost, cc)), right=True, color=COST_FG),
                     _td("", right=True),
                     _td(html.B(_mfmt(n.net, cc)), right=True, color=NET_FG),
-                ], id={"type": "ib-drill", "id": nid}, n_clicks=0, className="ib-grouprow",
-                    style={"background": PANEL2, "cursor": "pointer"}))
+                ], style={"background": PANEL2}))
                 if is_exp:
                     for c in n.children:
                         walk(c)
             else:
-                rows.extend(_leaf_rows(m, n, cc, indent=n.level))
-        for t in m.top:
+                rows.extend(_leaf_rows(m, n, cc, indent=indent))
+        for t in roots:
             walk(t)
-        foottotal = sum((m.nodes[t].net or 0) for t in m.top)
-        footlabel = "Net total (all chapters, before Staart)"
+        scope_net = (zoom_n.net if zoom_n is not None
+                     else sum((m.nodes[t].net or 0) for t in m.top))
+        foottotal = scope_net
+        footlabel = ("Section net total" if zoom_n is not None
+                     else "Net total (all chapters, before Staart)")
 
     if not rows:
         rows = [html.Tr([_td("No lines match the current filter.", color=MUTED)])]
 
-    hint = ("Showing every position of the selected line. Clear the filter to return to the tree."
+    hint = ("Showing every position of the selected line. Clear the filter to return to it."
             if linefilter else
-            "Click a chapter to collapse/expand it in place; click a line's description to see that "
-            "line in every position. Location and Vessel are click-to-toggle (Local↔Foreign, "
-            "vessel on/off) and are written back to the .xtb on save. Aantal / Unit Price / Markup "
-            "are editable — Personnel unit price is wage-derived (read-only).")
+            "Click the ▸ arrow to collapse/expand a section; click the section text to zoom into it. "
+            "Click a line's description to see it in every position. Location and Vessel are "
+            "click-to-toggle (written back to the .xtb on save).")
 
     return html.Div([
         controls,
+        crumbs,
         html.Div(html.Table([head, html.Tbody(rows)],
                             style={"width": "100%", "borderCollapse": "collapse", "background": "#fff"}),
                  style={"maxHeight": "56vh", "overflow": "auto", "border": f"1px solid {LINE}",
@@ -347,6 +387,7 @@ def _leaf_rows(m, n, cc, indent=0, path=None):
             desc_children.append(_badge(cl["type"], CAT_COLOR[cl["type"]]))
         else:
             desc_children = [_badge(cl["type"], CAT_COLOR[cl["type"]])]
+        tr_kwargs = {"id": f"ibrow-{n.id}"} if first else {}
         out.append(html.Tr([
             _td(num_cell),
             _td(desc_children, paddingLeft=f"{12 + indent * 16}px"),
@@ -357,7 +398,7 @@ def _leaf_rows(m, n, cc, indent=0, path=None):
             _td(_mfmt(cl["cost"], cc), right=True, color=COST_FG),
             _td(mk_cell, right=True),
             _td(_mfmt(cl["net"], cc), right=True, color=NET_FG),
-        ]))
+        ], **tr_kwargs))
         first = False
     return out
 
@@ -389,6 +430,12 @@ def _wage_tab(m, wages_override, cc):
     ])
 
 
+STD_STAART = [{"name": "Overhead", "pct": 0.0, "kost": "AKS"},
+              {"name": "Profit", "pct": 0.0, "kost": "AKS"},
+              {"name": "Risk", "pct": 0.0, "kost": "AKS"},
+              {"name": "CAR", "pct": 0.0, "kost": "AKS"}]
+
+
 def _staart_tab(m, R, cc):
     top = R["top"]
     rows = []
@@ -397,30 +444,52 @@ def _staart_tab(m, R, cc):
         amt = running * (s["pct"] or 0)
         running += amt
         rows.append(html.Tr([
-            _td(s["name"] or ""),
-            _td(dcc.Input(id={"type": "ib-st", "i": i}, value=round((s["pct"] or 0) * 100, 4),
-                          type="number", debounce=True, style={**CELL, "width": "64px"}), right=True),
+            _td(dcc.Input(id={"type": "ib-st", "i": i, "f": "name"}, value=s["name"] or "",
+                          type="text", debounce=True,
+                          style={**CELL, "width": "220px", "textAlign": "left"})),
+            _td(dcc.Input(id={"type": "ib-st", "i": i, "f": "pct"},
+                          value=round((s["pct"] or 0) * 100, 4),
+                          type="number", debounce=True, style={**CELL, "width": "72px"}), right=True),
             _td(_mfmt(amt, cc), right=True, color=NET_FG),
+            _td(html.Span("✕", id={"type": "ib-stdel", "i": i}, n_clicks=0, title="remove",
+                          style={"color": "#b91c1c", "cursor": "pointer", "fontWeight": 700}),
+                right=True),
         ]))
+    bar = [html.Span("Presets: ", style={"color": MUTED, "fontSize": "0.78rem"}),
+           html.Button("Standard set — Overhead · Profit · Risk · CAR",
+                       id={"type": "ib-stpreset", "k": "standard"}, n_clicks=0,
+                       style={**BTN_GHOST, "fontSize": "0.75rem"}),
+           html.Button("Clear", id={"type": "ib-stpreset", "k": "_clear"}, n_clicks=0,
+                       style={**BTN_GHOST, "fontSize": "0.75rem", "color": "#b91c1c"})]
+    empty = (html.Div("No staart in this file — add items or apply the standard set. "
+                      "Staart is written into the .xtb on save.",
+                      style={"color": MUTED, "fontSize": "0.8rem", "marginBottom": "6px"})
+             if not top else "")
     return html.Div([
         html.P(["Staart compounds on the sell price. Effective rate ",
                 html.B(f"{R['sr'] * 100:.4f}%"),
-                ". Edit a percentage to recompute; written into the .xtb only if changed."],
+                ". Edit names/percentages to recompute; written into the .xtb only if changed."],
                style={"fontSize": "0.78rem", "color": MUTED}),
+        html.Div(bar, style={"display": "flex", "gap": "6px", "alignItems": "center",
+                             "flexWrap": "wrap", "marginBottom": "8px"}),
+        empty,
         html.Div([html.Span("Net of line items (sales): ", style={"color": MUTED}),
-                  html.B(_mfmt(R["sells_base"], cc))], style={"marginBottom": "8px", "fontSize": "0.85rem"}),
+                  html.B(_mfmt(R["sells_base"], cc))],
+                 style={"marginBottom": "8px", "fontSize": "0.85rem"}),
         html.Table([
-            html.Thead(html.Tr([_th("Component"), _th("Rate %", True), _th("Amount", True)])),
+            html.Thead(html.Tr([_th("Component"), _th("Rate %", True), _th("Amount", True), _th("")])),
             html.Tbody(rows + [
                 html.Tr([_td(html.B("Staart total")), _td(""),
-                         _td(html.B(_mfmt(R["staart_amt"], cc)), right=True, color=NET_FG)],
+                         _td(html.B(_mfmt(R["staart_amt"], cc)), right=True, color=NET_FG), _td("")],
                         style={"background": PANEL2}),
                 html.Tr([_td(html.B("Gross total (excl. BTW)")), _td(""),
-                         _td(html.B(_mfmt(R["gross"], cc)), right=True, color=NET_FG)],
+                         _td(html.B(_mfmt(R["gross"], cc)), right=True, color=NET_FG), _td("")],
                         style={"background": PANEL2}),
             ]),
         ], style={"width": "100%", "borderCollapse": "collapse", "background": "#fff",
                   "border": f"1px solid {LINE}", "borderRadius": "10px"}),
+        html.Button("+ Add staart item", id="ib-stadd", n_clicks=0,
+                    style={**BTN_GHOST, "fontSize": "0.78rem", "marginTop": "8px"}),
     ])
 
 
@@ -631,9 +700,10 @@ _TBL = {"width": "100%", "borderCollapse": "collapse", "background": "#fff",
     Input("ib-expanded", "data"), Input("ib-typesel", "data"), Input("ib-linefilter", "data"),
     Input("ib-edits", "data"), Input("ib-wages", "data"), Input("ib-levies", "data"),
     Input("ib-staart", "data"), Input("ib-report", "data"), Input("ib-classedits", "data"),
+    Input("ib-zoom", "data"),
 )
 def _render(fstore, ccy, view, expanded, typesel, linefilter, edits, wages, levies,
-            staart, rep, classedits):
+            staart, rep, classedits, zoom):
     if not fstore or not fstore.get("b64"):
         return ("Drop an IBIS .xtb here to begin", "", "—", "—", "—", "—", "—", None)
     raw, m = _model(fstore)
@@ -659,7 +729,7 @@ def _render(fstore, ccy, view, expanded, typesel, linefilter, edits, wages, levi
     else:
         descriptions = sorted({n.desc for n in m.nodes.values()
                                if not n.group and n.costlines and n.desc})
-        content = _calc_tab(m, R, cc, expanded or [], typesel or [], linefilter, descriptions)
+        content = _calc_tab(m, R, cc, expanded or [], typesel or [], linefilter, descriptions, zoom)
 
     sub = (f"IBIS calculation · version {m.header['versie']} · "
            f"{str(m.header['datum']).replace('T', ' ')} · calc currency {calc}")
@@ -694,12 +764,13 @@ def _apply_wages(m, wages):
           Output("ib-edits", "data"), Output("ib-wages", "data"),
           Output("ib-levies", "data"), Output("ib-staart", "data"),
           Output("ib-expanded", "data"), Output("ib-linefilter", "data"),
-          Output("ib-classedits", "data"), Output("ib-msg", "children"),
+          Output("ib-classedits", "data"), Output("ib-zoom", "data"),
+          Output("ib-scrollto", "data"), Output("ib-msg", "children"),
           Input("ib-upload", "contents"), State("ib-upload", "filename"),
           prevent_initial_call=True)
 def _upload(contents, filename):
     if not contents:
-        return (no_update,) * 11
+        return (no_update,) * 13
     try:
         _hdr, payload = contents.split(",", 1)
         raw = base64.b64decode(payload)
@@ -711,10 +782,9 @@ def _upload(contents, filename):
         # The staart (Algemene kosten / Winst en Risico / CAR) stays in the .xtb and
         # drives the STAART card + Staart tab - it is never a levy.
         return ({"name": filename, "b64": payload}, opts, m.header["calc_ccy"],
-                {}, {}, [], None, expanded, None, {}, msg)
+                {}, {}, [], None, expanded, None, {}, None, None, msg)
     except Exception as e:
-        return (no_update, no_update, no_update, no_update, no_update, no_update,
-                no_update, no_update, no_update, no_update, f"Could not read this file: {e}")
+        return ((no_update,) * 12) + (f"Could not read this file: {e}",)
 
 
 @callback(Output("ib-view", "data"), Input({"type": "ib-tab", "v": ALL}, "n_clicks"),
@@ -724,11 +794,11 @@ def _tab(_n):
     return t["v"] if t and any(_n) else no_update
 
 
-# --- expand / collapse tree + line filter ---------------------------------- #
+# --- tree: arrow=collapse/expand, text=zoom, expand-all, line filter -------- #
 @callback(Output("ib-expanded", "data", allow_duplicate=True),
-          Input({"type": "ib-drill", "id": ALL}, "n_clicks"),
+          Input({"type": "ib-arrow", "id": ALL}, "n_clicks"),
           State("ib-expanded", "data"), prevent_initial_call=True)
-def _expand(_n, expanded):
+def _arrow(_n, expanded):
     t = ctx.triggered_id
     if not t or not any(v for v in _n if v):
         return no_update
@@ -740,22 +810,78 @@ def _expand(_n, expanded):
     return exp
 
 
-@callback(Output("ib-linefilter", "data", allow_duplicate=True),
-          Input("ib-linefilter-dd", "value"), prevent_initial_call=True)
-def _linefilter(v):
-    return v
+@callback(Output("ib-zoom", "data", allow_duplicate=True),
+          Input({"type": "ib-zoom-in", "id": ALL}, "n_clicks"),
+          Input({"type": "ib-crumb", "id": ALL}, "n_clicks"),
+          prevent_initial_call=True)
+def _zoom(zn, cn):
+    t = ctx.triggered_id
+    if not t:
+        return no_update
+    if t["type"] == "ib-zoom-in" and any(v for v in zn if v):
+        return t["id"]
+    if t["type"] == "ib-crumb" and any(v for v in cn if v):
+        return None if t["id"] == "root" else t["id"]
+    return no_update
+
+
+@callback(Output("ib-expanded", "data", allow_duplicate=True),
+          Input("ib-expandall", "n_clicks"),
+          State("ib-expanded", "data"), State("ib-file", "data"),
+          prevent_initial_call=True)
+def _expandall(_n, expanded, fstore):
+    if not _n or not fstore:
+        return no_update
+    if expanded:                       # anything expanded -> collapse all
+        return []
+    _raw, m = _model(fstore)           # nothing expanded -> expand all groups
+    return [nid for nid, n in m.nodes.items() if n.group]
 
 
 @callback(Output("ib-linefilter", "data", allow_duplicate=True),
+          Output("ib-scrollto", "data", allow_duplicate=True),
+          Input("ib-linefilter-dd", "value"),
+          State("ib-file", "data"), prevent_initial_call=True)
+def _linefilter(v, fstore):
+    if not v:                          # cleared: keep last scroll target for return-to-item
+        return None, no_update
+    target = no_update
+    if fstore:
+        _raw, m = _model(fstore)
+        first = next((n.id for n in m.nodes.values()
+                      if not n.group and n.desc == v and n.costlines), None)
+        target = first
+    return v, target
+
+
+@callback(Output("ib-linefilter", "data", allow_duplicate=True),
+          Output("ib-scrollto", "data", allow_duplicate=True),
           Input({"type": "ib-linepick", "id": ALL}, "n_clicks"),
           State("ib-file", "data"), prevent_initial_call=True)
 def _linepick(_n, fstore):
     t = ctx.triggered_id
     if not t or not any(v for v in _n if v) or not fstore:
-        return no_update
+        return no_update, no_update
     _raw, m = _model(fstore)
     n = m.nodes.get(t["id"])
-    return n.desc if n else no_update
+    return (n.desc, t["id"]) if n else (no_update, no_update)
+
+
+# scroll back to the selected line once the filter is released
+clientside_callback(
+    """function(lf, target){
+        if(!lf && target){
+            setTimeout(function(){
+                var el = document.getElementById('ibrow-' + target);
+                if(el){ el.scrollIntoView({block:'center', behavior:'smooth'}); }
+            }, 140);
+        }
+        return '';
+    }""",
+    Output("ib-scroll-dummy", "children"),
+    Input("ib-linefilter", "data"), State("ib-scrollto", "data"),
+    prevent_initial_call=True,
+)
 
 
 @callback(Output("ib-typesel", "data"), Input({"type": "ib-chip", "t": ALL}, "n_clicks"),
@@ -844,21 +970,52 @@ def _wage_edit(values, ids):
 
 
 @callback(Output("ib-staart", "data", allow_duplicate=True),
-          Input({"type": "ib-st", "i": ALL}, "value"),
-          State({"type": "ib-st", "i": ALL}, "id"),
+          Input({"type": "ib-st", "i": ALL, "f": ALL}, "value"),
+          State({"type": "ib-st", "i": ALL, "f": ALL}, "id"),
           State("ib-file", "data"), State("ib-staart", "data"),
           prevent_initial_call=True)
 def _staart_edit(values, ids, fstore, cur):
     if not ctx.triggered or not fstore:
         return no_update
     _raw, m = _model(fstore)
-    base = ibis.staart_top(m, cur)
-    out = []
-    for s, cid in zip(base, ids):
-        v = dict(s)
-        v["pct"] = (values[cid["i"]] or 0) / 100
-        out.append(v)
-    return out
+    base = [dict(s) for s in ibis.staart_top(m, cur)]
+    for val, cid in zip(values, ids):
+        i, f = cid["i"], cid["f"]
+        if i >= len(base):
+            continue
+        if f == "pct":
+            base[i]["pct"] = (val or 0) / 100
+        elif f == "name":
+            base[i]["name"] = val or ""
+    return base
+
+
+@callback(Output("ib-staart", "data", allow_duplicate=True),
+          Input("ib-stadd", "n_clicks"),
+          Input({"type": "ib-stdel", "i": ALL}, "n_clicks"),
+          Input({"type": "ib-stpreset", "k": ALL}, "n_clicks"),
+          State("ib-file", "data"), State("ib-staart", "data"),
+          prevent_initial_call=True)
+def _staart_ctl(add, dels, presets, fstore, cur):
+    t = ctx.triggered_id
+    if not t or not fstore:
+        return no_update
+    _raw, m = _model(fstore)
+    base = [dict(s) for s in ibis.staart_top(m, cur)]
+    if t == "ib-stadd" and add:
+        base.append({"name": "New item", "pct": 0.0, "kost": "AKS"})
+        return base
+    if isinstance(t, dict) and t.get("type") == "ib-stdel" and any(v for v in dels if v):
+        i = t["i"]
+        if 0 <= i < len(base):
+            base.pop(i)
+        return base
+    if isinstance(t, dict) and t.get("type") == "ib-stpreset" and any(v for v in presets if v):
+        if t["k"] == "_clear":
+            return []
+        if t["k"] == "standard":
+            return [dict(s) for s in STD_STAART]
+    return no_update
 
 
 # --- levies ---------------------------------------------------------------- #
