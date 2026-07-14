@@ -1022,21 +1022,18 @@ def _write_staart(con, top_rows):
                   "CalculatieCode,Omschrijving,FunctieSoort,MeetstaatKoppelingId,Afdrukken,"
                   "Waarde,Kostensoort,Verzamelpost,Eenheid) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                   (idc[0], bid, sec, vol[0], "", oms, func, 0, afd, waarde, kost, "", ""))
+        vol[0] += 1  # every row gets a unique Volgnummer (IBIS keys on Sectie|Volg|Kostensoort)
 
+    # Faithful IBIS staart block: a leading TOT, then one [CMT, CMT, TOP, TTL]
+    # block per component (each with its own Volgnummer so keys never collide),
+    # then a trailing rounding line + closing total.
     ins("TOT", "", "", 0)
-    vol[0] += 1
-    groups, seen = [], {}
     for s in top_rows:
-        k = s.get("name", "") or ""
-        if k not in seen:
-            seen[k] = len(groups)
-            groups.append({"name": k, "rows": []})
-        groups[seen[k]]["rows"].append(s)
-    for g in groups:
         ins("CMT", "", "", 0)
-        vol[0] += 1
-        for r in g["rows"]:
-            ins("TOP", g["name"], r.get("kost") or "AKS", float(r.get("pct") or 0))
-        vol[0] += 1
+        ins("CMT", "", "", 0)
+        ins("TOP", s.get("name", "") or "", s.get("kost") or "AKS", float(s.get("pct") or 0))
         ins("TTL", "", "", 0)
-        vol[0] += 1
+    ins("CMT", "", "", 0)
+    ins("CMT", "", "", 0)
+    ins("VBH", "Afronding", "AKS", 0)
+    ins("TOT", "Totaal excl BTW", "", 0)
