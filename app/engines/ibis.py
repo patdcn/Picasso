@@ -374,24 +374,39 @@ def staart_rate(top_rows):
 # quote (levy + VAT) engine  -- faithful port of qCompute
 # --------------------------------------------------------------------------- #
 def _classify(l, tok_foreign="foreign", tok_vessel="vsl"):
-    hay = ((l["desc"] or "") + " " + l["loc"] + " " + l["alt"]).lower()
-    if l["loc"]:
-        origin = "Foreign" if l["loc"].lower() == tok_foreign else "Local"
-    else:
-        origin = "Foreign" if "foreign" in hay else "Local"
-    if l["alt"]:
-        vessel = (l["alt"].lower() == tok_vessel)
-    else:
-        vessel = "vessel" in hay
+    origin = "Foreign" if (l.get("loc") or "").lower() == tok_foreign else "Local"
+    vessel = (l.get("alt") or "").lower() == tok_vessel
     return {"origin": origin, "vessel": vessel}
 
 
 def node_class(n, tok_foreign="foreign", tok_vessel="vsl"):
     """Origin (Local/Foreign, from LocatieCode) and vessel flag (from the ALT
     code) for a leaf Node - used by the Calculation table's Location / Vessel
-    columns and by the levy scoping. Same rule as the quote engine."""
+    columns and by the levy scoping. Purely code-driven so user edits round-trip."""
     return _classify({"desc": n.desc, "loc": n.loc or "", "alt": n.alt or ""},
                      tok_foreign, tok_vessel)
+
+
+# file-native codes for the two editable flags
+LOC_FOREIGN, LOC_LOCAL = "Foreign", ""
+ALT_VESSEL, ALT_NONE = "VSL", ""
+
+
+def apply_class_edits(m: Model, class_edits):
+    """Overwrite a leaf's LocatieCode / AlternatieveCode from user edits, so the
+    Location / Vessel columns, the levy scoping and the .xtb write-back all agree.
+    Edits are file-native codes: loc in {'Foreign',''}, alt in {'VSL',''}."""
+    for nid, ce in (class_edits or {}).items():
+        try:
+            n = m.nodes.get(int(nid))
+        except (TypeError, ValueError):
+            n = None
+        if not n or n.group:
+            continue
+        if "loc" in ce:
+            n.loc = (ce["loc"] or "").strip()
+        if "alt" in ce:
+            n.alt = (ce["alt"] or "").strip()
 
 
 def _q_leaves(m: Model):
@@ -783,12 +798,14 @@ def _primary(lf):
 # write amendments back into a NEW .xtb copy
 # --------------------------------------------------------------------------- #
 def write_xtb(orig: bytes, m: Model, edits=None, wage_rates=None,
-              staart_override=None) -> bytes:
+              staart_override=None, class_edits=None) -> bytes:
     """Return a new ``.xtb`` (bytes) with the edits applied: Kostenposten,
-    Middelen, Elementen and Begroting roll-ups, wage rates, and - only if a
-    staart override is supplied - a rebuilt BegrotingBladen block. The original
-    is never modified. Bumps Versie and stamps Datum, matching IBIS behaviour."""
+    Middelen, Elementen and Begroting roll-ups, wage rates, per-line Location /
+    Vessel codes, and - only if a staart override is supplied - a rebuilt
+    BegrotingBladen block. The original is never modified. Bumps Versie and
+    stamps Datum, matching IBIS behaviour."""
     apply_edits(m, edits)
+    apply_class_edits(m, class_edits)
     top = staart_top(m, staart_override)
     sr = staart_rate(top)
     wage_rates = wage_rates or {}
@@ -898,6 +915,18 @@ def write_xtb(orig: bytes, m: Model, edits=None, wage_rates=None,
             for k in CATKEYS:
                 beg["net"][k] += dbru[k] * em
             beg["h"] += d_h * em
+
+        # --- write Location / Vessel codes for class-edited lines --------------
+        for nid in (class_edits or {}):
+            try:
+                key = int(nid)
+            except (TypeError, ValueError):
+                continue
+            n = m.nodes.get(key)
+            if not n or n.group:
+                continue
+            c.execute("UPDATE Kostenposten SET LocatieCode=?, AlternatieveCode=? WHERE Id=?",
+                      (n.loc or "", n.alt or "", key))
 
         for eid, d in elem_delta.items():
             d_net_tot = sum(d["net"].values())

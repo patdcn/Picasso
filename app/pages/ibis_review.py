@@ -99,6 +99,7 @@ def _stores():
         dcc.Store(id="ib-expanded", storage_type="memory", data=[]),
         dcc.Store(id="ib-linefilter", storage_type="memory", data=None),
         dcc.Store(id="ib-typesel", storage_type="memory", data=[]),
+        dcc.Store(id="ib-classedits", storage_type="memory", data={}),
         dcc.Store(id="ib-report", storage_type="memory", data={"mode": "cat", "cat": None, "res": None, "path": []}),
         dcc.Download(id="ib-dl-xlsx"),
         dcc.Download(id="ib-dl-xtb"),
@@ -272,9 +273,10 @@ def _calc_tab(m, R, cc, expanded, typesel, linefilter, descriptions):
 
     hint = ("Showing every position of the selected line. Clear the filter to return to the tree."
             if linefilter else
-            "Click a chapter to expand it in place; click a line's description to see that line in "
-            "every position. Aantal / Unit Price / Markup are editable — Personnel unit price is "
-            "wage-derived (read-only). Cost = Unit × Aantal; Net = Cost × (1 + Markup).")
+            "Click a chapter to collapse/expand it in place; click a line's description to see that "
+            "line in every position. Location and Vessel are click-to-toggle (Local↔Foreign, "
+            "vessel on/off) and are written back to the .xtb on save. Aantal / Unit Price / Markup "
+            "are editable — Personnel unit price is wage-derived (read-only).")
 
     return html.Div([
         controls,
@@ -318,10 +320,14 @@ def _leaf_rows(m, n, cc, indent=0, path=None):
             aantal_cell = dcc.Input(id={"type": "ib-ed", "id": n.id, "f": "aantal", "cat": "_"},
                                     value=n.aantal, type="number", debounce=True, style=CELL)
             uren_cell = _num(n.hours) if n.hours else ""
-            loc_cell = html.Span(loc_txt, style={
-                "color": "#b45309" if loc_txt == "Foreign" else MUTED,
-                "fontSize": "0.72rem", "fontWeight": 600})
-            ves_cell = html.Span(ves_txt, style={"color": TEAL, "fontWeight": 700})
+            loc_cell = html.Span(loc_txt, id={"type": "ib-loc", "id": n.id}, title="click to toggle",
+                                 style={"color": "#b45309" if loc_txt == "Foreign" else "#334155",
+                                        "fontSize": "0.72rem", "fontWeight": 600, "cursor": "pointer",
+                                        "borderBottom": "1px dotted #cbd5e1"})
+            ves_cell = html.Span(ves_txt or "—", id={"type": "ib-ves", "id": n.id},
+                                 title="click to toggle",
+                                 style={"color": TEAL if ves_txt else "#cbd5e1", "fontWeight": 700,
+                                        "cursor": "pointer"})
         if cl["type"] == "Personnel":
             unit_cell = html.Span(_mfmt(cl["unit"], cc), style={"color": MUTED})
         else:
@@ -624,12 +630,14 @@ _TBL = {"width": "100%", "borderCollapse": "collapse", "background": "#fff",
     Input("ib-file", "data"), Input("ib-ccy-sel", "value"), Input("ib-view", "data"),
     Input("ib-expanded", "data"), Input("ib-typesel", "data"), Input("ib-linefilter", "data"),
     Input("ib-edits", "data"), Input("ib-wages", "data"), Input("ib-levies", "data"),
-    Input("ib-staart", "data"), Input("ib-report", "data"),
+    Input("ib-staart", "data"), Input("ib-report", "data"), Input("ib-classedits", "data"),
 )
-def _render(fstore, ccy, view, expanded, typesel, linefilter, edits, wages, levies, staart, rep):
+def _render(fstore, ccy, view, expanded, typesel, linefilter, edits, wages, levies,
+            staart, rep, classedits):
     if not fstore or not fstore.get("b64"):
         return ("Drop an IBIS .xtb here to begin", "", "—", "—", "—", "—", "—", None)
     raw, m = _model(fstore)
+    ibis.apply_class_edits(m, classedits or {})
     calc = m.header["calc_ccy"]
     ccy = ccy or calc
     cc = {"ccy": ccy, "calc": calc, "valutas": m.valutas}
@@ -686,26 +694,27 @@ def _apply_wages(m, wages):
           Output("ib-edits", "data"), Output("ib-wages", "data"),
           Output("ib-levies", "data"), Output("ib-staart", "data"),
           Output("ib-expanded", "data"), Output("ib-linefilter", "data"),
-          Output("ib-msg", "children"),
+          Output("ib-classedits", "data"), Output("ib-msg", "children"),
           Input("ib-upload", "contents"), State("ib-upload", "filename"),
           prevent_initial_call=True)
 def _upload(contents, filename):
     if not contents:
-        return (no_update,) * 10
+        return (no_update,) * 11
     try:
         _hdr, payload = contents.split(",", 1)
         raw = base64.b64decode(payload)
         m = ibis.load(raw)
         opts = [{"label": c, "value": c} for c in m.valutas]
+        expanded = [nid for nid, n in m.nodes.items() if n.group]  # fully expanded on load
         msg = f"{filename} — loaded. {m.header['name']} v{m.header['versie']}, {len(m.nodes)} lines."
         # Levies start EMPTY: they live outside the .xtb and only in the quote/Excel.
         # The staart (Algemene kosten / Winst en Risico / CAR) stays in the .xtb and
         # drives the STAART card + Staart tab - it is never a levy.
         return ({"name": filename, "b64": payload}, opts, m.header["calc_ccy"],
-                {}, {}, [], None, [], None, msg)
+                {}, {}, [], None, expanded, None, {}, msg)
     except Exception as e:
         return (no_update, no_update, no_update, no_update, no_update, no_update,
-                no_update, no_update, no_update, f"Could not read this file: {e}")
+                no_update, no_update, no_update, no_update, f"Could not read this file: {e}")
 
 
 @callback(Output("ib-view", "data"), Input({"type": "ib-tab", "v": ALL}, "n_clicks"),
@@ -761,6 +770,46 @@ def _chip(_n, sel):
     else:
         sel.append(t["t"])
     return sel
+
+
+@callback(Output("ib-classedits", "data", allow_duplicate=True),
+          Input({"type": "ib-loc", "id": ALL}, "n_clicks"),
+          State("ib-file", "data"), State("ib-classedits", "data"),
+          prevent_initial_call=True)
+def _loc_toggle(_n, fstore, ce):
+    t = ctx.triggered_id
+    if not t or not any(v for v in _n if v) or not fstore:
+        return no_update
+    _raw, m = _model(fstore)
+    n = m.nodes.get(t["id"])
+    if not n:
+        return no_update
+    ce = dict(ce or {})
+    key = str(t["id"])
+    cur = ce.get(key, {}).get("loc", n.loc or "")
+    newloc = ibis.LOC_LOCAL if (cur or "").lower() == "foreign" else ibis.LOC_FOREIGN
+    ce[key] = {**ce.get(key, {}), "loc": newloc}
+    return ce
+
+
+@callback(Output("ib-classedits", "data", allow_duplicate=True),
+          Input({"type": "ib-ves", "id": ALL}, "n_clicks"),
+          State("ib-file", "data"), State("ib-classedits", "data"),
+          prevent_initial_call=True)
+def _ves_toggle(_n, fstore, ce):
+    t = ctx.triggered_id
+    if not t or not any(v for v in _n if v) or not fstore:
+        return no_update
+    _raw, m = _model(fstore)
+    n = m.nodes.get(t["id"])
+    if not n:
+        return no_update
+    ce = dict(ce or {})
+    key = str(t["id"])
+    cur = ce.get(key, {}).get("alt", n.alt or "")
+    newalt = ibis.ALT_NONE if (cur or "").lower() == "vsl" else ibis.ALT_VESSEL
+    ce[key] = {**ce.get(key, {}), "alt": newalt}
+    return ce
 
 
 # --- edits ----------------------------------------------------------------- #
@@ -899,10 +948,11 @@ def _report_nav(rm, rc, rr, rg, rd, rep):
 @callback(Output("ib-edits", "data", allow_duplicate=True),
           Output("ib-wages", "data", allow_duplicate=True),
           Output("ib-staart", "data", allow_duplicate=True),
+          Output("ib-classedits", "data", allow_duplicate=True),
           Output("ib-msg", "children", allow_duplicate=True),
           Input("ib-btn-reset", "n_clicks"), prevent_initial_call=True)
 def _reset(_n):
-    return {}, {}, None, "Edits reset to the loaded file."
+    return {}, {}, None, {}, "Edits reset to the loaded file."
 
 
 # --------------------------------------------------------------------------- #
@@ -912,11 +962,13 @@ def _reset(_n):
           Input("ib-btn-xlsx", "n_clicks"),
           State("ib-file", "data"), State("ib-edits", "data"), State("ib-wages", "data"),
           State("ib-levies", "data"), State("ib-staart", "data"), State("ib-ccy-sel", "value"),
+          State("ib-classedits", "data"),
           prevent_initial_call=True)
-def _dl_xlsx(_n, fstore, edits, wages, levies, staart, ccy):
+def _dl_xlsx(_n, fstore, edits, wages, levies, staart, ccy, classedits):
     if not fstore:
         return no_update, "Load a file first."
     _raw, m = _model(fstore)
+    ibis.apply_class_edits(m, classedits or {})
     if wages:
         _apply_wages(m, wages)
     R = ibis.compute(m, edits=edits or {}, staart_override=staart, levies=levies or [])
@@ -931,13 +983,14 @@ def _dl_xlsx(_n, fstore, edits, wages, levies, staart, ccy):
 @callback(Output("ib-dl-xtb", "data"), Output("ib-msg", "children", allow_duplicate=True),
           Input("ib-btn-xtb", "n_clicks"),
           State("ib-file", "data"), State("ib-edits", "data"), State("ib-wages", "data"),
-          State("ib-staart", "data"),
+          State("ib-staart", "data"), State("ib-classedits", "data"),
           prevent_initial_call=True)
-def _dl_xtb(_n, fstore, edits, wages, staart):
+def _dl_xtb(_n, fstore, edits, wages, staart, classedits):
     if not fstore:
         return no_update, "Load a file first."
     raw, m = _model(fstore)
-    nb = ibis.write_xtb(raw, m, edits=edits or {}, wage_rates=wages or {}, staart_override=staart)
+    nb = ibis.write_xtb(raw, m, edits=edits or {}, wage_rates=wages or {},
+                        staart_override=staart, class_edits=classedits or {})
     base = fstore.get("name", "calculation.xtb")
     fname = base[:-4] + "_amended.xtb" if base.endswith(".xtb") else base + "_amended.xtb"
     return dcc.send_bytes(lambda buf: buf.write(nb), fname), f"Wrote {fname} (version bumped; original untouched)."
