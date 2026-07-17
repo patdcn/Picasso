@@ -31,22 +31,38 @@ Everything here is pure-python/deterministic so it unit-tests without Dash.
 import json
 import math
 import os
-from functools import lru_cache
 
 DATA_JSON = os.getenv("DP_DATA_JSON", "/data/tools/dp/dp_capability.json")
 
 MS_TO_KN = 1.0 / 0.514444
 
 # ---------------------------------------------------------------- data access
+#
+# The JSON is uploaded via the Admin page while the app is running, and the app
+# runs under multiple gunicorn workers. The cache below therefore (a) NEVER
+# caches a miss — a worker that started before the upload must pick the file up
+# on its next request — and (b) keys on the file's mtime, so re-uploading a new
+# revision takes effect on all workers without a redeploy.
 
-@lru_cache(maxsize=1)
+_cache = {"key": None, "data": None}
+
+
 def _data():
-    """Load the volume JSON once. Returns None when not installed."""
+    """Load the volume JSON, cached per (path, mtime). Returns None when the
+    file is absent or unreadable — and never caches that outcome."""
     try:
-        with open(DATA_JSON, encoding="utf-8") as fh:
-            return json.load(fh)
-    except (OSError, ValueError):
+        mtime = os.path.getmtime(DATA_JSON)
+    except OSError:
         return None
+    key = (DATA_JSON, mtime)
+    if _cache["key"] != key:
+        try:
+            with open(DATA_JSON, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return None
+        _cache["key"], _cache["data"] = key, data
+    return _cache["data"]
 
 
 def available():
@@ -54,8 +70,9 @@ def available():
 
 
 def reload():
-    """Drop the cache (admin convenience after uploading a new JSON)."""
-    _data.cache_clear()
+    """Drop the cache (kept for admin convenience; mtime keying normally makes
+    this unnecessary)."""
+    _cache["key"], _cache["data"] = None, None
 
 
 def modes():

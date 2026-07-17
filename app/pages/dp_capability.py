@@ -160,6 +160,16 @@ def _cases(mode):
     return [{"label": c, "value": c} for c in cs], default
 
 
+def _placeholder_fig(msg):
+    fig = go.Figure()
+    fig.add_annotation(text=msg, showarrow=False, font=dict(size=14, color=MUTED),
+                       xref="paper", yref="paper", x=0.5, y=0.5)
+    fig.update_layout(xaxis=dict(visible=False), yaxis=dict(visible=False),
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      height=520, margin=dict(l=20, r=20, t=20, b=20))
+    return fig
+
+
 @callback(Output("dpc-polar", "figure"), Output("dpc-status", "children"),
           Output("dpc-basis", "children"), Output("dpc-power", "children"),
           Input("dpc-mode", "value"), Input("dpc-case", "value"),
@@ -169,8 +179,11 @@ def _cases(mode):
           Input("dpc-aux1", "value"), Input("dpc-aux2", "value"), Input("dpc-aux3", "value"),
           Input("dpc-overlays", "value"))
 def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3, overlays):
-    if not (dp.available() and mode and case):
-        return go.Figure(), None, None, None
+    if not dp.available():
+        return (_placeholder_fig("Capability data not readable from the data volume "
+                                 "(tools/dp/dp_capability.json)."), None, None, None)
+    if not (mode and case):
+        return _placeholder_fig("Select an operating mode and analysis case."), None, None, None
     heading = float(heading or 0.0)
     winddir = float(winddir or 0.0)
     wind = float(wind or 0.0)
