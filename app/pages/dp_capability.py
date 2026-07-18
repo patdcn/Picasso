@@ -55,7 +55,8 @@ def _controls():
                        labelStyle={"display": "block", "margin": "2px 0"},
                        style={"marginBottom": "10px", "fontSize": "14px"}),
         html.Label("Analysis case", style=_LBL),
-        dcc.Dropdown(id="dpc-case", clearable=False, style={"marginBottom": "10px"}),
+        dcc.Dropdown(id="dpc-case", clearable=False,
+                     style={"marginBottom": "10px", "fontSize": "13.5px"}),
         html.Div([
             html.Div([html.Label("Vessel heading [°T]", style=_LBL),
                       _num_input("dpc-heading", 0, 0, 360)], style={"flex": 1}),
@@ -187,7 +188,7 @@ def _cases(mode):
     cs = dp.cases(mode)
     wcf = set(dp.wcfdi_cases(mode))
     default = "Most Critical Thruster Failure" if "Most Critical Thruster Failure" in cs else cs[0]
-    opts = [{"label": c + (" \u2014 worst case failure (dive planning basis)"
+    opts = [{"label": c + (" \u2014 worst case failure"
                           if c in wcf else ""),
              "value": c} for c in cs]
     return opts, default

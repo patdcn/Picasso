@@ -111,7 +111,13 @@ def wcfdi_cases(mode_key):
     declared = s.get("wcfdi_cases")
     if declared:
         return [c for c in declared if c in s["cases"]]
-    return [c for c in ("Loss of Bus 1", "Loss of Bus 3") if c in s["cases"]]
+    bus = [c for c in ("Loss of Bus 1", "Loss of Bus 3") if c in s["cases"]]
+    if bus:
+        return bus
+    # 2019 WCFI study models the side-group losses as IO controller cases
+    # (IO A1 -> BT1+MP1, IO B1 -> BT2+MP2); IO C1 (RAT only) is not a WCF.
+    return [c for c in ("Loss of Thruster Controller IO A1",
+                        "Loss of Thruster Controller IO B1") if c in s["cases"]]
 
 
 def _case(mode_key, case_name):

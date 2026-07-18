@@ -98,10 +98,19 @@ def cases(mode_key):
 
 
 def wcfdi_cases(mode_key):
-    """Side-switchboard loss cases (worst case failure design intent), where
-    the study analysed them. Mirrors dp_capability.wcfdi_cases."""
+    """Cases representing the worst case failure design intent — loss of a
+    side switchboard's redundancy group. The 2020 study models these as
+    explicit bus losses; the 2019 WCFI study models them as IO controller
+    losses (its own definition of worst case single failures: 'loss of one
+    side of a switchboard or an IO controller'), where IO A1 takes out
+    BT1+MP1 and IO B1 takes out BT2+MP2 — the side groups. IO C1 (RAT only)
+    is deliberately not tagged, like Loss of Bus 2."""
     cs = _study(mode_key)["cases"]
-    return [c for c in ("Loss of Bus 1", "Loss of Bus 3") if c in cs]
+    bus = [c for c in ("Loss of Bus 1", "Loss of Bus 3") if c in cs]
+    if bus:
+        return bus
+    return [c for c in ("Loss of Thruster Controller IO A1",
+                        "Loss of Thruster Controller IO B1") if c in cs]
 
 
 def _case(mode_key, case_name):
