@@ -41,9 +41,18 @@ KNOWN = {
     "fmea_main": (
         "GM-PRJ111331-R001_DP_FMEA.pdf",
         "Global Maritime — DSV Picasso DP FMEA (GM-PRJ111331-R001)"),
+    "dpom": (
+        "GM-PRJ117726-R001_DP_Operations_Manual.pdf",
+        "DP Operations Manual (GM-PRJ117726-R001)"),
     "annual_trials": (
-        "DP_Annual_Trials_2026.pdf",
-        "DP annual trials report (2026)"),
+        "GM-PRJ123124-RP001_DP_Annual_Trials_2026.pdf",
+        "Annual DP trials 2026 (GM-PRJ123124-RP001)"),
+    "fmea_addendum_2026": (
+        "GM-PRJ123124-RP002_DP_FMEA_Addendum.pdf",
+        "DP FMEA addendum — Veripos LD8 / CyScan (GM-PRJ123124-RP002, 2026)"),
+    "dpom_addendum_2026": (
+        "GM-PRJ123124-RP003_DPOM_Addendum.pdf",
+        "DP Operations Manual addendum (GM-PRJ123124-RP003, 2026)"),
     "single_line": (
         "Picasso_690V_440V_Single_Line.pdf",
         "690 V / 440 V electrical distribution single-line diagram"),
@@ -79,6 +88,56 @@ def link(key, text, style=None):
 
 def mode_link(mode_key, text, style=None):
     return link(MODE_DOC.get(mode_key, ""), text, style=style)
+
+
+# reference-number patterns used to recognise documents inside citation text
+_PATTERNS = {
+    "ag2020": r"CAA11127104ECA",
+    "wcfi2019": r"\bWCFI\b",
+    "ag_plots_note": r"GM-PRJ100000-TN-?001",
+    "fmea_main": r"GM-PRJ111331-R-?001",
+    "dpom": r"GM-PRJ117726-R-?001",
+    "annual_trials": r"GM-PRJ123124-RP-?001\b",
+    "fmea_addendum_2026": r"GM-PRJ123124-RP-?002\b",
+    "dpom_addendum_2026": r"(GM-PRJ123124-)?RP-?003\b",
+    "fmea_addendum_prs": r"GM-PRJ121125-RP-?001",
+}
+
+
+def linkify(text):
+    """Turn a citation line into components with hyperlinks to the documents
+    it references. One referenced document that is present on the volume ->
+    the WHOLE line becomes the link (click the title, opens in a new tab).
+    Multiple referenced documents -> each reference token links to its own
+    document. References whose file is missing stay plain text."""
+    import re
+    hits = []
+    for key, pat in _PATTERNS.items():
+        for m in re.finditer(pat, text):
+            hits.append((m.start(), m.end(), key))
+    hits.sort()
+    # drop overlaps (first match wins) and de-duplicate keys per line
+    clean, last_end, seen = [], -1, set()
+    for s, e, k in hits:
+        if s >= last_end and k not in seen:
+            clean.append((s, e, k))
+            last_end, seen = e, seen | {k}
+    present = [(s, e, k) for (s, e, k) in clean if exists(k)]
+    if not present:
+        return [text]
+    if len(present) == 1:
+        return [html.A(text, href=url_for(present[0][2]), target="_blank",
+                       style={"textDecoration": "underline"})]
+    out, pos = [], 0
+    for s, e, k in present:
+        if s > pos:
+            out.append(text[pos:s])
+        out.append(html.A(text[s:e], href=url_for(k), target="_blank",
+                          style={"textDecoration": "underline"}))
+        pos = e
+    if pos < len(text):
+        out.append(text[pos:])
+    return out
 
 
 def list_docs():

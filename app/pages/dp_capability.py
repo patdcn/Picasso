@@ -194,12 +194,9 @@ def _reference_block():
         [html.Tbody(rows)],
         style={"width": "100%", "fontSize": "12px", "borderCollapse": "collapse"},
         className="dpc-table")
-    prov = html.Ul([html.Li(p, style={"marginBottom": "3px"}) for p in dp.provenance()],
+    prov = html.Ul([html.Li(dpdocs.linkify(p), style={"marginBottom": "3px"})
+                    for p in dp.provenance()],
                    style={"fontSize": "12px", "color": MUTED, "paddingLeft": "18px"})
-    library = html.Div(html.A("Source documents \u2192 Reference / Picasso DP",
-                              href="/reference/picasso-dp", target="_blank",
-                              style={"textDecoration": "underline"}),
-                       style={"fontSize": "12px", "marginTop": "4px"})
     disclaimer = html.Div([
         html.B("Use limits. "), "Envelopes are theoretical capability at the study's fixed "
         "environment (collinear wind/wave/current) and do not guarantee station keeping; "
@@ -211,10 +208,6 @@ def _reference_block():
     return html.Div([
         html.Div(table, style=_CARD),
         html.Div([html.B("Document basis", style={"fontSize": "13px"}), prov,
-                  html.Div(html.A("Source documents \u2192 Reference / Picasso DP",
-                                  href="/reference/picasso-dp", target="_blank",
-                                  style={"textDecoration": "underline"}),
-                           style={"fontSize": "12px", "margin": "4px 0 8px"}),
                   disclaimer],
                  style=_CARD),
     ])

@@ -193,7 +193,8 @@ def layout():
 
 
 def _method_block():
-    prov = html.Ul([html.Li(p, style={"marginBottom": "3px"}) for p in rs.provenance()],
+    prov = html.Ul([html.Li(dpdocs.linkify(p), style={"marginBottom": "3px"})
+                    for p in rs.provenance()],
                    style={"fontSize": "12px", "color": MUTED, "paddingLeft": "18px"})
     return html.Div([
         html.B("Method & use limits", style={"fontSize": "13px"}),
@@ -211,10 +212,6 @@ def _method_block():
             "the ASOG and the DPO's judgement remain leading.",
         ], style={"fontSize": "12px", "color": MUTED, "margin": "6px 0"}),
         prov,
-        html.Div(html.A("Source documents \u2192 Reference / Picasso DP",
-                        href="/reference/picasso-dp", target="_blank",
-                        style={"textDecoration": "underline"}),
-                 style={"fontSize": "12px", "marginTop": "4px"}),
     ], style=_CARD)
 
 
