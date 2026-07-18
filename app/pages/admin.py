@@ -42,6 +42,12 @@ def layout():
                   "configuration and default depths."],
                  "/admin/sat-system", "Open SAT systems"),
 
+        hub_card("DP power consumers",
+                 "Named non-thruster consumers (cranes, SAT spread, ROV, hotel load) "
+                 "with planning kW and bus assignment \u2014 selectable on the DP "
+                 "Capability & Ops Check page to prefill the per-bus auxiliary load.",
+                 "/admin/dp-consumers", "Open DP power consumers"),
+
         hub_card("Data volume files",
                  ["Browse and manage the persistent ", html.Code("/data"),
                   " volume \u2014 upload (drag & drop), create folders, move, rename and delete. "

@@ -15,6 +15,7 @@ from dash import html, dcc, Input, Output, callback
 import plotly.graph_objects as go
 
 from app.engines import dp_capability as dp
+from app import dp_consumers as dcon
 
 dash.register_page(__name__, path="/dp/capability", name="DP Capability & Ops Check",
                    category="DP Station Keeping", order=1)
@@ -71,7 +72,19 @@ def _controls():
         html.Div("Current and Hs are selectable only at the values the capability "
                  "studies were run at (no tidal/current sweep exists in the analyses).",
                  style={"fontSize": "11px", "color": MUTED, "marginBottom": "8px"}),
-        html.Label("Auxiliary (non-thruster) load per bus [kW] — added to Appendix E demand",
+        html.Label("DP power consumers — planning kW (admin-editable registry)",
+                   style=_LBL),
+        dcc.Checklist(
+            id="dpc-consumers",
+            options=[{"label": f' {r["name"]} \u00b7 {r["kw"]:,.0f} kW',
+                      "value": r["id"]} for r in dcon.rows()],
+            value=[r["id"] for r in dcon.rows() if r["default_on"]],
+            labelStyle={"display": "block", "margin": "2px 0"},
+            style={"fontSize": "13px", "marginBottom": "4px"}),
+        html.Div(id="dpc-consumer-note",
+                 style={"fontSize": "11px", "color": MUTED, "marginBottom": "8px"}),
+        html.Label("Auxiliary (non-thruster) load per bus [kW] — prefilled from the "
+                   "selection above, editable for ad-hoc tweaks",
                    style=_LBL),
         html.Div([
             html.Div([html.Label("Bus 1", style=_LBL), _num_input("dpc-aux1", 0, 0)], style={"flex": 1}),
@@ -191,6 +204,31 @@ def _env_choices(mode, case):
     cur_opts = [{"label": f"{c:.2f} m/s", "value": c} for c in curs]
     hs_opts = [{"label": f"{h:.1f} m", "value": h} for h in hss]
     return cur_opts, curs[0], hs_opts, hss[0]
+
+
+@callback(Output("dpc-aux1", "value"), Output("dpc-aux2", "value"),
+          Output("dpc-aux3", "value"), Output("dpc-consumer-note", "children"),
+          Input("dpc-consumers", "value"), Input("dpc-mode", "value"))
+def _prefill_aux(selected, mode):
+    """Prefill (not lock) the per-bus aux fields from the consumer selection.
+
+    Runs on page load too, so the default-on consumers seed the fields. The
+    fields stay directly editable; any manual tweak holds until the selection
+    or mode changes, which recomputes the prefill.
+    """
+    if not (dp.available() and mode):
+        return 0, 0, 0, None
+    dgs_per_bus = dp.modes()[mode].get("dgs_per_bus", {})
+    loads, warns, total = dcon.bus_loads(selected or [], dgs_per_bus)
+    note = [html.Span(
+        f"Selected {total:,.0f} kW \u2192 Bus 1 {loads['bus1']:,.0f} / "
+        f"Bus 2 {loads['bus2']:,.0f} / Bus 3 {loads['bus3']:,.0f} kW. "
+        "\u2018Split\u2019 consumers are shared over the live buses weighted by "
+        "running DGs, pending the 440 V single-line bus mapping.")]
+    for w in warns:
+        note.append(html.Div(w, style={"color": "#991b1b"}))
+    return (round(loads["bus1"]), round(loads["bus2"]), round(loads["bus3"]),
+            note)
 
 
 def _placeholder_fig(msg):

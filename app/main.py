@@ -34,6 +34,9 @@ params.init_db()
 from app import activity  # noqa: E402
 activity.init_db()
 
+from app import dp_consumers  # noqa: E402
+dp_consumers.init_db()
+
 from app import sat_system  # noqa: E402
 sat_system.init_db()
 
