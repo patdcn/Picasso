@@ -96,6 +96,24 @@ def cases(mode_key):
     return list(d["studies"][study]["cases"].keys())
 
 
+def wcfdi_cases(mode_key):
+    """Case names representing the vessel's worst case failure design intent
+    (loss of a side switchboard per the FMEA / 2026 annual trials) — the
+    capability basis for planning DP diving operations.
+
+    Reads an optional 'wcfdi_cases' list on the study in the volume JSON;
+    falls back to the side-bus loss cases by name. (Loss of Bus 2 only drops
+    the RAT in 3-split, so it is deliberately not tagged.)
+    """
+    d = _data()
+    study = d["modes"][mode_key]["study"]
+    s = d["studies"][study]
+    declared = s.get("wcfdi_cases")
+    if declared:
+        return [c for c in declared if c in s["cases"]]
+    return [c for c in ("Loss of Bus 1", "Loss of Bus 3") if c in s["cases"]]
+
+
 def _case(mode_key, case_name):
     d = _data()
     study = d["modes"][mode_key]["study"]

@@ -185,8 +185,12 @@ def _cases(mode):
     if not dp.available():
         return [], None
     cs = dp.cases(mode)
+    wcf = set(dp.wcfdi_cases(mode))
     default = "Most Critical Thruster Failure" if "Most Critical Thruster Failure" in cs else cs[0]
-    return [{"label": c, "value": c} for c in cs], default
+    opts = [{"label": c + (" \u2014 worst case failure (dive planning basis)"
+                          if c in wcf else ""),
+             "value": c} for c in cs]
+    return opts, default
 
 
 @callback(Output("dpc-current", "options"), Output("dpc-current", "value"),
