@@ -113,6 +113,18 @@ def env_basis(mode_key, case_name):
     return _case(mode_key, case_name)["env"]
 
 
+def env_options(mode_key, case_name):
+    """Admissible environmental bases for the case, for restricted UI inputs.
+
+    Today each case carries exactly one fixed basis (the studies were run at a
+    single constant current/Hs; tidal variation is explicitly out of scope per
+    App. B.3). An optional 'env_variants' list on a case in the volume JSON
+    allows additional bases to appear in the UI without a code change.
+    """
+    c = _case(mode_key, case_name)
+    return list(c.get("env_variants") or [c["env"]])
+
+
 def electrical():
     return _data()["electrical"]
 

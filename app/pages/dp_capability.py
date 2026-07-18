@@ -61,11 +61,16 @@ def _controls():
         html.Div([
             html.Div([html.Label("Wind speed [m/s] (1-min @ 10 m)", style=_LBL),
                       _num_input("dpc-wind", 10.0, 0)], style={"flex": 1}),
-            html.Div([html.Label("Current [m/s]", style=_LBL),
-                      _num_input("dpc-current", 0.5, 0)], style={"flex": 1}),
-            html.Div([html.Label("Hs [m]", style=_LBL),
-                      _num_input("dpc-hs", 1.0, 0)], style={"flex": 1}),
-        ], style={"display": "flex", "gap": "10px", "marginBottom": "8px"}),
+            html.Div([html.Label("Current [m/s] — study basis", style=_LBL),
+                      dcc.Dropdown(id="dpc-current", clearable=False,
+                                   searchable=False)], style={"flex": 1}),
+            html.Div([html.Label("Hs [m] — study basis", style=_LBL),
+                      dcc.Dropdown(id="dpc-hs", clearable=False,
+                                   searchable=False)], style={"flex": 1}),
+        ], style={"display": "flex", "gap": "10px", "marginBottom": "4px"}),
+        html.Div("Current and Hs are selectable only at the values the capability "
+                 "studies were run at (no tidal/current sweep exists in the analyses).",
+                 style={"fontSize": "11px", "color": MUTED, "marginBottom": "8px"}),
         html.Label("Auxiliary (non-thruster) load per bus [kW] — added to Appendix E demand",
                    style=_LBL),
         html.Div([
@@ -165,6 +170,27 @@ def _cases(mode):
     cs = dp.cases(mode)
     default = "Most Critical Thruster Failure" if "Most Critical Thruster Failure" in cs else cs[0]
     return [{"label": c, "value": c} for c in cs], default
+
+
+@callback(Output("dpc-current", "options"), Output("dpc-current", "value"),
+          Output("dpc-hs", "options"), Output("dpc-hs", "value"),
+          Input("dpc-mode", "value"), Input("dpc-case", "value"))
+def _env_choices(mode, case):
+    """Restrict current and Hs to the exact values the studies were run at.
+
+    Free numeric entry is deliberately not offered: the envelopes are only a
+    valid bound at the study's fixed environment, and no current/Hs sweep
+    exists to interpolate from. Rescaling to arbitrary environments is the
+    separate (Stage 2 / 'Option 4') App. C engine, not this page.
+    """
+    if not (dp.available() and mode and case):
+        return [], None, [], None
+    opts = dp.env_options(mode, case)
+    curs = sorted({round(float(o["current_ms"]), 3) for o in opts})
+    hss = sorted({round(float(o["hs_m"]), 2) for o in opts})
+    cur_opts = [{"label": f"{c:.2f} m/s", "value": c} for c in curs]
+    hs_opts = [{"label": f"{h:.1f} m", "value": h} for h in hss]
+    return cur_opts, curs[0], hs_opts, hss[0]
 
 
 def _placeholder_fig(msg):
