@@ -15,12 +15,14 @@ consumer registry per bus, rolled up per DG against the PMS 80/85% limits.
 Numeric data lives only on the /data volume (engines/dp_env_rescale.py).
 """
 import dash
-from dash import html, dcc, Input, Output, callback
+import datetime
+from dash import html, dcc, Input, Output, State, callback
 import plotly.graph_objects as go
 
 from app.engines import dp_capability as dp
 from app.engines import dp_env_rescale as rs
 from app import dp_consumers as dcon
+from app import reports
 
 dash.register_page(__name__, path="/dp/env-planner", name="DP Environment Planner",
                    category="DP Station Keeping", order=2)
@@ -102,6 +104,10 @@ def _controls():
                       options=[{"label": " Study-basis envelope (published App. D)",
                                 "value": "study"}],
                       value=["study"], style={"fontSize": "13px", "marginBottom": "8px"}),
+        html.Label("Project / client reference (appears on the printed sheet)",
+                   style=_LBL),
+        dcc.Input(id="dpe-ref", type="text", debounce=True, placeholder="e.g. tender ref, field, client",
+                  style={"width": "100%", "boxSizing": "border-box", "marginBottom": "8px"}),
         html.Label("Plot frame", style=_LBL),
         dcc.RadioItems(
             id="dpe-frame",
@@ -110,7 +116,7 @@ def _controls():
                       "value": "true"}],
             value="rel", labelStyle={"display": "block", "margin": "2px 0"},
             style={"fontSize": "13px"}),
-    ], style=_CARD)
+    ], style=_CARD, className="no-print")
 
 
 def _notice_missing():
@@ -137,6 +143,16 @@ def layout():
     if not (rs.available() and dp.available()):
         return _notice_missing()
     return html.Div([
+        reports.print_header(),
+        html.Div([
+            html.Button([html.Span("\u2913\u2002"), "Print workability sheet"],
+                        id="dpe-print-btn", n_clicks=0,
+                        style={"border": f"1px solid {GRID}", "background": "#fff",
+                               "borderRadius": "8px", "padding": "7px 14px",
+                               "cursor": "pointer", "fontSize": "13px"}),
+            html.Div(id="dpe-print-sink", style={"display": "none"}),
+        ], className="no-print", style={"display": "flex", "justifyContent": "flex-end",
+                                        "marginBottom": "6px"}),
         html.H2("DP Environment Planner", style={"color": INK, "marginBottom": "2px"}),
         html.Div("Station-keeping capability rescaled to your current, wind and Hs "
                  "(App. C force decomposition), with estimated power demand at your "
@@ -151,8 +167,10 @@ def layout():
                 html.Div(id="dpe-basis", style={**_CARD, "fontSize": "13px"}),
             ], style={"flex": 1, "minWidth": "420px"}),
         ], style={"display": "flex", "gap": "14px", "flexWrap": "wrap"}),
+        html.Div(id="dpe-print-summary", className="print-only"),
         html.Div(id="dpe-power"),
         _method_block(),
+        reports.print_footer(),
     ], style={"maxWidth": "1200px"})
 
 
@@ -187,16 +205,10 @@ def _cases(mode):
         return [], None
     cs = rs.cases(mode)
     wcf = rs.wcfdi_cases(mode)
-    if wcf:
-        default = wcf[-1]                       # side-bus loss: dive planning basis
-    elif "Most Critical Thruster Failure" in cs:
-        default = "Most Critical Thruster Failure"
-    else:
-        default = cs[0]
-    opts = [{"label": c + (" \u2014 worst case failure"
-                          if c in wcf else ""),
-             "value": c} for c in cs]
-    return opts, default
+    opts = [{"label": rs.WORST_LABEL, "value": rs.WORST}]
+    opts += [{"label": c + (" \u2014 worst case failure" if c in wcf else ""),
+              "value": c} for c in cs]
+    return opts, rs.WORST
 
 
 @callback(Output("dpe-aux1", "value"), Output("dpe-aux2", "value"),
@@ -218,6 +230,76 @@ def _prefill_aux(selected, mode):
             note)
 
 
+def _case_display(case, res=None):
+    if case == rs.WORST:
+        s = "Worst single failure (min of all failure cases)"
+        if res and res.get("case_used"):
+            s += f' — governing: {res["case_used"]}'
+        return s
+    return case
+
+
+def _print_summary(mode, case, res, wind, winddir, heading, current, hs, aux, ref):
+    """Study-style summary table for the printed workability sheet."""
+    mm = dp.mode_meta(mode)
+    b = res["basis"]
+    angs, vals = rs.envelope(mode, case, current, hs)
+    mn = min(vals[:-1])
+    mn_ang = angs[vals.index(mn)]
+    aux_total = sum(float(v or 0) for v in aux.values())
+    st = STATUS_STYLE[res["status"]]
+    rows = [
+        ("Vessel", "DSV Picasso"),
+        ("Operating mode", dp.modes()[mode]["label"]),
+        ("Analysis case", _case_display(case, res)),
+        ("Current speed", f"{current:.2f} m/s (collinear)"),
+        ("Significant wave height (Hs)", f"{hs:.1f} m"),
+        ("Wave spectrum", f'JONSWAP, Tp {b["tp_s"]:.1f} s (study basis, not rescaled)'),
+        ("Min capability wind speed", f"{mn:.2f} m/s ({mn * rs.MS_TO_KN:.0f} kn)"),
+        ("Min capability angle", f"{mn_ang}\u00b0 relative"),
+        ("Assessed wind / direction",
+         f'{res["wind_ms"]:.1f} m/s from {winddir % 360:.0f}\u00b0T '
+         f'(heading {heading % 360:.0f}\u00b0T, incidence {res["incidence_deg"]:.0f}\u00b0)'),
+        ("Wind limit at assessed incidence",
+         f'{res["limit_ms"]:.1f} m/s \u2014 margin {res["margin_ms"]:+.1f} m/s'),
+        ("Verdict", st["label"]),
+        ("Selected DP consumers", f"{aux_total:,.0f} kW "
+         f'(Bus 1 {float(aux["bus1"] or 0):,.0f} / Bus 2 {float(aux["bus2"] or 0):,.0f} / '
+         f'Bus 3 {float(aux["bus3"] or 0):,.0f} kW)'),
+        ("Capability basis",
+         f'{mm["study_title"]} \u2014 {mm["study_ref"]}; envelopes rescaled from the '
+         f'study basis (current {b["current_ms"]:.2f} m/s, Hs {b["hs_m"]:.1f} m)'),
+        ("Reference", (ref or "\u2014")),
+        ("Generated", datetime.date.today().isoformat() + " \u00b7 DSV Picasso Engineering Portal"),
+    ]
+    trs = [html.Tr([
+        html.Td(k, style={"padding": "3px 10px 3px 0", "color": MUTED,
+                          "whiteSpace": "nowrap", "verticalAlign": "top"}),
+        html.Td(v, style={"padding": "3px 0", "fontWeight": 600}),
+    ]) for k, v in rows]
+    note = ("Rescaled workability estimate derived from the Thrustmaster capability "
+            "studies; exact at the study basis, an engineering estimate away from it. "
+            "Estimated capabilities do not act as a guarantee of station-keeping in the "
+            "given environmental conditions. Indicative, for commercial planning only; "
+            "operational limits are governed by the ASOG and the DPO.")
+    return html.Div([
+        html.Div("Station-keeping workability summary",
+                 style={"fontWeight": 700, "fontSize": "15px", "margin": "8px 0 6px"}),
+        html.Table(html.Tbody(trs), style={"fontSize": "12.5px",
+                                           "borderCollapse": "collapse"}),
+        html.Div(note, style={"fontSize": "11px", "color": MUTED, "marginTop": "8px",
+                              "maxWidth": "760px"}),
+    ])
+
+
+dash.clientside_callback(
+    "function(n){ if(n){ setTimeout(function(){ window.print(); }, 60); } "
+    "return window.dash_clientside.no_update; }",
+    Output("dpe-print-sink", "children"), Input("dpe-print-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
 def _placeholder_fig(msg):
     fig = go.Figure()
     fig.add_annotation(text=msg, showarrow=False, font=dict(size=14, color=MUTED),
@@ -230,19 +312,22 @@ def _placeholder_fig(msg):
 
 @callback(Output("dpe-polar", "figure"), Output("dpe-status", "children"),
           Output("dpe-basis", "children"), Output("dpe-power", "children"),
+          Output("dpe-print-summary", "children"),
           Input("dpe-mode", "value"), Input("dpe-case", "value"),
           Input("dpe-heading", "value"), Input("dpe-winddir", "value"),
           Input("dpe-wind", "value"), Input("dpe-current", "value"),
           Input("dpe-hs", "value"),
           Input("dpe-aux1", "value"), Input("dpe-aux2", "value"), Input("dpe-aux3", "value"),
-          Input("dpe-overlays", "value"), Input("dpe-frame", "value"))
+          Input("dpe-overlays", "value"), Input("dpe-frame", "value"),
+          Input("dpe-ref", "value"))
 def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
-            overlays, frame):
+            overlays, frame, ref):
     if not (rs.available() and dp.available()):
         return (_placeholder_fig("Rescale/capability data not readable from the "
-                                 "data volume."), None, None, None)
+                                 "data volume."), None, None, None, None)
     if not (mode and case):
-        return _placeholder_fig("Select an operating mode and analysis case."), None, None, None
+        return (_placeholder_fig("Select an operating mode and analysis case."),
+                None, None, None, None)
     heading = float(heading or 0.0)
     winddir = float(winddir or 0.0)
     wind = float(wind or 0.0)
@@ -259,7 +344,9 @@ def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
     basis = _basis_card(mode, res, current, hs)
     aux = {"bus1": aux1 or 0, "bus2": aux2 or 0, "bus3": aux3 or 0}
     power = _power_block(mode, case, inc, wind, current, hs, aux)
-    return fig, status, basis, power
+    summary = _print_summary(mode, case, res, wind, winddir, heading,
+                             current, hs, aux, ref)
+    return fig, status, basis, power, summary
 
 
 def _polar_figure(mode, case, inc, wind, heading, winddir, frame, overlays,
@@ -330,6 +417,9 @@ def _status_card(res, current, hs):
         ("Envelope utilisation", f'{min(res["utilisation"], 9.99)*100:.0f}%'),
         ("Governing wrench axis", AXIS_LABEL.get(res["binding_axis"], "\u2014")),
     ]
+    if res.get("case_used") and res["case_used"] != res.get("case_requested",
+                                                            res["case_used"]):
+        lines.insert(1, ("Governing failure case", res["case_used"]))
     return html.Div([
         html.Div(st["label"], style={"background": st["bg"], "color": st["fg"],
                                      "fontWeight": 700, "padding": "8px 12px",

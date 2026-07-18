@@ -288,3 +288,11 @@ a.nav-footer-addr:hover { color: #0f766e; text-decoration: underline; }
 #dp-table .Select-menu-outer .Select-option {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+
+/* ===== DP Environment Planner: printed workability sheet ===== */
+.print-only { display: none; }
+@media print {
+  .print-only { display: block !important; }
+  /* the planner prints the plot + summary + method full-width */
+  .dpe-print-tight .js-plotly-plot { max-width: 100% !important; }
+}

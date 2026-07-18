@@ -99,18 +99,41 @@ def cases(mode_key):
 
 def wcfdi_cases(mode_key):
     """Cases representing the worst case failure design intent — loss of a
-    side switchboard's redundancy group. The 2020 study models these as
-    explicit bus losses; the 2019 WCFI study models them as IO controller
-    losses (its own definition of worst case single failures: 'loss of one
-    side of a switchboard or an IO controller'), where IO A1 takes out
-    BT1+MP1 and IO B1 takes out BT2+MP2 — the side groups. IO C1 (RAT only)
-    is deliberately not tagged, like Loss of Bus 2."""
+    side redundancy group (BT + MP on one side), per the FMEA WCFDI and the
+    2019 study's own designation (Rev F: 'worst case set as loss of two
+    thrusters'; intro: 'loss of one side of a switchboard or an IO
+    controller'). In BOTH studies these are the IO controller cases:
+    IO A1 -> BT1+MP1, IO B1 -> BT2+MP2. The 2020 study's 'Loss of Bus' cases
+    follow a different (diagonal/asymmetric) electrical arrangement — its
+    Loss of Bus 3 is a benign single-main loss — so they are NOT tagged;
+    they remain selectable, and the worst-single-failure envelope includes
+    them regardless."""
     cs = _study(mode_key)["cases"]
-    bus = [c for c in ("Loss of Bus 1", "Loss of Bus 3") if c in cs]
-    if bus:
-        return bus
-    return [c for c in ("Loss of Thruster Controller IO A1",
-                        "Loss of Thruster Controller IO B1") if c in cs]
+    io = [c for c in ("Loss of Thruster Controller IO A1",
+                      "Loss of Thruster Controller IO B1") if c in cs]
+    if io:
+        return io
+    return [c for c in ("Loss of Bus 1", "Loss of Bus 3") if c in cs]
+
+
+# --------------------------------------------------- worst single failure
+
+WORST = "__worst_single_failure__"
+WORST_LABEL = "Worst single failure — min of all failure cases"
+
+
+def failure_cases(mode_key):
+    return [c for c in cases(mode_key) if c != "All Thrusters Active"]
+
+
+def governing_case(mode_key, incidence_deg, current_ms, hs_m):
+    """(case_name, limit) with the lowest rescaled limit at the incidence."""
+    best = (None, float("inf"))
+    for c in failure_cases(mode_key):
+        v = limit_wind_ms(mode_key, c, incidence_deg, current_ms, hs_m)
+        if v < best[1]:
+            best = (c, v)
+    return best
 
 
 def _case(mode_key, case_name):
@@ -118,6 +141,8 @@ def _case(mode_key, case_name):
 
 
 def env_basis(mode_key, case_name):
+    if case_name == WORST:
+        case_name = cases(mode_key)[0]      # all cases share the study basis
     return _case(mode_key, case_name)["env"]
 
 
@@ -186,7 +211,10 @@ def _limit_u(terms, m_lim2, rc, rh):
 def limit_wind_ms(mode_key, case_name, incidence_deg, current_ms, hs_m):
     """Rescaled limiting wind [m/s] at the incidence for the user's current
     and Hs, linearly interpolated between the 10-deg grid solutions (matching
-    how the study envelopes themselves are interpolated)."""
+    how the study envelopes themselves are interpolated). case_name may be
+    WORST: the minimum over all failure cases (each interpolated first)."""
+    if case_name == WORST:
+        return governing_case(mode_key, incidence_deg, current_ms, hs_m)[1]
     a = float(incidence_deg) % 360.0
     lo = int(a // 10) * 10
     hi = (lo + 10) % 360
@@ -213,16 +241,23 @@ def _limit_at_grid(mode_key, case_name, angle, current_ms, hs_m):
 def envelope(mode_key, case_name, current_ms, hs_m):
     """(angles, rescaled_limits_ms) closed 0..360 for plotting."""
     angs = list(range(0, 360, 10)) + [360]
-    vals = [_limit_at_grid(mode_key, case_name, a % 360, current_ms, hs_m)[0]
-            for a in angs]
+    if case_name == WORST:
+        vals = [min(_limit_at_grid(mode_key, c, a % 360, current_ms, hs_m)[0]
+                    for c in failure_cases(mode_key)) for a in angs]
+    else:
+        vals = [_limit_at_grid(mode_key, case_name, a % 360, current_ms, hs_m)[0]
+                for a in angs]
     return angs, vals
 
 
 def study_envelope(mode_key, case_name):
     """The published App D envelope (at the fixed study basis), for reference
-    overlay."""
-    tab = _case(mode_key, case_name)["wind_limit_ms"]
+    overlay. WORST: per-angle minimum of the published failure-case limits."""
     angs = list(range(0, 360, 10)) + [360]
+    if case_name == WORST:
+        tabs = [_case(mode_key, c)["wind_limit_ms"] for c in failure_cases(mode_key)]
+        return angs, [min(t[str(a % 360)] for t in tabs) for a in angs]
+    tab = _case(mode_key, case_name)["wind_limit_ms"]
     return angs, [tab[str(a % 360)] for a in angs]
 
 
@@ -231,10 +266,13 @@ def study_envelope(mode_key, case_name):
 def assess(mode_key, case_name, heading_deg, wind_ms, wind_from_deg,
            current_ms, hs_m):
     inc = (float(wind_from_deg) - float(heading_deg)) % 360.0
+    case_used = case_name
+    if case_name == WORST:
+        case_used, _ = governing_case(mode_key, inc, current_ms, hs_m)
     limit = limit_wind_ms(mode_key, case_name, inc, current_ms, hs_m)
-    _v, binding = _limit_at_grid(mode_key, case_name, int(round(inc / 10.0) * 10) % 360,
+    _v, binding = _limit_at_grid(mode_key, case_used, int(round(inc / 10.0) * 10) % 360,
                                  current_ms, hs_m)
-    basis = env_basis(mode_key, case_name)
+    basis = env_basis(mode_key, case_used)
     util = float(wind_ms) / limit if limit > _EPS else float("inf")
     if util >= 1.0:
         status = "NO-GO"
@@ -259,7 +297,8 @@ def assess(mode_key, case_name, heading_deg, wind_ms, wind_from_deg,
     return dict(incidence_deg=inc, limit_ms=limit, limit_kn=limit * MS_TO_KN,
                 wind_ms=float(wind_ms), utilisation=util,
                 margin_ms=limit - float(wind_ms), status=status, basis=basis,
-                binding_axis=binding, warnings=warnings)
+                binding_axis=binding, warnings=warnings, case_used=case_used,
+                case_requested=case_name)
 
 
 # ------------------------------------------------------------------ power
@@ -272,6 +311,8 @@ def thrust_utilisation(mode_key, case_name, incidence_deg, wind_ms,
                        current_ms, hs_m):
     """Scalar s = |env wrench at the user's condition| / |study-limit wrench|,
     at the nearest 10-deg grid angle. s = 1 at the study limit."""
+    if case_name == WORST:
+        case_name, _ = governing_case(mode_key, incidence_deg, current_ms, hs_m)
     c = _case(mode_key, case_name)
     b = c["env"]
     ang = str(int(round(float(incidence_deg) / 10.0) * 10) % 360)
@@ -287,6 +328,8 @@ def thruster_loads_est(mode_key, case_name, incidence_deg, wind_ms,
     """Estimated per-thruster kW at the USER'S condition: Appendix E loads
     (exact at the study limit) scaled by s^1.5 (propeller law), s clamped at
     1.25. Returns ({name: kW}, s)."""
+    if case_name == WORST:
+        case_name, _ = governing_case(mode_key, incidence_deg, current_ms, hs_m)
     c = _case(mode_key, case_name)
     ang = str(int(round(float(incidence_deg) / 10.0) * 10) % 360)
     loads = c["thruster_loads_kw"][ang]
