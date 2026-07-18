@@ -23,6 +23,7 @@ from app.engines import dp_capability as dp
 from app.engines import dp_env_rescale as rs
 from app import dp_consumers as dcon
 from app import reports
+from app import units
 
 dash.register_page(__name__, path="/dp/env-planner", name="DP Environment Planner",
                    category="DP Station Keeping", order=2)
@@ -69,14 +70,30 @@ def _controls():
                       _num_input("dpe-winddir", 70, 0, 360)], style={"flex": 1}),
         ], style={"display": "flex", "gap": "10px", "marginBottom": "8px"}),
         html.Div([
-            html.Div([html.Label("Wind speed [m/s] (1-min @ 10 m)", style=_LBL_ENV),
+            html.Div([html.Label("Wind speed (1-min @ 10 m)", style=_LBL_ENV),
                       _num_input("dpe-wind", 10.0, 0)], style={"flex": 1}),
-            html.Div([html.Label("Current [m/s] — free input", style=_LBL_ENV),
+            html.Div([html.Label("Current — free input", style=_LBL_ENV),
                       _num_input("dpe-current", 1.0, 0, step=0.05)], style={"flex": 1}),
             html.Div([html.Label("Hs [m] — free input", style=_LBL_ENV),
                       _num_input("dpe-hs", 2.5, 0, step=0.1)], style={"flex": 1}),
         ], style={"display": "flex", "gap": "10px", "marginBottom": "4px",
                   "alignItems": "flex-end"}),
+        html.Div([
+            html.Span("Units:", style={"fontSize": "12px", "color": MUTED,
+                                       "marginRight": "8px"}),
+            html.Span("wind", style={"fontSize": "12px", "color": MUTED}),
+            dcc.RadioItems(id="dpe-wu", options=units.WIND_UNITS, value="ms",
+                           inline=True, labelStyle={"marginRight": "8px"},
+                           style={"fontSize": "12px", "display": "inline-block",
+                                  "margin": "0 14px 0 6px"}),
+            html.Span("current", style={"fontSize": "12px", "color": MUTED}),
+            dcc.RadioItems(id="dpe-cu", options=units.CUR_UNITS, value="ms",
+                           inline=True, labelStyle={"marginRight": "8px"},
+                           style={"fontSize": "12px", "display": "inline-block",
+                                  "marginLeft": "6px"}),
+            dcc.Store(id="dpe-wu-prev", data="ms"),
+            dcc.Store(id="dpe-cu-prev", data="ms"),
+        ], style={"marginBottom": "6px"}),
         html.Div("Current and Hs are free here: the envelope is rescaled from the "
                  "study's force decomposition. Exact at the study basis; an "
                  "estimate away from it (flagged in the verdict).",
@@ -298,6 +315,20 @@ dash.clientside_callback(
 )
 
 
+@callback(Output("dpe-wind", "value"), Output("dpe-wu-prev", "data"),
+          Input("dpe-wu", "value"), State("dpe-wind", "value"),
+          State("dpe-wu-prev", "data"), prevent_initial_call=True)
+def _wind_unit_switch(unit, value, prev):
+    return units.convert(value, prev or "ms", unit), unit
+
+
+@callback(Output("dpe-current", "value"), Output("dpe-cu-prev", "data"),
+          Input("dpe-cu", "value"), State("dpe-current", "value"),
+          State("dpe-cu-prev", "data"), prevent_initial_call=True)
+def _cur_unit_switch(unit, value, prev):
+    return units.convert(value, prev or "ms", unit), unit
+
+
 def _placeholder_fig(msg):
     fig = go.Figure()
     fig.add_annotation(text=msg, showarrow=False, font=dict(size=14, color=MUTED),
@@ -317,9 +348,10 @@ def _placeholder_fig(msg):
           Input("dpe-hs", "value"),
           Input("dpe-aux1", "value"), Input("dpe-aux2", "value"), Input("dpe-aux3", "value"),
           Input("dpe-overlays", "value"), Input("dpe-frame", "value"),
-          Input("dpe-ref", "value"))
+          Input("dpe-ref", "value"),
+          Input("dpe-wu", "value"), Input("dpe-cu", "value"))
 def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
-            overlays, frame, ref):
+            overlays, frame, ref, wu, cu):
     if not (rs.available() and dp.available()):
         return (_placeholder_fig("Rescale/capability data not readable from the "
                                  "data volume."), None, None, None, None)
@@ -328,8 +360,8 @@ def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
                 None, None, None, None)
     heading = float(heading or 0.0)
     winddir = float(winddir or 0.0)
-    wind = float(wind or 0.0)
-    current = max(float(current or 0.0), 0.0)
+    wind = units.to_ms(float(wind or 0.0), wu or "ms")
+    current = max(units.to_ms(float(current or 0.0), cu or "ms"), 0.0)
     hs = max(float(hs or 0.0), 0.0)
     overlays = overlays or []
 

@@ -12,12 +12,13 @@ The numeric data lives only on the /data volume (see engines/dp_capability.py).
 """
 import dash
 import datetime
-from dash import html, dcc, Input, Output, callback
+from dash import html, dcc, Input, Output, State, callback
 import plotly.graph_objects as go
 
 from app.engines import dp_capability as dp
 from app import dp_consumers as dcon
 from app import reports
+from app import units
 
 dash.register_page(__name__, path="/dp/capability", name="DP Capability & Ops Check",
                    category="DP Station Keeping", order=1)
@@ -66,9 +67,9 @@ def _controls():
                       _num_input("dpc-winddir", 70, 0, 360)], style={"flex": 1}),
         ], style={"display": "flex", "gap": "10px", "marginBottom": "8px"}),
         html.Div([
-            html.Div([html.Label("Wind speed [m/s] (1-min @ 10 m)", style=_LBL_ENV),
+            html.Div([html.Label("Wind speed (1-min @ 10 m)", style=_LBL_ENV),
                       _num_input("dpc-wind", 10.0, 0)], style={"flex": 1}),
-            html.Div([html.Label("Current [m/s] — study basis", style=_LBL_ENV),
+            html.Div([html.Label("Current — study basis", style=_LBL_ENV),
                       dcc.Dropdown(id="dpc-current", clearable=False,
                                    searchable=False)], style={"flex": 1}),
             html.Div([html.Label("Hs [m] — study basis", style=_LBL_ENV),
@@ -207,8 +208,9 @@ def _cases(mode):
 
 @callback(Output("dpc-current", "options"), Output("dpc-current", "value"),
           Output("dpc-hs", "options"), Output("dpc-hs", "value"),
-          Input("dpc-mode", "value"), Input("dpc-case", "value"))
-def _env_choices(mode, case):
+          Input("dpc-mode", "value"), Input("dpc-case", "value"),
+          Input("dpc-cu", "value"))
+def _env_choices(mode, case, cu):
     """Restrict current and Hs to the exact values the studies were run at.
 
     Free numeric entry is deliberately not offered: the envelopes are only a
@@ -221,7 +223,11 @@ def _env_choices(mode, case):
     opts = dp.env_options(mode, case)
     curs = sorted({round(float(o["current_ms"]), 3) for o in opts})
     hss = sorted({round(float(o["hs_m"]), 2) for o in opts})
-    cur_opts = [{"label": f"{c:.2f} m/s", "value": c} for c in curs]
+    if (cu or "ms") == "kn":
+        cur_opts = [{"label": f"{c * units.KN_PER_MS:.2f} kn", "value": c}
+                    for c in curs]
+    else:
+        cur_opts = [{"label": f"{c:.2f} m/s", "value": c} for c in curs]
     hs_opts = [{"label": f"{h:.1f} m", "value": h} for h in hss]
     return cur_opts, curs[0], hs_opts, hss[0]
 
@@ -251,6 +257,13 @@ def _prefill_aux(selected, mode):
             note)
 
 
+@callback(Output("dpc-wind", "value"), Output("dpc-wu-prev", "data"),
+          Input("dpc-wu", "value"), State("dpc-wind", "value"),
+          State("dpc-wu-prev", "data"), prevent_initial_call=True)
+def _wind_unit_switch(unit, value, prev):
+    return units.convert(value, prev or "ms", unit), unit
+
+
 def _placeholder_fig(msg):
     fig = go.Figure()
     fig.add_annotation(text=msg, showarrow=False, font=dict(size=14, color=MUTED),
@@ -269,9 +282,10 @@ def _placeholder_fig(msg):
           Input("dpc-wind", "value"), Input("dpc-current", "value"),
           Input("dpc-hs", "value"),
           Input("dpc-aux1", "value"), Input("dpc-aux2", "value"), Input("dpc-aux3", "value"),
-          Input("dpc-overlays", "value"), Input("dpc-frame", "value"))
+          Input("dpc-overlays", "value"), Input("dpc-frame", "value"),
+          Input("dpc-wu", "value"))
 def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
-            overlays, frame):
+            overlays, frame, wu):
     if not dp.available():
         return (_placeholder_fig("Capability data not readable from the data volume "
                                  "(tools/dp/dp_capability.json)."), None, None, None, None)
@@ -280,7 +294,7 @@ def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
                 None, None, None, None)
     heading = float(heading or 0.0)
     winddir = float(winddir or 0.0)
-    wind = float(wind or 0.0)
+    wind = units.to_ms(float(wind or 0.0), wu or "ms")
     current = float(current or 0.0)
     hs = float(hs or 0.0)
     overlays = overlays or []
