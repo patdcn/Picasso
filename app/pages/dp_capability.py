@@ -11,11 +11,13 @@ DG with the vessel's own PMS 80 % / 85 % power-limit thresholds.
 The numeric data lives only on the /data volume (see engines/dp_capability.py).
 """
 import dash
+import datetime
 from dash import html, dcc, Input, Output, callback
 import plotly.graph_objects as go
 
 from app.engines import dp_capability as dp
 from app import dp_consumers as dcon
+from app import reports
 
 dash.register_page(__name__, path="/dp/capability", name="DP Capability & Ops Check",
                    category="DP Station Keeping", order=1)
@@ -107,7 +109,7 @@ def _controls():
                       "value": "true"}],
             value="rel", labelStyle={"display": "block", "margin": "2px 0"},
             style={"fontSize": "13px"}),
-    ], style=_CARD)
+    ], style=_CARD, className="no-print")
 
 
 def _notice_missing():
@@ -127,6 +129,16 @@ def layout():
     if not dp.available():
         return _notice_missing()
     return html.Div([
+        reports.print_header(),
+        html.Div([
+            html.Button([html.Span("\u2913\u2002"), "Print capability sheet"],
+                        id="dpc-print-btn", n_clicks=0,
+                        style={"border": f"1px solid {GRID}", "background": "#fff",
+                               "borderRadius": "8px", "padding": "7px 14px",
+                               "cursor": "pointer", "fontSize": "13px"}),
+            html.Div(id="dpc-print-sink", style={"display": "none"}),
+        ], className="no-print", style={"display": "flex", "justifyContent": "flex-end",
+                                        "marginBottom": "6px"}),
         html.H2("DP Capability & Ops Check", style={"color": INK, "marginBottom": "2px"}),
         html.Div("Station-keeping envelopes (Thrustmaster App. D) with operations check "
                  "and power demand at the capability limit (App. E).",
@@ -140,8 +152,10 @@ def layout():
                 html.Div(id="dpc-basis", style={**_CARD, "fontSize": "13px"}),
             ], style={"flex": 1, "minWidth": "420px"}),
         ], style={"display": "flex", "gap": "14px", "flexWrap": "wrap"}),
+        html.Div(id="dpc-print-summary", className="print-only"),
         html.Div(id="dpc-power"),
         _reference_block(),
+        reports.print_footer(),
     ], style={"maxWidth": "1200px"})
 
 
@@ -252,6 +266,7 @@ def _placeholder_fig(msg):
 
 @callback(Output("dpc-polar", "figure"), Output("dpc-status", "children"),
           Output("dpc-basis", "children"), Output("dpc-power", "children"),
+          Output("dpc-print-summary", "children"),
           Input("dpc-mode", "value"), Input("dpc-case", "value"),
           Input("dpc-heading", "value"), Input("dpc-winddir", "value"),
           Input("dpc-wind", "value"), Input("dpc-current", "value"),
@@ -262,9 +277,10 @@ def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
             overlays, frame):
     if not dp.available():
         return (_placeholder_fig("Capability data not readable from the data volume "
-                                 "(tools/dp/dp_capability.json)."), None, None, None)
+                                 "(tools/dp/dp_capability.json)."), None, None, None, None)
     if not (mode and case):
-        return _placeholder_fig("Select an operating mode and analysis case."), None, None, None
+        return (_placeholder_fig("Select an operating mode and analysis case."),
+                None, None, None, None)
     heading = float(heading or 0.0)
     winddir = float(winddir or 0.0)
     wind = float(wind or 0.0)
@@ -280,7 +296,9 @@ def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
     basis = _basis_card(mode, case, res)
     aux = {"bus1": aux1 or 0, "bus2": aux2 or 0, "bus3": aux3 or 0}
     power = _power_block(mode, case, inc, aux)
-    return fig, status, basis, power
+    summary = _print_summary(mode, case, res, wind, winddir, heading,
+                             current, hs, aux)
+    return fig, status, basis, power, summary
 
 
 def _polar_figure(mode, case, inc, wind, heading, winddir, frame, overlays):
@@ -345,6 +363,64 @@ def _polar_figure(mode, case, inc, wind, heading, winddir, frame, overlays):
         showarrow=False, xref="paper", yref="paper", x=1.0, y=1.04,
         xanchor="right", font=dict(size=11, color=MUTED))
     return fig
+
+
+def _print_summary(mode, case, res, wind, winddir, heading, current, hs, aux):
+    """Study-style summary table for the printed capability sheet."""
+    mm = dp.mode_meta(mode)
+    angs, vals = dp.envelope(mode, case)
+    mn = min(vals[:-1]); mn_ang = angs[vals.index(mn)]
+    aux_total = sum(float(v or 0) for v in aux.values())
+    st = STATUS_STYLE[res["status"]]
+    rows = [
+        ("Vessel", "DSV Picasso"),
+        ("Operating mode", dp.modes()[mode]["label"]),
+        ("Analysis case", case),
+        ("Current speed", f"{float(current):.2f} m/s (collinear, study value)"),
+        ("Significant wave height (Hs)", f"{float(hs):.1f} m (study value)"),
+        ("Wave spectrum", f'JONSWAP, Tp {res["basis"]["tp_s"]:.1f} s'),
+        ("Min capability wind speed", f"{mn:.2f} m/s ({mn * dp.MS_TO_KN:.0f} kn)"),
+        ("Min capability angle", f"{mn_ang}\u00b0 relative"),
+        ("Assessed wind / direction",
+         f'{res["wind_ms"]:.1f} m/s from {winddir % 360:.0f}\u00b0T '
+         f'(heading {heading % 360:.0f}\u00b0T, incidence {res["incidence_deg"]:.0f}\u00b0)'),
+        ("Wind limit at assessed incidence",
+         f'{res["limit_ms"]:.1f} m/s \u2014 margin {res["margin_ms"]:+.1f} m/s'),
+        ("Verdict", st["label"]),
+        ("Selected DP consumers", f"{aux_total:,.0f} kW "
+         f'(Bus 1 {float(aux["bus1"] or 0):,.0f} / Bus 2 {float(aux["bus2"] or 0):,.0f} / '
+         f'Bus 3 {float(aux["bus3"] or 0):,.0f} kW)'),
+        ("Capability basis",
+         f'{mm["study_title"]} \u2014 {mm["study_ref"]} \u00b7 {mm["study_note"]} '
+         "(published Appendix D envelope, no rescaling)"),
+        ("Generated", datetime.date.today().isoformat()
+         + " \u00b7 DSV Picasso Engineering Portal"),
+    ]
+    trs = [html.Tr([
+        html.Td(k, style={"padding": "3px 10px 3px 0", "color": MUTED,
+                          "whiteSpace": "nowrap", "verticalAlign": "top"}),
+        html.Td(v, style={"padding": "3px 0", "fontWeight": 600}),
+    ]) for k, v in rows]
+    note = ("Figures from the Thrustmaster capability studies at their analysed "
+            "environment. Estimated capabilities do not act as a guarantee of "
+            "station-keeping in the given environmental conditions. Indicative, for "
+            "planning only; operational limits are governed by the ASOG and the DPO.")
+    return html.Div([
+        html.Div("DP capability summary",
+                 style={"fontWeight": 700, "fontSize": "15px", "margin": "8px 0 6px"}),
+        html.Table(html.Tbody(trs), style={"fontSize": "12.5px",
+                                           "borderCollapse": "collapse"}),
+        html.Div(note, style={"fontSize": "11px", "color": MUTED, "marginTop": "8px",
+                              "maxWidth": "760px"}),
+    ])
+
+
+dash.clientside_callback(
+    "function(n){ if(n){ setTimeout(function(){ window.print(); }, 60); } "
+    "return window.dash_clientside.no_update; }",
+    Output("dpc-print-sink", "children"), Input("dpc-print-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
 
 
 def _status_card(mode, case, res):
