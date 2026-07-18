@@ -137,6 +137,8 @@ def thruster_names(mode_key):
 
 def env_basis(mode_key, case_name):
     """Fixed environmental basis of the study: current [m/s], Hs [m], Tp [s]."""
+    if case_name == WORST:
+        case_name = cases(mode_key)[0]      # all cases share the study basis
     return _case(mode_key, case_name)["env"]
 
 
@@ -184,17 +186,44 @@ def _circ_interp(table_deg_to_val, angle_deg):
     return v_lo + f * (v_hi - v_lo)
 
 
+# ------------------------------------------------- worst case failure entry
+
+WORST = "__worst_single_failure__"
+WORST_LABEL = "Worst case failure"
+
+
+def failure_cases(mode_key):
+    return [c for c in cases(mode_key) if c != "All Thrusters Active"]
+
+
+def governing_case(mode_key, incidence):
+    """(case_name, limit) with the lowest published limit at the incidence."""
+    best = (None, float("inf"))
+    for c in failure_cases(mode_key):
+        v = _circ_interp(_case(mode_key, c)["wind_limit_ms"], incidence)
+        if v < best[1]:
+            best = (c, v)
+    return best
+
+
 # ---------------------------------------------------------------- capability
 
 def wind_limit_ms(mode_key, case_name, incidence):
-    """Limiting 1-min wind speed [m/s] at the given incidence angle."""
+    """Limiting 1-min wind speed [m/s] at the given incidence angle. WORST:
+    the minimum over all failure cases (each interpolated first)."""
+    if case_name == WORST:
+        return governing_case(mode_key, incidence)[1]
     return _circ_interp(_case(mode_key, case_name)["wind_limit_ms"], incidence)
 
 
 def envelope(mode_key, case_name):
-    """(angles_deg, limits_ms) arrays for plotting, closed (0..360)."""
-    tab = _case(mode_key, case_name)["wind_limit_ms"]
+    """(angles_deg, limits_ms) arrays for plotting, closed (0..360). WORST:
+    per-angle minimum of the published failure-case envelopes."""
     angs = list(range(0, 360, 10)) + [360]
+    if case_name == WORST:
+        tabs = [_case(mode_key, c)["wind_limit_ms"] for c in failure_cases(mode_key)]
+        return angs, [min(t[str(a % 360)] for t in tabs) for a in angs]
+    tab = _case(mode_key, case_name)["wind_limit_ms"]
     vals = [tab[str(a % 360)] for a in angs]
     return angs, vals
 
@@ -212,8 +241,11 @@ def assess(mode_key, case_name, heading_deg, wind_ms, wind_from_deg,
                        (the envelope is then not a valid bound)
     """
     inc = incidence_deg(wind_from_deg, heading_deg)
+    case_used = case_name
+    if case_name == WORST:
+        case_used, _ = governing_case(mode_key, inc)
     limit = wind_limit_ms(mode_key, case_name, inc)
-    basis = env_basis(mode_key, case_name)
+    basis = env_basis(mode_key, case_used)
     util = float(wind_ms) / limit if limit > 0 else float("inf")
 
     cur_ok = current_ms is None or float(current_ms) <= basis["current_ms"] + 1e-9
@@ -233,7 +265,7 @@ def assess(mode_key, case_name, heading_deg, wind_ms, wind_from_deg,
                 wind_ms=float(wind_ms), utilisation=util,
                 margin_ms=limit - float(wind_ms),
                 basis=basis, current_ok=cur_ok, hs_ok=hs_ok, inside_basis=inside,
-                status=status)
+                status=status, case_used=case_used, case_requested=case_name)
 
 
 # ---------------------------------------------------------------- power panel
@@ -241,7 +273,9 @@ def assess(mode_key, case_name, heading_deg, wind_ms, wind_from_deg,
 def thruster_loads_at_limit(mode_key, case_name, incidence):
     """Per-thruster power [kW] at the capability limit (Appendix E),
     interpolated to the given incidence. Returns {name: kW} preserving the
-    study's thruster order."""
+    study's thruster order. WORST: loads of the governing failure case."""
+    if case_name == WORST:
+        case_name, _ = governing_case(mode_key, incidence)
     loads = _circ_interp(_case(mode_key, case_name)["thruster_loads_kw"], incidence)
     return dict(zip(thruster_names(mode_key), loads))
 

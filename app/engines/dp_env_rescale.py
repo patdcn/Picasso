@@ -119,7 +119,7 @@ def wcfdi_cases(mode_key):
 # --------------------------------------------------- worst single failure
 
 WORST = "__worst_single_failure__"
-WORST_LABEL = "Worst single failure — min of all failure cases"
+WORST_LABEL = "Worst case failure"
 
 
 def failure_cases(mode_key):

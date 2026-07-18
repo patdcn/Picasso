@@ -204,10 +204,8 @@ def _cases(mode):
     if not rs.available():
         return [], None
     cs = rs.cases(mode)
-    wcf = rs.wcfdi_cases(mode)
     opts = [{"label": rs.WORST_LABEL, "value": rs.WORST}]
-    opts += [{"label": c + (" \u2014 worst case failure" if c in wcf else ""),
-              "value": c} for c in cs]
+    opts += [{"label": c, "value": c} for c in cs]
     return opts, rs.WORST
 
 
@@ -232,7 +230,7 @@ def _prefill_aux(selected, mode):
 
 def _case_display(case, res=None):
     if case == rs.WORST:
-        s = "Worst single failure (min of all failure cases)"
+        s = rs.WORST_LABEL
         if res and res.get("case_used"):
             s += f' — governing: {res["case_used"]}'
         return s

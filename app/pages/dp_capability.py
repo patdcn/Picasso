@@ -200,12 +200,9 @@ def _cases(mode):
     if not dp.available():
         return [], None
     cs = dp.cases(mode)
-    wcf = set(dp.wcfdi_cases(mode))
-    default = "Most Critical Thruster Failure" if "Most Critical Thruster Failure" in cs else cs[0]
-    opts = [{"label": c + (" \u2014 worst case failure"
-                          if c in wcf else ""),
-             "value": c} for c in cs]
-    return opts, default
+    opts = [{"label": dp.WORST_LABEL, "value": dp.WORST}]
+    opts += [{"label": c, "value": c} for c in cs]
+    return opts, dp.WORST
 
 
 @callback(Output("dpc-current", "options"), Output("dpc-current", "value"),
@@ -328,9 +325,11 @@ def _polar_figure(mode, case, inc, wind, heading, winddir, frame, overlays):
     a, v = dp.envelope(mode, case)
     rmax = max(rmax, max(v))
     fig.add_trace(go.Scatterpolar(
-        r=v, theta=[x + off for x in a], mode="lines", name=case, fill="toself",
+        r=v, theta=[x + off for x in a], mode="lines",
+        name=(dp.WORST_LABEL if case == dp.WORST else case), fill="toself",
         fillcolor="rgba(15,118,110,0.10)", line=dict(color=ACCENT, width=2.5),
-        hovertemplate="%{theta}° " + hover_ang + ": %{r:.1f} m/s<extra>" + case + "</extra>"))
+        hovertemplate="%{theta}° " + hover_ang + ": %{r:.1f} m/s<extra>"
+                      + (dp.WORST_LABEL if case == dp.WORST else case) + "</extra>"))
     rmax = max(rmax, wind) * 1.06
     if north_up:
         # bow indicator: vessel-fixed reference so the rotated petal is readable
@@ -375,7 +374,10 @@ def _print_summary(mode, case, res, wind, winddir, heading, current, hs, aux):
     rows = [
         ("Vessel", "DSV Picasso"),
         ("Operating mode", dp.modes()[mode]["label"]),
-        ("Analysis case", case),
+        ("Analysis case",
+         (dp.WORST_LABEL + (f' \u2014 governing: {res["case_used"]}'
+                            if res.get("case_used") else "")) if case == dp.WORST
+         else case),
         ("Current speed", f"{float(current):.2f} m/s (collinear, study value)"),
         ("Significant wave height (Hs)", f"{float(hs):.1f} m (study value)"),
         ("Wave spectrum", f'JONSWAP, Tp {res["basis"]["tp_s"]:.1f} s'),
@@ -425,6 +427,8 @@ dash.clientside_callback(
 
 def _status_card(mode, case, res):
     st = STATUS_STYLE[res["status"]]
+    governing = (res.get("case_used")
+                 if res.get("case_requested") == dp.WORST else None)
     lines = [
         ("Incidence angle", f'{res["incidence_deg"]:.0f}°'),
         ("Limiting wind at incidence", f'{res["limit_ms"]:.1f} m/s  ({res["limit_kn"]:.0f} kn)'),
@@ -432,6 +436,8 @@ def _status_card(mode, case, res):
         ("Margin", f'{res["margin_ms"]:+.1f} m/s'),
         ("Envelope utilisation", f'{res["utilisation"]*100:.0f}%'),
     ]
+    if governing:
+        lines.insert(0, ("Governing failure case", governing))
     warn = []
     if not res["current_ok"]:
         warn.append(f'Current exceeds analysis basis ({res["basis"]["current_ms"]:.2f} m/s).')
