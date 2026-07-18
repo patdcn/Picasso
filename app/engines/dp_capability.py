@@ -150,7 +150,7 @@ def env_options(mode_key, case_name):
     App. B.3). An optional 'env_variants' list on a case in the volume JSON
     allows additional bases to appear in the UI without a code change.
     """
-    c = _case(mode_key, case_name)
+    c = _case(mode_key, cases(mode_key)[0] if case_name == WORST else case_name)
     return list(c.get("env_variants") or [c["env"]])
 
 
