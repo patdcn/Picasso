@@ -19,6 +19,7 @@ from app.engines import dp_capability as dp
 from app import dp_consumers as dcon
 from app import reports
 from app import units
+from app import dpdocs
 
 dash.register_page(__name__, path="/dp/capability", name="DP Capability & Ops Check",
                    category="DP Station Keeping", order=1)
@@ -195,6 +196,10 @@ def _reference_block():
         className="dpc-table")
     prov = html.Ul([html.Li(p, style={"marginBottom": "3px"}) for p in dp.provenance()],
                    style={"fontSize": "12px", "color": MUTED, "paddingLeft": "18px"})
+    library = html.Div(html.A("Source documents \u2192 Reference / Picasso DP",
+                              href="/reference/picasso-dp", target="_blank",
+                              style={"textDecoration": "underline"}),
+                       style={"fontSize": "12px", "marginTop": "4px"})
     disclaimer = html.Div([
         html.B("Use limits. "), "Envelopes are theoretical capability at the study's fixed "
         "environment (collinear wind/wave/current) and do not guarantee station keeping; "
@@ -205,7 +210,12 @@ def _reference_block():
     ], style={"fontSize": "12px", "color": MUTED, "marginTop": "8px"})
     return html.Div([
         html.Div(table, style=_CARD),
-        html.Div([html.B("Document basis", style={"fontSize": "13px"}), prov, disclaimer],
+        html.Div([html.B("Document basis", style={"fontSize": "13px"}), prov,
+                  html.Div(html.A("Source documents \u2192 Reference / Picasso DP",
+                                  href="/reference/picasso-dp", target="_blank",
+                                  style={"textDecoration": "underline"}),
+                           style={"fontSize": "12px", "margin": "4px 0 8px"}),
+                  disclaimer],
                  style=_CARD),
     ])
 
@@ -491,8 +501,11 @@ def _basis_card(mode, case, res):
     mm = dp.mode_meta(mode)
     b = res["basis"]
     return html.Div([
-        html.B("Analysis basis — " + mm["study_title"], style={"fontSize": "13px"}),
-        html.Div(f'{mm["study_ref"]} · {mm["study_note"]}', style={"color": MUTED}),
+        html.B(["Analysis basis — ",
+                dpdocs.mode_link(mode, mm["study_title"])],
+               style={"fontSize": "13px"}),
+        html.Div([dpdocs.mode_link(mode, mm["study_ref"], style={"color": MUTED}),
+                  html.Span(f' · {mm["study_note"]}', style={"color": MUTED})]),
         html.Div([
             f'Fixed environment: current {b["current_ms"]:.2f} m/s · Hs {b["hs_m"]:.1f} m · '
             f'Tp {b["tp_s"]:.1f} s (JONSWAP), collinear with wind. {mm["thrust_note"]}.'

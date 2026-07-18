@@ -24,6 +24,7 @@ from app.engines import dp_env_rescale as rs
 from app import dp_consumers as dcon
 from app import reports
 from app import units
+from app import dpdocs
 
 dash.register_page(__name__, path="/dp/env-planner", name="DP Environment Planner",
                    category="DP Station Keeping", order=2)
@@ -210,6 +211,10 @@ def _method_block():
             "the ASOG and the DPO's judgement remain leading.",
         ], style={"fontSize": "12px", "color": MUTED, "margin": "6px 0"}),
         prov,
+        html.Div(html.A("Source documents \u2192 Reference / Picasso DP",
+                        href="/reference/picasso-dp", target="_blank",
+                        style={"textDecoration": "underline"}),
+                 style={"fontSize": "12px", "marginTop": "4px"}),
     ], style=_CARD)
 
 
@@ -467,8 +472,11 @@ def _basis_card(mode, res, current, hs):
     mm = dp.mode_meta(mode)
     b = res["basis"]
     return html.Div([
-        html.B("Rescaled from — " + mm["study_title"], style={"fontSize": "13px"}),
-        html.Div(f'{mm["study_ref"]} \u00b7 {mm["study_note"]}', style={"color": MUTED}),
+        html.B(["Rescaled from — ",
+                dpdocs.mode_link(mode, mm["study_title"])],
+               style={"fontSize": "13px"}),
+        html.Div([dpdocs.mode_link(mode, mm["study_ref"], style={"color": MUTED}),
+                  html.Span(f' \u00b7 {mm["study_note"]}', style={"color": MUTED})]),
         html.Div([
             f'Study basis: current {b["current_ms"]:.2f} m/s \u00b7 Hs {b["hs_m"]:.1f} m \u00b7 '
             f'Tp {b["tp_s"]:.1f} s (JONSWAP), collinear with wind. {mm["thrust_note"]}. '

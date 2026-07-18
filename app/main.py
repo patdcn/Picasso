@@ -58,6 +58,20 @@ def _ga_file(name):
         abort(404)
     return send_from_directory(_GA_DIR, name)
 
+
+# ---- serve Picasso DP reference documents from the data volume ----
+_DP_DOCS_DIR = _os.getenv("DP_DOCS_DIR", "/data/docs/dp")
+
+
+@server.route("/dp-doc/<path:name>")
+def _dp_doc(name):
+    if "/" in name or "\\" in name or ".." in name:
+        abort(404)
+    if (not _os.path.isdir(_DP_DOCS_DIR)
+            or not _os.path.exists(_os.path.join(_DP_DOCS_DIR, name))):
+        abort(404)
+    return send_from_directory(_DP_DOCS_DIR, name)
+
 # ---- Header (toggle + title + user area) ----
 header = html.Header(
     [
