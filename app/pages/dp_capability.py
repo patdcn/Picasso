@@ -36,6 +36,9 @@ BAND_COLOR = {"ok": "#16a34a", "warn": "#d97706", "limit": "#dc2626", "offline":
 _CARD = {"background": "#ffffff", "border": f"1px solid {GRID}", "borderRadius": "10px",
          "padding": "14px 16px", "marginBottom": "14px"}
 _LBL = {"fontSize": "12px", "color": MUTED, "marginBottom": "2px", "display": "block"}
+# env-input row: equal-height labels so the three boxes bottom-align even
+# when one label wraps to two lines
+_LBL_ENV = {**_LBL, "minHeight": "28px"}
 _NUM = {"width": "100%", "boxSizing": "border-box"}
 
 
@@ -60,15 +63,16 @@ def _controls():
                       _num_input("dpc-winddir", 70, 0, 360)], style={"flex": 1}),
         ], style={"display": "flex", "gap": "10px", "marginBottom": "8px"}),
         html.Div([
-            html.Div([html.Label("Wind speed [m/s] (1-min @ 10 m)", style=_LBL),
+            html.Div([html.Label("Wind speed [m/s] (1-min @ 10 m)", style=_LBL_ENV),
                       _num_input("dpc-wind", 10.0, 0)], style={"flex": 1}),
-            html.Div([html.Label("Current [m/s] — study basis", style=_LBL),
+            html.Div([html.Label("Current [m/s] — study basis", style=_LBL_ENV),
                       dcc.Dropdown(id="dpc-current", clearable=False,
                                    searchable=False)], style={"flex": 1}),
-            html.Div([html.Label("Hs [m] — study basis", style=_LBL),
+            html.Div([html.Label("Hs [m] — study basis", style=_LBL_ENV),
                       dcc.Dropdown(id="dpc-hs", clearable=False,
                                    searchable=False)], style={"flex": 1}),
-        ], style={"display": "flex", "gap": "10px", "marginBottom": "4px"}),
+        ], style={"display": "flex", "gap": "10px", "marginBottom": "4px",
+                  "alignItems": "flex-end"}),
         html.Div("Current and Hs are selectable only at the values the capability "
                  "studies were run at (no tidal/current sweep exists in the analyses).",
                  style={"fontSize": "11px", "color": MUTED, "marginBottom": "8px"}),
@@ -76,7 +80,7 @@ def _controls():
                    style=_LBL),
         dcc.Checklist(
             id="dpc-consumers",
-            options=[{"label": f' {r["name"]} \u00b7 {r["kw"]:,.0f} kW',
+            options=[{"label": f' {r["name"]}\u00a0\u00b7\u00a0{r["kw"]:,.0f}\u00a0kW',
                       "value": r["id"]} for r in dcon.rows()],
             value=[r["id"] for r in dcon.rows() if r["default_on"]],
             labelStyle={"display": "block", "margin": "2px 0"},
@@ -128,7 +132,7 @@ def layout():
                  style={"color": MUTED, "fontSize": "13px", "marginBottom": "12px"}),
         html.Div([
             html.Div([_controls(), html.Div(id="dpc-status")],
-                     style={"flex": "0 0 340px"}),
+                     style={"flex": "0 0 420px"}),
             html.Div([
                 html.Div(dcc.Graph(id="dpc-polar", config={"displaylogo": False}),
                          style=_CARD),
