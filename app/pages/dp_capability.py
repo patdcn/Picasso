@@ -77,8 +77,25 @@ def _controls():
                                    searchable=False)], style={"flex": 1}),
         ], style={"display": "flex", "gap": "10px", "marginBottom": "4px",
                   "alignItems": "flex-end"}),
+        html.Div([
+            html.Span("Units:", style={"fontSize": "12px", "color": MUTED,
+                                       "marginRight": "8px"}),
+            html.Span("wind", style={"fontSize": "12px", "color": MUTED}),
+            dcc.RadioItems(id="dpc-wu", options=units.WIND_UNITS, value="ms",
+                           inline=True, labelStyle={"marginRight": "8px"},
+                           style={"fontSize": "12px", "display": "inline-block",
+                                  "margin": "0 14px 0 6px"}),
+            html.Span("current", style={"fontSize": "12px", "color": MUTED}),
+            dcc.RadioItems(id="dpc-cu", options=units.CUR_UNITS, value="ms",
+                           inline=True, labelStyle={"marginRight": "8px"},
+                           style={"fontSize": "12px", "display": "inline-block",
+                                  "marginLeft": "6px"}),
+            dcc.Store(id="dpc-wu-prev", data="ms"),
+        ], style={"marginBottom": "6px"}),
         html.Div("Current and Hs are selectable only at the values the capability "
-                 "studies were run at (no tidal/current sweep exists in the analyses).",
+                 "studies were run at (no tidal/current sweep exists in the "
+                 "analyses). The current unit changes the display only; the "
+                 "underlying study values are unchanged.",
                  style={"fontSize": "11px", "color": MUTED, "marginBottom": "8px"}),
         html.Label("DP power consumers — planning kW (admin-editable registry)",
                    style=_LBL),
