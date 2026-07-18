@@ -117,10 +117,6 @@ def electrical():
     return _data()["electrical"]
 
 
-def cyscan():
-    return _data().get("cyscan")
-
-
 def fmea_load_balance():
     return _data().get("fmea_load_balance", [])
 
@@ -250,16 +246,3 @@ def power_panel(mode_key, case_name, incidence, aux_kw=None):
     return dict(thrusters=thr, buses=buses, thresholds=(warn, lim),
                 dg_nominal_kw=dg_kw)
 
-
-# ---------------------------------------------------------------- cyscan
-
-def cyscan_blind_sector():
-    """(center_deg, width_deg) of the CyScan blind sector in vessel-relative
-    coordinates, derived from the measured operating window, or None."""
-    cs = cyscan()
-    if not cs:
-        return None
-    a, b = cs["window_from_deg"], cs["window_to_deg"]   # usable arc a -> b (cw)
-    blind = (a - b) % 360.0                              # e.g. 55 - 312 -> 103
-    center = (b + blind / 2.0) % 360.0
-    return center, blind

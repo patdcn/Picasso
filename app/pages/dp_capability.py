@@ -74,9 +74,16 @@ def _controls():
             html.Div([html.Label("Bus 3", style=_LBL), _num_input("dpc-aux3", 0, 0)], style={"flex": 1}),
         ], style={"display": "flex", "gap": "10px", "marginBottom": "8px"}),
         dcc.Checklist(id="dpc-overlays",
-                      options=[{"label": " Intact envelope (All Thrusters Active)", "value": "intact"},
-                               {"label": " CyScan blind sector (55°–312° rel. window)", "value": "cyscan"}],
-                      value=["intact"], style={"fontSize": "13px"}),
+                      options=[{"label": " Intact envelope (All Thrusters Active)", "value": "intact"}],
+                      value=["intact"], style={"fontSize": "13px", "marginBottom": "8px"}),
+        html.Label("Plot frame", style=_LBL),
+        dcc.RadioItems(
+            id="dpc-frame",
+            options=[{"label": " Vessel-relative (bow up, as per study)", "value": "rel"},
+                     {"label": " True bearings (North up, envelope rotated to heading)",
+                      "value": "true"}],
+            value="rel", labelStyle={"display": "block", "margin": "2px 0"},
+            style={"fontSize": "13px"}),
     ], style=_CARD)
 
 
@@ -177,8 +184,9 @@ def _placeholder_fig(msg):
           Input("dpc-wind", "value"), Input("dpc-current", "value"),
           Input("dpc-hs", "value"),
           Input("dpc-aux1", "value"), Input("dpc-aux2", "value"), Input("dpc-aux3", "value"),
-          Input("dpc-overlays", "value"))
-def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3, overlays):
+          Input("dpc-overlays", "value"), Input("dpc-frame", "value"))
+def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
+            overlays, frame):
     if not dp.available():
         return (_placeholder_fig("Capability data not readable from the data volume "
                                  "(tools/dp/dp_capability.json)."), None, None, None)
@@ -194,7 +202,7 @@ def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3, o
     res = dp.assess(mode, case, heading, wind, winddir, current, hs)
     inc = res["incidence_deg"]
 
-    fig = _polar_figure(mode, case, inc, wind, overlays)
+    fig = _polar_figure(mode, case, inc, wind, heading, winddir, frame, overlays)
     status = _status_card(mode, case, res)
     basis = _basis_card(mode, case, res)
     aux = {"bus1": aux1 or 0, "bus2": aux2 or 0, "bus3": aux3 or 0}
@@ -202,38 +210,52 @@ def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3, o
     return fig, status, basis, power
 
 
-def _polar_figure(mode, case, inc, wind, overlays):
+def _polar_figure(mode, case, inc, wind, heading, winddir, frame, overlays):
+    """Polar capability plot in one of two frames.
+
+    'rel'  — vessel-relative, bow at top (Thrustmaster App. D convention).
+             Envelope drawn as tabulated; environment vector at the incidence.
+    'true' — North up. Everything vessel-fixed (envelopes, bow marker) rotates
+             by +heading; the environment vector is earth-fixed at its true
+             bearing. Identical geometry, different reference frame — the
+             assessment itself is frame-independent.
+    """
+    north_up = (frame == "true")
+    off = heading % 360.0 if north_up else 0.0     # rotation of vessel-fixed items
+    env_theta = winddir % 360.0 if north_up else inc
+
     fig = go.Figure()
     rmax = 0.0
-    if "cyscan" in overlays:
-        sect = dp.cyscan_blind_sector()
-        if sect:
-            center, width = sect
-            fig.add_trace(go.Barpolar(
-                r=[100], theta=[center], width=[width], base=0,
-                marker_color="rgba(148,163,184,0.25)", marker_line_width=0,
-                hovertemplate="CyScan blind sector<extra></extra>", showlegend=True,
-                name="CyScan blind sector"))
+    hover_ang = "brg" if north_up else "rel"
     if "intact" in overlays and case != "All Thrusters Active":
         a, v = dp.envelope(mode, "All Thrusters Active")
         rmax = max(rmax, max(v))
         fig.add_trace(go.Scatterpolar(
-            r=v, theta=a, mode="lines", name="All Thrusters Active",
+            r=v, theta=[x + off for x in a], mode="lines", name="All Thrusters Active",
             line=dict(color="#94a3b8", width=1.5, dash="dash"),
-            hovertemplate="%{theta}°: %{r:.1f} m/s<extra>Intact</extra>"))
+            hovertemplate="%{theta}° " + hover_ang + ": %{r:.1f} m/s<extra>Intact</extra>"))
     a, v = dp.envelope(mode, case)
     rmax = max(rmax, max(v))
     fig.add_trace(go.Scatterpolar(
-        r=v, theta=a, mode="lines", name=case, fill="toself",
+        r=v, theta=[x + off for x in a], mode="lines", name=case, fill="toself",
         fillcolor="rgba(15,118,110,0.10)", line=dict(color=ACCENT, width=2.5),
-        hovertemplate="%{theta}°: %{r:.1f} m/s<extra>" + case + "</extra>"))
-    # environment vector: from centre to the actual wind speed at the incidence
-    fig.add_trace(go.Scatterpolar(
-        r=[0, wind], theta=[inc, inc], mode="lines+markers", name="Environment",
-        line=dict(color="#dc2626", width=3),
-        marker=dict(size=[0, 11], symbol="circle", color="#dc2626"),
-        hovertemplate=f"{wind:.1f} m/s @ {inc:.0f}°<extra>Environment</extra>"))
+        hovertemplate="%{theta}° " + hover_ang + ": %{r:.1f} m/s<extra>" + case + "</extra>"))
     rmax = max(rmax, wind) * 1.06
+    if north_up:
+        # bow indicator: vessel-fixed reference so the rotated petal is readable
+        fig.add_trace(go.Scatterpolar(
+            r=[0, rmax * 0.985], theta=[off, off], mode="lines",
+            name=f"Bow ({heading % 360:.0f}°T)",
+            line=dict(color=INK, width=1.2, dash="dot"),
+            hovertemplate=f"Vessel heading {heading % 360:.0f}°T<extra>Bow</extra>"))
+    # environment vector: from centre to the actual wind speed
+    fig.add_trace(go.Scatterpolar(
+        r=[0, wind], theta=[env_theta, env_theta], mode="lines+markers",
+        name="Environment", line=dict(color="#dc2626", width=3),
+        marker=dict(size=[0, 11], symbol="circle", color="#dc2626"),
+        hovertemplate=(f"{wind:.1f} m/s @ "
+                       + (f"{winddir % 360:.0f}°T" if north_up else f"{inc:.0f}° rel")
+                       + "<extra>Environment</extra>")))
     fig.update_layout(
         polar=dict(
             angularaxis=dict(rotation=90, direction="clockwise", dtick=30,
@@ -244,6 +266,11 @@ def _polar_figure(mode, case, inc, wind, overlays):
         legend=dict(orientation="h", yanchor="bottom", y=-0.14, x=0, font=dict(size=11)),
         margin=dict(l=40, r=40, t=25, b=40), height=520,
         paper_bgcolor="rgba(0,0,0,0)", font=dict(color=INK))
+    fig.add_annotation(
+        text=("Angles are true bearings (000° = North)" if north_up
+              else "Angles are relative to the bow (000° = ahead)"),
+        showarrow=False, xref="paper", yref="paper", x=1.0, y=1.04,
+        xanchor="right", font=dict(size=11, color=MUTED))
     return fig
 
 
