@@ -53,9 +53,14 @@ KNOWN = {
     "dpom_addendum_2026": (
         "GM-PRJ123124-RP003_DPOM_Addendum.pdf",
         "DP Operations Manual addendum (GM-PRJ123124-RP003, 2026)"),
+    "load_balance": (
+        "2245-880-201_El_Load_Balance_Main_AC.pdf",
+        "Hareid Group — El. Load Balance Calc. Main AC Sys. 690V/450V/230V "
+        "(2245-880-201 Rev 6, 2015)"),
     "single_line": (
-        "Picasso_690V_440V_Single_Line.pdf",
-        "690 V / 440 V electrical distribution single-line diagram"),
+        "2245-881-001_Main_Single_Line_AC.pdf",
+        "Hareid Group — Main Single Line diagram AC Sys. 690V/450V/230V "
+        "(2245-881-001)"),
 }
 
 # which study document backs each DP operating mode
@@ -101,6 +106,8 @@ _PATTERNS = {
     "fmea_addendum_2026": r"GM-PRJ123124-RP-?002\b",
     "dpom_addendum_2026": r"(GM-PRJ123124-)?RP-?003\b",
     "fmea_addendum_prs": r"GM-PRJ121125-RP-?001",
+    "load_balance": r"2245-880-201",
+    "single_line": r"2245-881-001",
 }
 
 
