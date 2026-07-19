@@ -21,7 +21,7 @@ from dash import html, dcc, Input, Output, State, callback, ALL, ctx, no_update
 from app.engines import dp_capability as dp
 from app.engines import dp_env_rescale as rs
 from app import dp_consumers as dcon
-from app import dp_fuel, units, wind_sea
+from app import dp_fuel, units, wind_sea, reports
 
 dash.register_page(__name__, path="/fuel", name="Fuel consumption",
                    category="Fuel Consumption", order=1)
@@ -73,6 +73,17 @@ def layout():
     mode_opts = ([{"label": f' {m["label"]}', "value": k}
                   for k, m in dp.modes().items()] if dp_ok else [])
     return html.Div([
+        reports.print_header(),
+        html.Div([
+            html.Button([html.Span("\u2913\u2002"), "Print fuel sheet"],
+                        id="fp-print-btn", n_clicks=0,
+                        style={"border": f"1px solid {GRID}", "background": "#fff",
+                               "borderRadius": "8px", "padding": "7px 14px",
+                               "cursor": "pointer", "fontSize": "13px"}),
+            html.Div(id="fp-print-sink", style={"display": "none"}),
+        ], className="no-print", style={"display": "flex",
+                                        "justifyContent": "flex-end",
+                                        "marginBottom": "6px"}),
         html.H2("Fuel consumption", style={"color": INK, "marginBottom": "2px"}),
         html.Div("Expected DG fuel from the electrical load via the SFOC curve "
                  "(Admin \u2192 Fuel consumption). Intact condition — an "
@@ -160,7 +171,7 @@ def layout():
                     html.Div([
                         html.Div([
                             html.Div([html.Label("Speed [kn]", style=_LBL),
-                                      _num("fp-tr-speed", 8.0, 0, 14, 0.5)],
+                                      _num("fp-tr-speed", 10.0, 0, 14, 0.5)],
                                      style={"flex": 1}),
                             html.Div([html.Label("Engines online", style=_LBL),
                                       dcc.Dropdown(id="fp-tr-ndg",
@@ -187,8 +198,14 @@ def layout():
                                  "transit actuals at ≈ 8 kn.",
                                  style={"fontSize": "11px", "color": MUTED}),
                     ], id="fp-transit-section", style={"display": "none"}),
+                    html.Label("Project / voyage reference (appears on the "
+                               "printed sheet)", style=_LBL),
+                    dcc.Input(id="fp-ref", type="text", debounce=True,
+                              placeholder="e.g. tender ref, voyage, client",
+                              style={"width": "100%", "boxSizing": "border-box",
+                                     "marginBottom": "2px"}),
                 ], style=_CARD),
-                html.Div(id="fp-result"),
+                html.Div(id="fp-result", className="no-print"),
             ], style={"flex": "0 0 440px"}),
             html.Div([
                 html.Div([
@@ -229,6 +246,8 @@ def layout():
                 ], style=_CARD),
             ], style={"flex": 1, "minWidth": "380px"}),
         ], style={"display": "flex", "gap": "14px", "flexWrap": "wrap"}),
+        html.Div(id="fp-print-summary", className="print-only"),
+        reports.print_footer(),
     ], style={"maxWidth": "1100px"})
 
 
@@ -298,7 +317,36 @@ def _result_card(fuel, context_lines):
     ], style=_CARD)
 
 
+def _print_sheet(ref, basis_label, card):
+    """Print-only fuel sheet: reference + basis + a fresh copy of the result
+    card content, wrapped for the portal print header/footer."""
+    return html.Div([
+        html.H3("Fuel consumption estimate", style={"marginBottom": "2px"}),
+        html.Div(f"Reference: {ref or '\u2014'}",
+                 style={"fontSize": "12.5px", "marginBottom": "2px"}),
+        html.Div(f"Basis: {basis_label}",
+                 style={"fontSize": "12.5px", "color": MUTED,
+                        "marginBottom": "8px"}),
+        card,
+        html.Div("SFOC per portal parameters (MAN L27/38 project guide, "
+                 "electrical basis, excl. +5% tolerance); validated against "
+                 "Jul\u2013Oct 2025 fuel monitoring. Estimate for planning "
+                 "purposes.",
+                 style={"fontSize": "11px", "color": MUTED, "marginTop": "8px",
+                        "maxWidth": "760px"}),
+    ])
+
+
+dash.clientside_callback(
+    "function(n){ if(n){ setTimeout(function(){ window.print(); }, 60); } "
+    "return window.dash_clientside.no_update; }",
+    Output("fp-print-sink", "children"), Input("fp-print-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
 @callback(Output("fp-result", "children"),
+          Output("fp-print-summary", "children"),
           Input("fp-basis", "value"), Input("fp-mode", "value"),
           Input("fp-heading", "value"), Input("fp-winddir", "value"),
           Input("fp-wind", "value"), Input("fp-current", "value"),
@@ -306,9 +354,11 @@ def _result_card(fuel, context_lines):
           Input("fp-consumers", "value"),
           Input("fp-total", "value"), Input("fp-ndg", "value"),
           Input("fp-tr-speed", "value"), Input("fp-tr-ndg", "value"),
-          Input("fp-tr-margin", "value"), Input("fp-tr-dist", "value"))
+          Input("fp-tr-margin", "value"), Input("fp-tr-dist", "value"),
+          Input("fp-ref", "value"))
 def _update(basis, mode, heading, winddir, wind, current, hs, wu, cu,
-            consumers, total_kw, ndg, tr_speed, tr_ndg, tr_margin, tr_dist):
+            consumers, total_kw, ndg, tr_speed, tr_ndg, tr_margin, tr_dist,
+            ref):
     if basis == "transit":
         est = dp_fuel.transit_estimate(tr_speed, int(tr_ndg or 2),
                                        tr_margin, tr_dist)
@@ -343,20 +393,40 @@ def _update(basis, mode, heading, winddir, wind, current, hs, wu, cu,
                                  html.Td(f'{e["transit"]["m3_per_100nm"]:.1f}',
                                          style={"padding": "1px 8px",
                                                 "fontSize": "12px"})]))
-        extra.append(html.Div([
+        def build():
+            c = _result_card(est, ctx_lines)
+            # extras rebuilt fresh for each copy (components are single-use)
+            ex = []
+            if tr.get("m3_per_100nm"):
+                ex.append(html.Div(
+                    f'Economy: \u2248 {tr["m3_per_100nm"]:.1f} m\u00b3 per 100 nm',
+                    style={"fontSize": "13px", "marginTop": "4px"}))
+            if tr.get("voyage_m3") is not None:
+                ex.append(html.Div(
+                    f'Voyage {tr["distance_nm"]:,.0f} nm: {tr["hours"]:.1f} h '
+                    f'\u2192 {tr["voyage_m3"]:.1f} m\u00b3 ({tr["voyage_t"]:.1f} t)',
+                    style={"fontWeight": 700, "fontSize": "14px",
+                           "marginTop": "2px"}))
+            c.children.extend(ex)
+            return c
+        card = build()
+        card.children.append(html.Div([
             html.Div("Speed sweep (same engines & margin):",
                      style={"fontSize": "11px", "color": MUTED,
                             "margin": "8px 0 2px"}),
             html.Table(rows)]))
-        card = _result_card(est, ctx_lines)
-        card.children.extend(extra)
-        return card
+        lab = (f'Transit \u2014 {tr["speed_kn"]:.1f} kn, {int(tr_ndg or 2)} DG, '
+               f'{tr["sea_margin_pct"]:.0f}% sea margin'
+               + (f', {tr["distance_nm"]:,.0f} nm' if tr.get("distance_nm") else ""))
+        return card, _print_sheet(ref, lab, build())
     if basis == "manual" or not (rs.available() and dp.available()):
         fuel = dp_fuel.estimate_uniform(float(total_kw or 0.0), int(ndg or 1))
-        return _result_card(fuel, [
-            f"Manual basis: {float(total_kw or 0):,.0f} kW over {int(ndg or 1)} DG."])
+        ctx = [f"Manual basis: {float(total_kw or 0):,.0f} kW over {int(ndg or 1)} DG."]
+        lab = f"Manual load \u2014 {float(total_kw or 0):,.0f} kW / {int(ndg or 1)} DG"
+        return (_result_card(fuel, ctx),
+                _print_sheet(ref, lab, _result_card(fuel, ctx)))
     if not mode:
-        return None
+        return None, None
     wind_ms = units.to_ms(float(wind or 0.0), wu or "ms")
     cur_ms = max(units.to_ms(float(current or 0.0), cu or "ms"), 0.0)
     hs_m = max(float(hs or 0.0), 0.0)
@@ -369,7 +439,11 @@ def _update(basis, mode, heading, winddir, wind, current, hs, wu, cu,
     panel = rs.power_panel_est(mode, thr, loads)
     fuel = dp_fuel.estimate(panel)
     fuel["warnings"] = list(fuel["warnings"]) + warns
-    return _result_card(fuel, [
+    ctx = [
         f"Intact condition at wind {wind_ms:.1f} m/s / current {cur_ms:.2f} m/s / "
         f"Hs {hs_m:.1f} m, incidence {inc:.0f}\u00b0 "
-        f"(thrust utilisation s = {s*100:.0f}%); consumers {tot:,.0f} kW."])
+        f"(thrust utilisation s = {s*100:.0f}%); consumers {tot:,.0f} kW."]
+    lab = (f"DP estimate (intact) \u2014 wind {wind_ms:.1f} m/s, current "
+           f"{cur_ms:.2f} m/s, Hs {hs_m:.1f} m, consumers {tot:,.0f} kW")
+    return (_result_card(fuel, ctx),
+            _print_sheet(ref, lab, _result_card(fuel, ctx)))
