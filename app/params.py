@@ -62,14 +62,17 @@ REGISTRY = [
     # These are the model constants behind the SAT minimum-gas calculator; the
     # per-job figures (depths, deco time, divers) are entered on the page. All
     # are locked for accounts without the /diving/sat-gas edit-parameters grant.
-    # DP fuel — DG specific fuel oil consumption anchors for the DP Environment
-    # Planner's fuel estimate. Seeded with TYPICAL medium-speed diesel values;
-    # replace with the engine-specific shop-test / FAT SFOC curve.
-    ("dg_sfoc_25",       "DG SFOC @ 25% load",   "g/kWh", "DP fuel", 215.0, 1,    ("/dp/env-planner",)),
-    ("dg_sfoc_50",       "DG SFOC @ 50% load",   "g/kWh", "DP fuel", 200.0, 1,    ("/dp/env-planner",)),
-    ("dg_sfoc_75",       "DG SFOC @ 75% load",   "g/kWh", "DP fuel", 193.0, 1,    ("/dp/env-planner",)),
-    ("dg_sfoc_85",       "DG SFOC @ 85% load",   "g/kWh", "DP fuel", 191.0, 1,    ("/dp/env-planner",)),
-    ("dg_sfoc_100",      "DG SFOC @ 100% load",  "g/kWh", "DP fuel", 195.0, 1,    ("/dp/env-planner",)),
+    # DP fuel — DG SFOC anchors, ELECTRICAL basis (g per kWe·h). Values from the
+    # MAN L27/38 project guide Tier II sheet 1689470-5.4, 330 kW/cyl @ 720 rpm
+    # (9L27/38 = 2970 kW engine × 0.96 alternator = 2851 kWe = the DG rating),
+    # engine g/kWh divided by 0.96. ISO reference, LCV 42.7 MJ/kg, WITHOUT the
+    # +5% guarantee tolerance and without attached pumps (electric pumps sit in
+    # the hotel consumer). Refine with shop-test/FAT records when available.
+    ("dg_sfoc_25",       "DG SFOC @ 25% load",   "g/kWh", "DP fuel", 216.0, 1,    ("/dp/env-planner",)),
+    ("dg_sfoc_50",       "DG SFOC @ 50% load",   "g/kWh", "DP fuel", 191.0, 1,    ("/dp/env-planner",)),
+    ("dg_sfoc_75",       "DG SFOC @ 75% load",   "g/kWh", "DP fuel", 190.0, 1,    ("/dp/env-planner",)),
+    ("dg_sfoc_85",       "DG SFOC @ 85% load",   "g/kWh", "DP fuel", 189.0, 1,    ("/dp/env-planner",)),
+    ("dg_sfoc_100",      "DG SFOC @ 100% load",  "g/kWh", "DP fuel", 192.0, 1,    ("/dp/env-planner",)),
     ("dg_fuel_density",  "Fuel density (MGO)",   "kg/l",  "DP fuel", 0.85,  0.005,("/dp/env-planner",)),
     ("sat_dive_rmv",          "Bell breathing rate (per diver)",   "L/min",       "Saturation gas", 40.0,  1,    ("/diving/sat-gas",)),
     ("sat_dive_run_min",      "Bell-run duration (reserve)",       "min",         "Saturation gas", 480.0, 15,   ("/diving/sat-gas",)),

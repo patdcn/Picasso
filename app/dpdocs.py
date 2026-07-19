@@ -53,6 +53,10 @@ KNOWN = {
     "dpom_addendum_2026": (
         "GM-PRJ123124-RP003_DPOM_Addendum.pdf",
         "DP Operations Manual addendum (GM-PRJ123124-RP003, 2026)"),
+    "engine_pg": (
+        "MAN_L2738_GenSet_Project_Guide.pdf",
+        "MAN Diesel & Turbo — L27/38 GenSet Project Guide (SFOC sheet "
+        "1689470-5.4; DG engines 9L27/38, 330 kW/cyl @ 720 rpm)"),
     "load_balance": (
         "2245-880-201_El_Load_Balance_Main_AC.pdf",
         "Hareid Group — El. Load Balance Calc. Main AC Sys. 690V/450V/230V "
@@ -107,6 +111,7 @@ _PATTERNS = {
     "dpom_addendum_2026": r"(GM-PRJ123124-)?RP-?003\b",
     "fmea_addendum_prs": r"GM-PRJ121125-RP-?001",
     "load_balance": r"2245-880-201",
+    "engine_pg": r"L27/38",
     "single_line": r"2245-881-001",
 }
 
