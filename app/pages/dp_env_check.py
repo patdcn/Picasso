@@ -196,7 +196,7 @@ def layout():
 
 
 
-_WS_WINDS = (5, 10, 15, 20, 25)          # m/s rows
+_WS_WINDS = (4, 6, 8, 10, 12, 15, 20, 25)   # m/s rows — fine steps over workable winds
 _WS_FETCH = (20, 50, 100, 200, 400)      # km columns
 
 
