@@ -74,6 +74,12 @@ REGISTRY = [
     ("dg_sfoc_85",       "DG SFOC @ 85% load",   "g/kWh", "DP fuel", 189.0, 1,    ("/dp/env-planner",)),
     ("dg_sfoc_100",      "DG SFOC @ 100% load",  "g/kWh", "DP fuel", 192.0, 1,    ("/dp/env-planner",)),
     ("dg_fuel_density",  "Fuel density (MGO)",   "kg/l",  "DP fuel", 0.85,  0.005,("/dp/env-planner",)),
+    # Transit fuel — propulsion service point per El. Load Balance 2245-880-201
+    # transit column (2 x 2,163 kW main propellers at 0.6 LF); cube-law scaling
+    # to other speeds. Validated against Oct 2025 fuel monitoring transit days.
+    ("transit_service_speed_kn", "Transit service speed",           "kn", "Transit fuel", 12.0,   0.5, ("/fuel",)),
+    ("transit_prop_kw_service",  "Propulsion power @ service speed","kW", "Transit fuel", 4326.0, 10,  ("/fuel",)),
+    ("transit_aux_kw",           "Auxiliary load in transit",       "kW", "Transit fuel", 780.0,  10,  ("/fuel",)),
     ("sat_dive_rmv",          "Bell breathing rate (per diver)",   "L/min",       "Saturation gas", 40.0,  1,    ("/diving/sat-gas",)),
     ("sat_dive_run_min",      "Bell-run duration (reserve)",       "min",         "Saturation gas", 480.0, 15,   ("/diving/sat-gas",)),
     ("sat_dive_runs",         "Bell runs held in reserve",         "runs",        "Saturation gas", 2.0,   1,    ("/diving/sat-gas",)),

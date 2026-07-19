@@ -87,7 +87,9 @@ def layout():
                         options=[{"label": " DP estimate (intact) — environment + consumers",
                                   "value": "dp", "disabled": not dp_ok},
                                  {"label": " Manual load — total kW + engines online",
-                                  "value": "manual"}],
+                                  "value": "manual"},
+                                 {"label": " Transit — speed, distance & engines online",
+                                  "value": "transit"}],
                         value="dp" if dp_ok else "manual",
                         labelStyle={"display": "block", "margin": "2px 0"},
                         style={"fontSize": "14px", "marginBottom": "10px"}),
@@ -154,6 +156,37 @@ def layout():
                                  "harbour / closed-bus configurations.",
                                  style={"fontSize": "11px", "color": MUTED}),
                     ], id="fp-manual-section", style={"display": "none"}),
+                    # ---------------- transit inputs ----------------
+                    html.Div([
+                        html.Div([
+                            html.Div([html.Label("Speed [kn]", style=_LBL),
+                                      _num("fp-tr-speed", 8.0, 0, 14, 0.5)],
+                                     style={"flex": 1}),
+                            html.Div([html.Label("Engines online", style=_LBL),
+                                      dcc.Dropdown(id="fp-tr-ndg",
+                                                   options=[{"label": f"{n} DG", "value": n}
+                                                            for n in (2, 3, 4, 5)],
+                                                   value=2, clearable=False,
+                                                   style={"fontSize": "14px"})],
+                                     style={"flex": 1}),
+                        ], style={"display": "flex", "gap": "10px", "marginBottom": "8px"}),
+                        html.Div([
+                            html.Div([html.Label("Sea margin [%]", style=_LBL),
+                                      _num("fp-tr-margin", 15, 0, 50, 5)],
+                                     style={"flex": 1}),
+                            html.Div([html.Label("Distance [nm] (optional)", style=_LBL),
+                                      _num("fp-tr-dist", None, 0)],
+                                     style={"flex": 1}),
+                        ], style={"display": "flex", "gap": "10px", "marginBottom": "8px"}),
+                        html.Div("Propulsion scales with speed cubed from the "
+                                 "service point in Admin → Fuel consumption "
+                                 "(load-balance transit column), plus the "
+                                 "transit auxiliary load. Sea margin covers "
+                                 "wind/waves/fouling on the propulsion share; "
+                                 "0% reproduces the calm-water Oct 2025 "
+                                 "transit actuals at ≈ 8 kn.",
+                                 style={"fontSize": "11px", "color": MUTED}),
+                    ], id="fp-transit-section", style={"display": "none"}),
                 ], style=_CARD),
                 html.Div(id="fp-result"),
             ], style={"flex": "0 0 440px"}),
@@ -179,11 +212,18 @@ def layout():
                              "scaled by the propeller law at the entered "
                              "environment, plus the selected consumers, per the "
                              "as-built bus feeding (2245-880-201). DP electrical "
-                             "load only — no boilers, no transit propulsion. "
+                             "load only — no boilers. Transit basis: propulsion "
+                             "\u221d speed\u00b3 from the load-balance service "
+                             "point (2\u00d72,163 kW @ service speed, Admin \u2192 "
+                             "Fuel consumption), plus transit auxiliaries and a "
+                             "sea-margin factor on the propulsion share. "
                              "Validated against Jul\u2013Oct 2025 fuel "
                              "monitoring: on-DP median 15.8 m\u00b3/day "
                              "reproduced at representative weather with "
-                             "hotel + SAT running.",
+                             "hotel + SAT running; transit days (11.4\u201312.0 "
+                             "m\u00b3/day) reproduced at \u2248 8 kn calm water; "
+                             "port days (\u2248 5 m\u00b3/day) match the "
+                             "auxiliary-only base.",
                              style={"fontSize": "12px", "color": MUTED,
                                     "marginTop": "4px"}),
                 ], style=_CARD),
@@ -193,13 +233,13 @@ def layout():
 
 
 @callback(Output("fp-dp-section", "style"), Output("fp-manual-section", "style"),
-          Output("fp-ws-card", "style"),
+          Output("fp-transit-section", "style"), Output("fp-ws-card", "style"),
           Input("fp-basis", "value"))
 def _toggle(basis):
-    dp_style = {} if basis == "dp" else {"display": "none"}
-    man_style = {"display": "none"} if basis == "dp" else {}
+    show = lambda on: ({} if on else {"display": "none"})
     ws_style = {**_CARD} if basis == "dp" else {**_CARD, "display": "none"}
-    return dp_style, man_style, ws_style
+    return (show(basis == "dp"), show(basis == "manual"),
+            show(basis == "transit"), ws_style)
 
 
 @callback(Output({"type": "fp-ws-cell", "w": ALL, "x": ALL}, "style"),
@@ -264,9 +304,53 @@ def _result_card(fuel, context_lines):
           Input("fp-wind", "value"), Input("fp-current", "value"),
           Input("fp-hs", "value"), Input("fp-wu", "value"), Input("fp-cu", "value"),
           Input("fp-consumers", "value"),
-          Input("fp-total", "value"), Input("fp-ndg", "value"))
+          Input("fp-total", "value"), Input("fp-ndg", "value"),
+          Input("fp-tr-speed", "value"), Input("fp-tr-ndg", "value"),
+          Input("fp-tr-margin", "value"), Input("fp-tr-dist", "value"))
 def _update(basis, mode, heading, winddir, wind, current, hs, wu, cu,
-            consumers, total_kw, ndg):
+            consumers, total_kw, ndg, tr_speed, tr_ndg, tr_margin, tr_dist):
+    if basis == "transit":
+        est = dp_fuel.transit_estimate(tr_speed, int(tr_ndg or 2),
+                                       tr_margin, tr_dist)
+        tr = est["transit"]
+        ctx_lines = [
+            f'Transit at {tr["speed_kn"]:.1f} kn: propulsion '
+            f'{tr["prop_kw"]:,.0f} kW (cube law incl. {tr["sea_margin_pct"]:.0f}% '
+            f'sea margin) + auxiliaries {tr["aux_kw"]:,.0f} kW = '
+            f'{tr["total_kw"]:,.0f} kW over {int(tr_ndg or 2)} DG.']
+        extra = []
+        if tr.get("m3_per_100nm"):
+            extra.append(html.Div(
+                f'Economy: ≈ {tr["m3_per_100nm"]:.1f} m³ per 100 nm',
+                style={"fontSize": "13px", "marginTop": "4px"}))
+        if tr.get("voyage_m3") is not None:
+            extra.append(html.Div(
+                f'Voyage {tr["distance_nm"]:,.0f} nm: {tr["hours"]:.1f} h '
+                f'→ {tr["voyage_m3"]:.1f} m³ ({tr["voyage_t"]:.1f} t)',
+                style={"fontWeight": 700, "fontSize": "14px", "marginTop": "2px"}))
+        # eco-speed sweep
+        hdr = html.Tr([html.Th(t, style={"fontSize": "11px", "color": MUTED,
+                                         "padding": "2px 8px"})
+                       for t in ("kn", "m³/day", "m³/100 nm")])
+        rows = [hdr]
+        for v in (6, 7, 8, 9, 10, 11, 12):
+            e = dp_fuel.transit_estimate(v, int(tr_ndg or 2), tr_margin)
+            rows.append(html.Tr([html.Td(f"{v}", style={"padding": "1px 8px",
+                                                        "fontSize": "12px"}),
+                                 html.Td(f'{e["m3_day"]:.1f}',
+                                         style={"padding": "1px 8px",
+                                                "fontSize": "12px"}),
+                                 html.Td(f'{e["transit"]["m3_per_100nm"]:.1f}',
+                                         style={"padding": "1px 8px",
+                                                "fontSize": "12px"})]))
+        extra.append(html.Div([
+            html.Div("Speed sweep (same engines & margin):",
+                     style={"fontSize": "11px", "color": MUTED,
+                            "margin": "8px 0 2px"}),
+            html.Table(rows)]))
+        card = _result_card(est, ctx_lines)
+        card.children.extend(extra)
+        return card
     if basis == "manual" or not (rs.available() and dp.available()):
         fuel = dp_fuel.estimate_uniform(float(total_kw or 0.0), int(ndg or 1))
         return _result_card(fuel, [

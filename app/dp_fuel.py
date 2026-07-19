@@ -94,3 +94,45 @@ def estimate_uniform(total_kw, n_dg, dg_kw=2851.0):
     return dict(buses=[dict(bus="plant", n_dg=n, per_dg_kw=per,
                             per_dg_frac=frac, sfoc=sfoc, kg_h=kg_h)],
                 total_kg_h=kg_h, t_day=t_day, m3_day=m3_day, warnings=warnings)
+
+
+MP_TOTAL_KW = 7000.0     # 2 x 3,500 kW main propellers — cube-law cap
+
+
+def transit_estimate(speed_kn, n_dg, sea_margin_pct=15.0, distance_nm=None):
+    """Transit fuel from a cube-law propulsion model anchored at the
+    admin-set service point (transit_prop_kw_service at
+    transit_service_speed_kn, per the electrical load balance transit
+    column), plus the transit auxiliary load, with a sea-margin factor on
+    the propulsion share. Same result shape as estimate_uniform(), plus a
+    'transit' dict with the propulsion breakdown, per-distance economy and
+    (when a distance is given) voyage totals.
+
+    Validated against the vessel's Oct 2025 fuel monitoring: the flagged
+    transit days (11.4-12.0 m3/day) are reproduced at ~8 kn with zero sea
+    margin, and port days (~5.0 m3/day) match the auxiliary-only base."""
+    v = max(float(speed_kn or 0.0), 0.0)
+    v_srv = float(params.get("transit_service_speed_kn"))
+    p_srv = float(params.get("transit_prop_kw_service"))
+    aux = float(params.get("transit_aux_kw"))
+    margin = max(float(sea_margin_pct or 0.0), 0.0) / 100.0
+    prop = p_srv * (v / v_srv) ** 3 if v_srv > 0 else 0.0
+    prop = min(prop * (1.0 + margin), MP_TOTAL_KW)
+    total = prop + aux
+    est = estimate_uniform(total, n_dg)
+    m3_day = est["m3_day"]
+    tr = dict(prop_kw=prop, aux_kw=aux, total_kw=total, speed_kn=v,
+              sea_margin_pct=margin * 100.0,
+              m3_per_100nm=(m3_day / 24.0) * (100.0 / v) if v > 0.1 else None)
+    if distance_nm and v > 0.1:
+        hours = float(distance_nm) / v
+        tr.update(distance_nm=float(distance_nm), hours=hours,
+                  voyage_m3=m3_day / 24.0 * hours,
+                  voyage_t=est["t_day"] / 24.0 * hours)
+    est["transit"] = tr
+    if prop >= MP_TOTAL_KW - 1e-6:
+        est["warnings"] = list(est["warnings"]) + [
+            "Propulsion demand capped at the installed 7,000 kW — the "
+            "requested speed exceeds what the cube-law model considers "
+            "attainable; result shown at full propulsion power."]
+    return est
