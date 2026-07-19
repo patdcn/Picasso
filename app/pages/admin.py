@@ -30,9 +30,8 @@ def layout():
                  "pending tool-access requests.",
                  "/admin/users", "Open users & access"),
 
-        hub_card("Cost & timing assumptions",
-                 "Shared day rates, mobilisation and other assumptions used by the "
-                 "diving-bell comparison tools.",
+        hub_card("Portal parameters",
+                 "All shared portal parameters, grouped by category: bell day rates & timing, dive planning, dive & saturation gas constants, and DP fuel (DG SFOC curve, fuel density).",
                  "/admin/params", "Open cost & timing assumptions"),
 
         hub_card("SAT systems",
