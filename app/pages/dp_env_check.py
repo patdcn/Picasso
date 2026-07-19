@@ -81,15 +81,6 @@ def _controls():
         ], style={"display": "flex", "gap": "10px", "marginBottom": "4px",
                   "alignItems": "flex-end"}),
         html.Div([
-            html.Span("Fetch [km] — open-water distance upwind (advisory "
-                      "only, per wind direction):",
-                      style={"fontSize": "12px", "color": MUTED,
-                             "marginRight": "8px"}),
-            dcc.Input(id="dpe-fetch", type="number", value=200, min=1, max=1000,
-                      step=10, debounce=True,
-                      style={"width": "90px", "fontSize": "13px"}),
-        ], style={"marginBottom": "6px"}),
-        html.Div([
             html.Span("Units:", style={"fontSize": "12px", "color": MUTED,
                                        "marginRight": "8px"}),
             html.Span("wind", style={"fontSize": "12px", "color": MUTED}),
@@ -243,6 +234,10 @@ def _windsea_panel():
                  "provided.",
                  style={"fontSize": "12px", "color": MUTED, "margin": "4px 0 8px"}),
         html.Table(rows, style={"width": "100%", "borderCollapse": "collapse"}),
+        dcc.Store(id="dpe-ws-sel", data=None),
+        html.Div(id="dpe-ws-note",
+                 style={"fontSize": "12px", "color": ACCENT, "fontWeight": 600,
+                        "marginTop": "6px"}),
         html.Div([
             html.Div("Hs = 0.0016 \u00b7 \u221a(g\u00b7X) \u00b7 U / g   "
                      "(fetch-limited), capped at the fully developed sea "
@@ -261,19 +256,61 @@ def _windsea_panel():
     ], style=_CARD)
 
 
-@callback(Output("dpe-wind", "value", allow_duplicate=True),
+_WS_CELL_BASE = {"width": "100%", "border": "1px solid " + GRID,
+                 "background": "#f8fafc", "borderRadius": "6px",
+                 "padding": "4px 2px", "cursor": "pointer", "fontSize": "12.5px"}
+_WS_CELL_SEL = {**_WS_CELL_BASE, "background": ACCENT, "color": "#ffffff",
+                "border": "1px solid " + ACCENT, "fontWeight": 700}
+
+
+def _ws_styles(sel):
+    return [(_WS_CELL_SEL if (sel and w == sel.get("w") and x == sel.get("x"))
+             else _WS_CELL_BASE)
+            for w in _WS_WINDS for x in _WS_FETCH]
+
+
+def _ws_note(sel):
+    if not sel:
+        return None
+    return (f"Environment from JONSWAP reference: wind {sel['w']} m/s, "
+            f"Hs {sel['hs']} m — calculated with {sel['x']} km fetch.")
+
+
+@callback(Output({"type": "dpe-ws-cell", "w": ALL, "x": ALL}, "style"),
+          Output("dpe-ws-sel", "data"),
+          Output("dpe-ws-note", "children"),
+          Output("dpe-wind", "value", allow_duplicate=True),
           Output("dpe-hs", "value"),
-          Output("dpe-fetch", "value"),
           Input({"type": "dpe-ws-cell", "w": ALL, "x": ALL}, "n_clicks"),
-          State("dpe-wu", "value"),
+          Input("dpe-wind", "value"), Input("dpe-hs", "value"),
+          State("dpe-ws-sel", "data"), State("dpe-wu", "value"),
           prevent_initial_call=True)
-def _windsea_pick(clicks, wu):
+def _ws_select(clicks, wind, hs, sel, wu):
+    """Cell click: adopt that (wind, Hs, fetch), highlight the cell, note it.
+    Manual edit of wind or Hs afterwards: clear highlight and note. The
+    programmatic write-back from a click re-enters here matching the
+    selection, so it does not self-clear; unit switches are compared in m/s
+    with rounding tolerance for the same reason."""
     trig = ctx.triggered_id
-    if not isinstance(trig, dict) or not any(clicks or []):
-        return no_update, no_update, no_update
-    w, x = trig["w"], trig["x"]
-    hs = round(wind_sea.hs_fetch_m(w, x), 1)
-    return round(units.from_ms(w, wu or "ms"), 2), hs, x
+    if isinstance(trig, dict) and trig.get("type") == "dpe-ws-cell":
+        if not any(clicks or []):
+            return _ws_styles(sel), no_update, _ws_note(sel), no_update, no_update
+        new = {"w": trig["w"], "x": trig["x"],
+               "hs": round(wind_sea.hs_fetch_m(trig["w"], trig["x"]), 1)}
+        return (_ws_styles(new), new, _ws_note(new),
+                round(units.from_ms(new["w"], wu or "ms"), 2), new["hs"])
+    # wind/hs edited: keep the selection only while values still match it
+    if sel:
+        try:
+            wind_ms = units.to_ms(float(wind), wu or "ms")
+            match = (abs(wind_ms - sel["w"]) < 0.05
+                     and abs(float(hs) - sel["hs"]) < 0.05)
+        except (TypeError, ValueError):
+            match = False
+        if not match:
+            return _ws_styles(None), None, None, no_update, no_update
+    return _ws_styles(sel), no_update, _ws_note(sel), no_update, no_update
+
 
 def _method_block():
     prov = html.Ul([html.Li(dpdocs.linkify(p), style={"marginBottom": "3px"})
@@ -341,7 +378,7 @@ def _case_display(case, res=None):
 
 
 def _print_summary(mode, case, res, wind, winddir, heading, current, hs, aux,
-                   ref, fetch_km=200):
+                   ref, ws_sel=None):
     """Study-style summary table for the printed workability sheet."""
     mm = dp.mode_meta(mode)
     b = res["basis"]
@@ -357,6 +394,13 @@ def _print_summary(mode, case, res, wind, winddir, heading, current, hs, aux,
         ("Current speed", f"{current:.2f} m/s (collinear)"),
         ("Significant wave height (Hs)", f"{hs:.1f} m"),
         ("Wave spectrum", f'JONSWAP, Tp {b["tp_s"]:.1f} s (study basis, not rescaled)'),
+    ]
+    if ws_sel:
+        rows.append(("Environment basis",
+                     f'JONSWAP fetch-limited wind sea \u2014 wind {ws_sel["w"]} m/s, '
+                     f'Hs {ws_sel["hs"]} m at {ws_sel["x"]} km fetch (reference '
+                     "table; no client metocean provided)"))
+    rows += [
         ("Min capability wind speed", f"{mn:.2f} m/s ({mn * rs.MS_TO_KN:.0f} kn)"),
         ("Min capability angle", f"{mn_ang}\u00b0 relative"),
         ("Assessed wind / direction",
@@ -371,8 +415,6 @@ def _print_summary(mode, case, res, wind, winddir, heading, current, hs, aux,
         ("Capability basis",
          f'{mm["study_title"]} \u2014 {mm["study_ref"]}; envelopes rescaled from the '
          f'study basis (current {b["current_ms"]:.2f} m/s, Hs {b["hs_m"]:.1f} m)'),
-        ("Wind-sea check fetch", f"{float(fetch_km or 200):.0f} km (JONSWAP "
-         "fetch-limited consistency advisory)"),
         ("Advisories", " ".join(res["warnings"]) if res["warnings"] else "none"),
         ("Reference", (ref or "\u2014")),
         ("Generated", datetime.date.today().isoformat() + " \u00b7 DSV Picasso Engineering Portal"),
@@ -440,9 +482,9 @@ def _placeholder_fig(msg):
           Input("dpe-overlays", "value"), Input("dpe-frame", "value"),
           Input("dpe-ref", "value"),
           Input("dpe-wu", "value"), Input("dpe-cu", "value"),
-          Input("dpe-fetch", "value"))
+          Input("dpe-ws-sel", "data"))
 def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
-            overlays, frame, ref, wu, cu, fetch_km):
+            overlays, frame, ref, wu, cu, ws_sel):
     if not (rs.available() and dp.available()):
         return (_placeholder_fig("Rescale/capability data not readable from the "
                                  "data volume."), None, None, None, None)
@@ -457,7 +499,8 @@ def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
     overlays = overlays or []
 
     res = rs.assess(mode, case, heading, wind, winddir, current, hs)
-    adv = wind_sea.advisory(wind, hs, fetch_km if fetch_km else 200)
+    fetch_km = (ws_sel or {}).get("x", 200)
+    adv = wind_sea.advisory(wind, hs, fetch_km)
     if adv:
         res["warnings"] = list(res["warnings"]) + [adv]
     inc = res["incidence_deg"]
@@ -469,7 +512,7 @@ def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
     aux = {"bus1": aux1 or 0, "bus2": aux2 or 0, "bus3": aux3 or 0}
     power = _power_block(mode, case, inc, wind, current, hs, aux)
     summary = _print_summary(mode, case, res, wind, winddir, heading,
-                             current, hs, aux, ref, fetch_km)
+                             current, hs, aux, ref, ws_sel)
     return fig, status, basis, power, summary
 
 
