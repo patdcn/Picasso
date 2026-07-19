@@ -25,6 +25,7 @@ from app import dp_consumers as dcon
 from app import reports
 from app import units
 from app import wind_sea
+from app import dp_fuel
 from app import dpdocs
 
 dash.register_page(__name__, path="/dp/env-planner", name="DP Environment Planner",
@@ -378,7 +379,7 @@ def _case_display(case, res=None):
 
 
 def _print_summary(mode, case, res, wind, winddir, heading, current, hs, aux,
-                   ref, ws_sel=None):
+                   ref, ws_sel=None, fuel=None):
     """Study-style summary table for the printed workability sheet."""
     mm = dp.mode_meta(mode)
     b = res["basis"]
@@ -415,6 +416,10 @@ def _print_summary(mode, case, res, wind, winddir, heading, current, hs, aux,
         ("Capability basis",
          f'{mm["study_title"]} \u2014 {mm["study_ref"]}; envelopes rescaled from the '
          f'study basis (current {b["current_ms"]:.2f} m/s, Hs {b["hs_m"]:.1f} m)'),
+        ("Estimated fuel consumption",
+         (f'{fuel["t_day"]:.1f} t/day ({fuel["m3_day"]:.1f} m\u00b3/day) — DP '
+          "electrical load at the assessed condition, SFOC per portal "
+          "parameters") if fuel else "\u2014"),
         ("Advisories", " ".join(res["warnings"]) if res["warnings"] else "none"),
         ("Reference", (ref or "\u2014")),
         ("Generated", datetime.date.today().isoformat() + " \u00b7 DSV Picasso Engineering Portal"),
@@ -510,9 +515,12 @@ def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
     status = _status_card(res, current, hs)
     basis = _basis_card(mode, res, current, hs)
     aux = {"bus1": aux1 or 0, "bus2": aux2 or 0, "bus3": aux3 or 0}
-    power = _power_block(mode, case, inc, wind, current, hs, aux)
+    thr_f, _s_f = rs.thruster_loads_est(mode, case, inc, wind, current, hs)
+    fuel = dp_fuel.estimate(rs.power_panel_est(mode, thr_f, aux))
+    power = html.Div([_power_block(mode, case, inc, wind, current, hs, aux),
+                      _fuel_block(fuel)])
     summary = _print_summary(mode, case, res, wind, winddir, heading,
-                             current, hs, aux, ref, ws_sel)
+                             current, hs, aux, ref, ws_sel, fuel)
     return fig, status, basis, power, summary
 
 
@@ -616,6 +624,33 @@ def _basis_card(mode, res, current, hs):
         ], style={"marginTop": "4px"}),
         html.Div(mm["wcfdi"], style={"marginTop": "4px", "color": MUTED}),
     ])
+
+
+def _fuel_block(fuel):
+    rows = [html.Div(
+        f'{b["bus"].upper()} — {b["n_dg"]}×DG @ {b["per_dg_frac"]*100:.0f}% '
+        f'({b["per_dg_kw"]:,.0f} kW/DG) → SFOC {b["sfoc"]:.0f} g/kWh → '
+        f'{b["kg_h"]:,.0f} kg/h',
+        style={"fontSize": "13px", "marginBottom": "3px"}) for b in fuel["buses"]]
+    totals = html.Div(
+        f'Total: {fuel["total_kg_h"]:,.0f} kg/h ≈ {fuel["t_day"]:.1f} t/day '
+        f'≈ {fuel["m3_day"]:.1f} m³/day',
+        style={"fontWeight": 700, "fontSize": "14px", "margin": "6px 0 4px"})
+    warns = [html.Div(w, style={"fontSize": "12px", "color": "#92400e"})
+             for w in fuel["warnings"]]
+    return html.Div([
+        html.B("Expected fuel consumption at your condition",
+               style={"fontSize": "14px"}),
+        html.Div("DG fuel from the estimated electrical load (thrusters at your "
+                 "environment + selected consumers), via the SFOC curve in "
+                 "Admin → Parameters → DP fuel — seeded with typical "
+                 "medium-speed values until the engine shop-test curve is "
+                 "entered. DP electrical load only: no boilers, no transit "
+                 "propulsion. At the capability limit consumption rises toward "
+                 "the full Appendix E loads.",
+                 style={"fontSize": "12px", "color": MUTED, "margin": "4px 0 8px"}),
+        *rows, totals, *warns,
+    ], style=_CARD)
 
 
 def _power_block(mode, case, inc, wind, current, hs, aux):

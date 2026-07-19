@@ -62,6 +62,15 @@ REGISTRY = [
     # These are the model constants behind the SAT minimum-gas calculator; the
     # per-job figures (depths, deco time, divers) are entered on the page. All
     # are locked for accounts without the /diving/sat-gas edit-parameters grant.
+    # DP fuel — DG specific fuel oil consumption anchors for the DP Environment
+    # Planner's fuel estimate. Seeded with TYPICAL medium-speed diesel values;
+    # replace with the engine-specific shop-test / FAT SFOC curve.
+    ("dg_sfoc_25",       "DG SFOC @ 25% load",   "g/kWh", "DP fuel", 215.0, 1,    ("/dp/env-planner",)),
+    ("dg_sfoc_50",       "DG SFOC @ 50% load",   "g/kWh", "DP fuel", 200.0, 1,    ("/dp/env-planner",)),
+    ("dg_sfoc_75",       "DG SFOC @ 75% load",   "g/kWh", "DP fuel", 193.0, 1,    ("/dp/env-planner",)),
+    ("dg_sfoc_85",       "DG SFOC @ 85% load",   "g/kWh", "DP fuel", 191.0, 1,    ("/dp/env-planner",)),
+    ("dg_sfoc_100",      "DG SFOC @ 100% load",  "g/kWh", "DP fuel", 195.0, 1,    ("/dp/env-planner",)),
+    ("dg_fuel_density",  "Fuel density (MGO)",   "kg/l",  "DP fuel", 0.85,  0.005,("/dp/env-planner",)),
     ("sat_dive_rmv",          "Bell breathing rate (per diver)",   "L/min",       "Saturation gas", 40.0,  1,    ("/diving/sat-gas",)),
     ("sat_dive_run_min",      "Bell-run duration (reserve)",       "min",         "Saturation gas", 480.0, 15,   ("/diving/sat-gas",)),
     ("sat_dive_runs",         "Bell runs held in reserve",         "runs",        "Saturation gas", 2.0,   1,    ("/diving/sat-gas",)),
