@@ -21,7 +21,7 @@ from dash import html, dcc, Input, Output, State, callback, ALL, ctx, no_update
 from app.engines import dp_capability as dp
 from app.engines import dp_env_rescale as rs
 from app import dp_consumers as dcon
-from app import dp_fuel, units, wind_sea, reports
+from app import dp_fuel, units, wind_sea, reports, params
 
 dash.register_page(__name__, path="/fuel", name="Fuel consumption",
                    category="Fuel Consumption", order=1)
@@ -100,7 +100,9 @@ def layout():
                                  {"label": " Manual load — total kW + engines online",
                                   "value": "manual"},
                                  {"label": " Transit — speed, distance & engines online",
-                                  "value": "transit"}],
+                                  "value": "transit"},
+                                 {"label": " Port / anchorage — auxiliary-only states",
+                                  "value": "harbour"}],
                         value="dp" if dp_ok else "manual",
                         labelStyle={"display": "block", "margin": "2px 0"},
                         style={"fontSize": "14px", "marginBottom": "10px"}),
@@ -198,6 +200,16 @@ def layout():
                                  "transit actuals at ≈ 8 kn.",
                                  style={"fontSize": "11px", "color": MUTED}),
                     ], id="fp-transit-section", style={"display": "none"}),
+                    html.Div([
+                        html.Div("Auxiliary-only states on one DG, from Admin "
+                                 "→ Fuel consumption → Port & "
+                                 "anchorage. The port value is calibrated to "
+                                 "the Jul–Oct 2025 monitoring (port days "
+                                 "mean ≈ 5.0 m³/day); the anchorage "
+                                 "value is a planning figure pending flagged "
+                                 "actuals.",
+                                 style={"fontSize": "11px", "color": MUTED}),
+                    ], id="fp-harbour-section", style={"display": "none"}),
                     html.Label("Project / voyage reference (appears on the "
                                "printed sheet)", style=_LBL),
                     dcc.Input(id="fp-ref", type="text", debounce=True,
@@ -252,13 +264,14 @@ def layout():
 
 
 @callback(Output("fp-dp-section", "style"), Output("fp-manual-section", "style"),
-          Output("fp-transit-section", "style"), Output("fp-ws-card", "style"),
+          Output("fp-transit-section", "style"),
+          Output("fp-harbour-section", "style"), Output("fp-ws-card", "style"),
           Input("fp-basis", "value"))
 def _toggle(basis):
     show = lambda on: ({} if on else {"display": "none"})
     ws_style = {**_CARD} if basis == "dp" else {**_CARD, "display": "none"}
     return (show(basis == "dp"), show(basis == "manual"),
-            show(basis == "transit"), ws_style)
+            show(basis == "transit"), show(basis == "harbour"), ws_style)
 
 
 @callback(Output({"type": "fp-ws-cell", "w": ALL, "x": ALL}, "style"),
@@ -317,21 +330,80 @@ def _result_card(fuel, context_lines):
     ], style=_CARD)
 
 
-def _print_sheet(ref, basis_label, card):
-    """Print-only fuel sheet: reference + basis + a fresh copy of the result
-    card content, wrapped for the portal print header/footer."""
+def _fmt_state(est):
+    return (f'{est["total_kg_h"]:,.0f}', f'{est["t_day"]:.1f}',
+            f'{est["m3_day"]:.1f}')
+
+
+def _tender_sheet(ref, dp_pack, tr_est, tr_label, port_est, anchor_est):
+    """Single print sheet for tenders: DP, transit, port and anchorage in one
+    table, computed from the current inputs regardless of the on-screen
+    basis."""
+    th = {"textAlign": "left", "padding": "3px 12px 3px 0",
+          "borderBottom": "1px solid #94a3b8", "fontSize": "12px"}
+    td = {"padding": "3px 12px 3px 0", "borderBottom": "1px solid #e2e8f0",
+          "fontSize": "12.5px", "verticalAlign": "top"}
+    tdr = {**td, "textAlign": "right"}
+    rows = [html.Tr([html.Th("Operating state", style=th),
+                     html.Th("Basis", style=th),
+                     html.Th("kg/h", style={**th, "textAlign": "right"}),
+                     html.Th("t/day", style={**th, "textAlign": "right"}),
+                     html.Th("m\u00b3/day", style={**th, "textAlign": "right"})])]
+
+    def row(state, basis_txt, est):
+        kg, t, m3 = _fmt_state(est)
+        rows.append(html.Tr([html.Td(html.B(state), style=td),
+                             html.Td(basis_txt, style={**td, "maxWidth": "330px"}),
+                             html.Td(kg, style=tdr), html.Td(t, style=tdr),
+                             html.Td(m3, style=tdr)]))
+
+    if dp_pack:
+        row("DP operations", dp_pack[1], dp_pack[0])
+    else:
+        rows.append(html.Tr([html.Td(html.B("DP operations"), style=td),
+                             html.Td("select mode & environment on the DP "
+                                     "basis to include", style=td),
+                             html.Td("\u2014", style=tdr),
+                             html.Td("\u2014", style=tdr),
+                             html.Td("\u2014", style=tdr)]))
+    row("Transit", tr_label, tr_est)
+    row("In port", f'{params.get("port_aux_kw"):,.0f} kW auxiliaries, 1 DG',
+        port_est)
+    row("At anchorage",
+        f'{params.get("anchor_aux_kw"):,.0f} kW auxiliaries, 1 DG', anchor_est)
+
+    extra = []
+    tr = tr_est.get("transit", {})
+    if tr.get("m3_per_100nm"):
+        extra.append(html.Div(
+            f'Transit economy: \u2248 {tr["m3_per_100nm"]:.1f} m\u00b3 per '
+            "100 nm.", style={"fontSize": "12px", "marginTop": "6px"}))
+    if tr.get("voyage_m3") is not None:
+        extra.append(html.Div(
+            f'Voyage {tr["distance_nm"]:,.0f} nm at {tr["speed_kn"]:.1f} kn: '
+            f'{tr["hours"]:.1f} h \u2192 {tr["voyage_m3"]:.1f} m\u00b3 '
+            f'({tr["voyage_t"]:.1f} t).',
+            style={"fontSize": "12px", "fontWeight": 700, "marginTop": "2px"}))
+    warns = []
+    for est in ([dp_pack[0]] if dp_pack else []) + [tr_est]:
+        warns += est.get("warnings", [])
     return html.Div([
-        html.H3("Fuel consumption estimate", style={"marginBottom": "2px"}),
+        html.H3("Fuel consumption \u2014 tender summary",
+                style={"marginBottom": "2px"}),
         html.Div(f"Reference: {ref or '\u2014'}",
-                 style={"fontSize": "12.5px", "marginBottom": "2px"}),
-        html.Div(f"Basis: {basis_label}",
-                 style={"fontSize": "12.5px", "color": MUTED,
-                        "marginBottom": "8px"}),
-        card,
-        html.Div("SFOC per portal parameters (MAN L27/38 project guide, "
-                 "electrical basis, excl. +5% tolerance); validated against "
-                 "Jul\u2013Oct 2025 fuel monitoring. Estimate for planning "
-                 "purposes.",
+                 style={"fontSize": "12.5px", "marginBottom": "8px"}),
+        html.Table(html.Tbody(rows), style={"borderCollapse": "collapse",
+                                            "width": "100%"}),
+        *extra,
+        *[html.Div(w, style={"fontSize": "11px", "color": "#92400e",
+                             "marginTop": "4px"}) for w in warns],
+        html.Div("Expected values: SFOC per portal parameters (MAN L27/38 "
+                 "project guide, electrical basis, excl. +5% guarantee "
+                 "tolerance); DP row is the intact condition. Validated "
+                 "against Jul\u2013Oct 2025 fuel monitoring (on-DP median "
+                 "15.8 m\u00b3/day, transit days 11.4\u201312.0 "
+                 "m\u00b3/day, port days \u2248 5.0 m\u00b3/day). Estimate "
+                 "for planning purposes.",
                  style={"fontSize": "11px", "color": MUTED, "marginTop": "8px",
                         "maxWidth": "760px"}),
     ])
@@ -359,91 +431,105 @@ dash.clientside_callback(
 def _update(basis, mode, heading, winddir, wind, current, hs, wu, cu,
             consumers, total_kw, ndg, tr_speed, tr_ndg, tr_margin, tr_dist,
             ref):
+    # ---- always compute every state for the tender sheet ----
+    dp_pack = None
+    dp_ctx = None
+    if mode and rs.available() and dp.available():
+        wind_ms = units.to_ms(float(wind or 0.0), wu or "ms")
+        cur_ms = max(units.to_ms(float(current or 0.0), cu or "ms"), 0.0)
+        hs_m = max(float(hs or 0.0), 0.0)
+        inc = (float(winddir or 0.0) - float(heading or 0.0)) % 360.0
+        fuel_case = ("All Thrusters Active"
+                     if "All Thrusters Active" in rs.cases(mode)
+                     else rs.cases(mode)[0])
+        thr, s = rs.thruster_loads_est(mode, fuel_case, inc, wind_ms, cur_ms,
+                                       hs_m)
+        dgs = dp.modes()[mode].get("dgs_per_bus", {})
+        loads, warns, tot = dcon.bus_loads(consumers or [], dgs)
+        fuel = dp_fuel.estimate(rs.power_panel_est(mode, thr, loads))
+        fuel["warnings"] = list(fuel["warnings"]) + warns
+        dp_ctx = [
+            f"Intact condition at wind {wind_ms:.1f} m/s / current "
+            f"{cur_ms:.2f} m/s / Hs {hs_m:.1f} m, incidence {inc:.0f}\u00b0 "
+            f"(thrust utilisation s = {s*100:.0f}%); consumers {tot:,.0f} kW."]
+        dp_lab = (f"intact \u2014 wind {wind_ms:.1f} m/s, current "
+                  f"{cur_ms:.2f} m/s, Hs {hs_m:.1f} m, consumers "
+                  f"{tot:,.0f} kW")
+        dp_pack = (fuel, dp_lab)
+    tr_est = dp_fuel.transit_estimate(tr_speed, int(tr_ndg or 2), tr_margin,
+                                      tr_dist)
+    trd = tr_est["transit"]
+    tr_label = (f'{trd["speed_kn"]:.1f} kn, {int(tr_ndg or 2)} DG, '
+                f'{trd["sea_margin_pct"]:.0f}% sea margin \u2014 '
+                f'{trd["total_kw"]:,.0f} kW')
+    port_est = dp_fuel.estimate_uniform(params.get("port_aux_kw"), 1)
+    anchor_est = dp_fuel.estimate_uniform(params.get("anchor_aux_kw"), 1)
+    sheet = _tender_sheet(ref, dp_pack, tr_est, tr_label, port_est, anchor_est)
+
+    # ---- on-screen card for the selected basis ----
     if basis == "transit":
-        est = dp_fuel.transit_estimate(tr_speed, int(tr_ndg or 2),
-                                       tr_margin, tr_dist)
-        tr = est["transit"]
-        ctx_lines = [
-            f'Transit at {tr["speed_kn"]:.1f} kn: propulsion '
-            f'{tr["prop_kw"]:,.0f} kW (cube law incl. {tr["sea_margin_pct"]:.0f}% '
-            f'sea margin) + auxiliaries {tr["aux_kw"]:,.0f} kW = '
-            f'{tr["total_kw"]:,.0f} kW over {int(tr_ndg or 2)} DG.']
-        extra = []
-        if tr.get("m3_per_100nm"):
-            extra.append(html.Div(
-                f'Economy: ≈ {tr["m3_per_100nm"]:.1f} m³ per 100 nm',
+        card = _result_card(tr_est, [
+            f'Transit at {trd["speed_kn"]:.1f} kn: propulsion '
+            f'{trd["prop_kw"]:,.0f} kW (cube law incl. '
+            f'{trd["sea_margin_pct"]:.0f}% sea margin) + auxiliaries '
+            f'{trd["aux_kw"]:,.0f} kW = {trd["total_kw"]:,.0f} kW over '
+            f'{int(tr_ndg or 2)} DG.'])
+        ex = []
+        if trd.get("m3_per_100nm"):
+            ex.append(html.Div(
+                f'Economy: \u2248 {trd["m3_per_100nm"]:.1f} m\u00b3 per 100 nm',
                 style={"fontSize": "13px", "marginTop": "4px"}))
-        if tr.get("voyage_m3") is not None:
-            extra.append(html.Div(
-                f'Voyage {tr["distance_nm"]:,.0f} nm: {tr["hours"]:.1f} h '
-                f'→ {tr["voyage_m3"]:.1f} m³ ({tr["voyage_t"]:.1f} t)',
-                style={"fontWeight": 700, "fontSize": "14px", "marginTop": "2px"}))
-        # eco-speed sweep
+        if trd.get("voyage_m3") is not None:
+            ex.append(html.Div(
+                f'Voyage {trd["distance_nm"]:,.0f} nm: {trd["hours"]:.1f} h '
+                f'\u2192 {trd["voyage_m3"]:.1f} m\u00b3 '
+                f'({trd["voyage_t"]:.1f} t)',
+                style={"fontWeight": 700, "fontSize": "14px",
+                       "marginTop": "2px"}))
         hdr = html.Tr([html.Th(t, style={"fontSize": "11px", "color": MUTED,
                                          "padding": "2px 8px"})
-                       for t in ("kn", "m³/day", "m³/100 nm")])
+                       for t in ("kn", "m\u00b3/day", "m\u00b3/100 nm")])
         rows = [hdr]
         for v in (6, 7, 8, 9, 10, 11, 12):
             e = dp_fuel.transit_estimate(v, int(tr_ndg or 2), tr_margin)
-            rows.append(html.Tr([html.Td(f"{v}", style={"padding": "1px 8px",
-                                                        "fontSize": "12px"}),
-                                 html.Td(f'{e["m3_day"]:.1f}',
-                                         style={"padding": "1px 8px",
-                                                "fontSize": "12px"}),
-                                 html.Td(f'{e["transit"]["m3_per_100nm"]:.1f}',
-                                         style={"padding": "1px 8px",
-                                                "fontSize": "12px"})]))
-        def build():
-            c = _result_card(est, ctx_lines)
-            # extras rebuilt fresh for each copy (components are single-use)
-            ex = []
-            if tr.get("m3_per_100nm"):
-                ex.append(html.Div(
-                    f'Economy: \u2248 {tr["m3_per_100nm"]:.1f} m\u00b3 per 100 nm',
-                    style={"fontSize": "13px", "marginTop": "4px"}))
-            if tr.get("voyage_m3") is not None:
-                ex.append(html.Div(
-                    f'Voyage {tr["distance_nm"]:,.0f} nm: {tr["hours"]:.1f} h '
-                    f'\u2192 {tr["voyage_m3"]:.1f} m\u00b3 ({tr["voyage_t"]:.1f} t)',
-                    style={"fontWeight": 700, "fontSize": "14px",
-                           "marginTop": "2px"}))
-            c.children.extend(ex)
-            return c
-        card = build()
-        card.children.append(html.Div([
+            rows.append(html.Tr(
+                [html.Td(f"{v}", style={"padding": "1px 8px",
+                                        "fontSize": "12px"}),
+                 html.Td(f'{e["m3_day"]:.1f}', style={"padding": "1px 8px",
+                                                      "fontSize": "12px"}),
+                 html.Td(f'{e["transit"]["m3_per_100nm"]:.1f}',
+                         style={"padding": "1px 8px", "fontSize": "12px"})]))
+        ex.append(html.Div([
             html.Div("Speed sweep (same engines & margin):",
                      style={"fontSize": "11px", "color": MUTED,
                             "margin": "8px 0 2px"}),
             html.Table(rows)]))
-        lab = (f'Transit \u2014 {tr["speed_kn"]:.1f} kn, {int(tr_ndg or 2)} DG, '
-               f'{tr["sea_margin_pct"]:.0f}% sea margin'
-               + (f', {tr["distance_nm"]:,.0f} nm' if tr.get("distance_nm") else ""))
-        return card, _print_sheet(ref, lab, build())
+        card.children.extend(ex)
+        return card, sheet
+    if basis == "harbour":
+        lines = []
+        for name, est in (("In port", port_est), ("At anchorage", anchor_est)):
+            b = est["buses"][0]
+            lines.append(html.Div(
+                f'{name} \u2014 1\u00d7DG @ {b["per_dg_frac"]*100:.0f}% '
+                f'({b["per_dg_kw"]:,.0f} kW) \u2192 SFOC {b["sfoc"]:.0f} '
+                f'g/kWh \u2192 {est["total_kg_h"]:,.0f} kg/h \u2248 '
+                f'{est["m3_day"]:.1f} m\u00b3/day',
+                style={"fontSize": "13px", "marginBottom": "4px"}))
+        card = html.Div([
+            html.B("Port & anchorage fuel", style={"fontSize": "14px"}),
+            html.Div("Auxiliary-only states on one DG; loads per Admin "
+                     "\u2192 Fuel consumption.",
+                     style={"fontSize": "12px", "color": MUTED,
+                            "margin": "4px 0 8px"}),
+            *lines,
+        ], style=_CARD)
+        return card, sheet
     if basis == "manual" or not (rs.available() and dp.available()):
         fuel = dp_fuel.estimate_uniform(float(total_kw or 0.0), int(ndg or 1))
-        ctx = [f"Manual basis: {float(total_kw or 0):,.0f} kW over {int(ndg or 1)} DG."]
-        lab = f"Manual load \u2014 {float(total_kw or 0):,.0f} kW / {int(ndg or 1)} DG"
-        return (_result_card(fuel, ctx),
-                _print_sheet(ref, lab, _result_card(fuel, ctx)))
-    if not mode:
-        return None, None
-    wind_ms = units.to_ms(float(wind or 0.0), wu or "ms")
-    cur_ms = max(units.to_ms(float(current or 0.0), cu or "ms"), 0.0)
-    hs_m = max(float(hs or 0.0), 0.0)
-    inc = (float(winddir or 0.0) - float(heading or 0.0)) % 360.0
-    fuel_case = ("All Thrusters Active"
-                 if "All Thrusters Active" in rs.cases(mode) else rs.cases(mode)[0])
-    thr, s = rs.thruster_loads_est(mode, fuel_case, inc, wind_ms, cur_ms, hs_m)
-    dgs = dp.modes()[mode].get("dgs_per_bus", {})
-    loads, warns, tot = dcon.bus_loads(consumers or [], dgs)
-    panel = rs.power_panel_est(mode, thr, loads)
-    fuel = dp_fuel.estimate(panel)
-    fuel["warnings"] = list(fuel["warnings"]) + warns
-    ctx = [
-        f"Intact condition at wind {wind_ms:.1f} m/s / current {cur_ms:.2f} m/s / "
-        f"Hs {hs_m:.1f} m, incidence {inc:.0f}\u00b0 "
-        f"(thrust utilisation s = {s*100:.0f}%); consumers {tot:,.0f} kW."]
-    lab = (f"DP estimate (intact) \u2014 wind {wind_ms:.1f} m/s, current "
-           f"{cur_ms:.2f} m/s, Hs {hs_m:.1f} m, consumers {tot:,.0f} kW")
-    return (_result_card(fuel, ctx),
-            _print_sheet(ref, lab, _result_card(fuel, ctx)))
+        return _result_card(fuel, [
+            f"Manual basis: {float(total_kw or 0):,.0f} kW over "
+            f"{int(ndg or 1)} DG."]), sheet
+    if not dp_pack:
+        return None, sheet
+    return _result_card(dp_pack[0], dp_ctx), sheet
