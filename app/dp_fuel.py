@@ -67,3 +67,30 @@ def estimate(power_panel):
     m3_day = (total_kg_h / density) * 24.0 / 1000.0 if density > 0 else 0.0
     return dict(buses=buses, total_kg_h=total_kg_h, t_day=t_day,
                 m3_day=m3_day, warnings=warnings)
+
+
+def estimate_uniform(total_kw, n_dg, dg_kw=2851.0):
+    """Fuel estimate for a manually specified total electrical load split
+    evenly over n_dg engines (rating dg_kw kWe each). Same result shape as
+    estimate(), with a single pseudo-bus 'plant'."""
+    n = max(int(n_dg or 1), 1)
+    per = max(float(total_kw or 0.0), 0.0) / n
+    frac = per / dg_kw if dg_kw > 0 else 0.0
+    sfoc = sfoc_g_per_kwh(frac)
+    kg_h = per * sfoc / 1000.0 * n
+    warnings = []
+    if 0.0 < frac < LOW_LOAD_FRAC:
+        warnings.append(
+            f"DGs at {frac*100:.0f}% load — below {LOW_LOAD_FRAC*100:.0f}%, "
+            "SFOC held at the 25% anchor; real consumption per kWh is worse "
+            "and sustained low-load running has maintenance impact.")
+    if frac > 1.0:
+        warnings.append(
+            f"DGs at {frac*100:.0f}% load — above 100% MCR; not a sustainable "
+            "operating point.")
+    density = float(params.get("dg_fuel_density"))
+    t_day = kg_h * 24.0 / 1000.0
+    m3_day = (kg_h / density) * 24.0 / 1000.0 if density > 0 else 0.0
+    return dict(buses=[dict(bus="plant", n_dg=n, per_dg_kw=per,
+                            per_dg_frac=frac, sfoc=sfoc, kg_h=kg_h)],
+                total_kg_h=kg_h, t_day=t_day, m3_day=m3_day, warnings=warnings)
