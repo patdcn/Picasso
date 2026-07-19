@@ -16,7 +16,7 @@ Numeric data lives only on the /data volume (engines/dp_env_rescale.py).
 """
 import dash
 import datetime
-from dash import html, dcc, Input, Output, State, callback
+from dash import html, dcc, Input, Output, State, callback, ALL, ctx, no_update
 import plotly.graph_objects as go
 
 from app.engines import dp_capability as dp
@@ -193,6 +193,7 @@ def layout():
                 html.Div(dcc.Graph(id="dpe-polar", config={"displaylogo": False}),
                          style=_CARD),
                 html.Div(id="dpe-basis", style={**_CARD, "fontSize": "13px"}),
+                _windsea_panel(),
             ], style={"flex": 1, "minWidth": "420px"}),
         ], style={"display": "flex", "gap": "14px", "flexWrap": "wrap"}),
         html.Div(id="dpe-print-summary", className="print-only"),
@@ -201,6 +202,78 @@ def layout():
         reports.print_footer(),
     ], style={"maxWidth": "1200px"})
 
+
+
+
+_WS_WINDS = (5, 10, 15, 20, 25)          # m/s rows
+_WS_FETCH = (20, 50, 100, 200, 400)      # km columns
+
+
+def _windsea_panel():
+    """JONSWAP wind-sea reference: clickable wind x fetch matrix. A cell click
+    copies that wind (in the selected unit), the fetch, and the fetch-limited
+    Hs into the inputs — a defensible default environment when the client has
+    provided no metocean, and the printed sheet then substantiates it."""
+    th = {"fontSize": "11.5px", "color": MUTED, "padding": "4px 6px",
+          "textAlign": "center", "fontWeight": 600}
+    head = html.Tr([html.Th("wind \\ fetch", style=th)] +
+                   [html.Th(f"{x} km", style=th) for x in _WS_FETCH])
+    rows = [head]
+    for w in _WS_WINDS:
+        cells = [html.Td(f"{w} m/s", style={**th, "textAlign": "right"})]
+        for x in _WS_FETCH:
+            hs = wind_sea.hs_fetch_m(w, x)
+            tp = wind_sea.tp_fetch_s(w, x)
+            cells.append(html.Td(html.Button(
+                f"{hs:.1f} m",
+                id={"type": "dpe-ws-cell", "w": w, "x": x}, n_clicks=0,
+                title=f"Click to use: wind {w} m/s, Hs {hs:.1f} m, "
+                      f"fetch {x} km (Tp \u2248 {tp:.1f} s)",
+                style={"width": "100%", "border": f"1px solid {GRID}",
+                       "background": "#f8fafc", "borderRadius": "6px",
+                       "padding": "4px 2px", "cursor": "pointer",
+                       "fontSize": "12.5px"}),
+                style={"padding": "2px 3px"}))
+        rows.append(html.Tr(cells))
+    return html.Div([
+        html.B("JONSWAP wind-sea reference — fetch-limited Hs",
+               style={"fontSize": "13px"}),
+        html.Div("Click a cell to copy wind, Hs and fetch into the inputs — a "
+                 "substantiated default environment when no metocean data is "
+                 "provided.",
+                 style={"fontSize": "12px", "color": MUTED, "margin": "4px 0 8px"}),
+        html.Table(rows, style={"width": "100%", "borderCollapse": "collapse"}),
+        html.Div([
+            html.Div("Hs = 0.0016 \u00b7 \u221a(g\u00b7X) \u00b7 U / g   "
+                     "(fetch-limited), capped at the fully developed sea "
+                     "Hs = 0.0246 \u00b7 U\u00b2;  "
+                     "Tp = 0.286 \u00b7 (g\u00b7X/U\u00b2)^\u2153 \u00b7 U / g.",
+                     style={"fontFamily": "ui-monospace,monospace",
+                            "fontSize": "11px", "marginBottom": "4px"}),
+            html.Div("U = 1-min wind at 10 m [m/s], X = open-water fetch upwind "
+                     "[m], g = 9.81 m/s\u00b2. JONSWAP fetch-limited growth "
+                     "relations (Hasselmann et al., 1973), deep water — shallow "
+                     "Gulf water limits Hs further, so these err conservative. "
+                     "Fetch is directional: take the open-water distance along "
+                     "the wind, not the distance to the nearest coast.",
+                     style={"fontSize": "11px", "color": MUTED}),
+        ], style={"marginTop": "8px"}),
+    ], style=_CARD)
+
+
+@callback(Output("dpe-wind", "value", allow_duplicate=True),
+          Output("dpe-hs", "value"),
+          Output("dpe-fetch", "value"),
+          Input({"type": "dpe-ws-cell", "w": ALL, "x": ALL}, "n_clicks"),
+          State("dpe-wu", "value"),
+          prevent_initial_call=True)
+def _windsea_pick(clicks, wu):
+    trig = ctx.triggered_id
+    if not isinstance(trig, dict) or not any(clicks or []):
+        return no_update, no_update, no_update
+    w, x = trig["w"], trig["x"]
+    hs = round(wind_sea.hs_fetch_m(w, x), 1)
+    return round(units.from_ms(w, wu or "ms"), 2), hs, x
 
 def _method_block():
     prov = html.Ul([html.Li(dpdocs.linkify(p), style={"marginBottom": "3px"})
@@ -267,7 +340,8 @@ def _case_display(case, res=None):
     return case
 
 
-def _print_summary(mode, case, res, wind, winddir, heading, current, hs, aux, ref):
+def _print_summary(mode, case, res, wind, winddir, heading, current, hs, aux,
+                   ref, fetch_km=200):
     """Study-style summary table for the printed workability sheet."""
     mm = dp.mode_meta(mode)
     b = res["basis"]
@@ -297,6 +371,8 @@ def _print_summary(mode, case, res, wind, winddir, heading, current, hs, aux, re
         ("Capability basis",
          f'{mm["study_title"]} \u2014 {mm["study_ref"]}; envelopes rescaled from the '
          f'study basis (current {b["current_ms"]:.2f} m/s, Hs {b["hs_m"]:.1f} m)'),
+        ("Wind-sea check fetch", f"{float(fetch_km or 200):.0f} km (JONSWAP "
+         "fetch-limited consistency advisory)"),
         ("Advisories", " ".join(res["warnings"]) if res["warnings"] else "none"),
         ("Reference", (ref or "\u2014")),
         ("Generated", datetime.date.today().isoformat() + " \u00b7 DSV Picasso Engineering Portal"),
@@ -393,7 +469,7 @@ def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
     aux = {"bus1": aux1 or 0, "bus2": aux2 or 0, "bus3": aux3 or 0}
     power = _power_block(mode, case, inc, wind, current, hs, aux)
     summary = _print_summary(mode, case, res, wind, winddir, heading,
-                             current, hs, aux, ref)
+                             current, hs, aux, ref, fetch_km)
     return fig, status, basis, power, summary
 
 
