@@ -24,6 +24,7 @@ from app.engines import dp_env_rescale as rs
 from app import dp_consumers as dcon
 from app import reports
 from app import units
+from app import wind_sea
 from app import dpdocs
 
 dash.register_page(__name__, path="/dp/env-planner", name="DP Environment Planner",
@@ -79,6 +80,15 @@ def _controls():
                       _num_input("dpe-hs", 2.5, 0, step=0.1)], style={"flex": 1}),
         ], style={"display": "flex", "gap": "10px", "marginBottom": "4px",
                   "alignItems": "flex-end"}),
+        html.Div([
+            html.Span("Fetch [km] — open-water distance upwind (advisory "
+                      "only, per wind direction):",
+                      style={"fontSize": "12px", "color": MUTED,
+                             "marginRight": "8px"}),
+            dcc.Input(id="dpe-fetch", type="number", value=200, min=1, max=1000,
+                      step=10, debounce=True,
+                      style={"width": "90px", "fontSize": "13px"}),
+        ], style={"marginBottom": "6px"}),
         html.Div([
             html.Span("Units:", style={"fontSize": "12px", "color": MUTED,
                                        "marginRight": "8px"}),
@@ -287,6 +297,7 @@ def _print_summary(mode, case, res, wind, winddir, heading, current, hs, aux, re
         ("Capability basis",
          f'{mm["study_title"]} \u2014 {mm["study_ref"]}; envelopes rescaled from the '
          f'study basis (current {b["current_ms"]:.2f} m/s, Hs {b["hs_m"]:.1f} m)'),
+        ("Advisories", " ".join(res["warnings"]) if res["warnings"] else "none"),
         ("Reference", (ref or "\u2014")),
         ("Generated", datetime.date.today().isoformat() + " \u00b7 DSV Picasso Engineering Portal"),
     ]
@@ -352,9 +363,10 @@ def _placeholder_fig(msg):
           Input("dpe-aux1", "value"), Input("dpe-aux2", "value"), Input("dpe-aux3", "value"),
           Input("dpe-overlays", "value"), Input("dpe-frame", "value"),
           Input("dpe-ref", "value"),
-          Input("dpe-wu", "value"), Input("dpe-cu", "value"))
+          Input("dpe-wu", "value"), Input("dpe-cu", "value"),
+          Input("dpe-fetch", "value"))
 def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
-            overlays, frame, ref, wu, cu):
+            overlays, frame, ref, wu, cu, fetch_km):
     if not (rs.available() and dp.available()):
         return (_placeholder_fig("Rescale/capability data not readable from the "
                                  "data volume."), None, None, None, None)
@@ -369,6 +381,9 @@ def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
     overlays = overlays or []
 
     res = rs.assess(mode, case, heading, wind, winddir, current, hs)
+    adv = wind_sea.advisory(wind, hs, fetch_km if fetch_km else 200)
+    if adv:
+        res["warnings"] = list(res["warnings"]) + [adv]
     inc = res["incidence_deg"]
 
     fig = _polar_figure(mode, case, inc, wind, heading, winddir, frame,
