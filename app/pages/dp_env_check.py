@@ -515,7 +515,13 @@ def _update(mode, case, heading, winddir, wind, current, hs, aux1, aux2, aux3,
     status = _status_card(res, current, hs)
     basis = _basis_card(mode, res, current, hs)
     aux = {"bus1": aux1 or 0, "bus2": aux2 or 0, "bus3": aux3 or 0}
-    thr_f, _s_f = rs.thruster_loads_est(mode, case, inc, wind, current, hs)
+    # fuel is an EXPECTATION -> always the intact condition, whatever failure
+    # case the capability verdict uses (validated against Jul-Oct 2025 fuel
+    # monitoring: on-DP median 15.8 m3/day reproduced at representative
+    # weather with hotel+SAT running)
+    fuel_case = ("All Thrusters Active"
+                 if "All Thrusters Active" in rs.cases(mode) else case)
+    thr_f, _s_f = rs.thruster_loads_est(mode, fuel_case, inc, wind, current, hs)
     fuel = dp_fuel.estimate(rs.power_panel_est(mode, thr_f, aux))
     power = html.Div([_power_block(mode, case, inc, wind, current, hs, aux),
                       _fuel_block(fuel)])
