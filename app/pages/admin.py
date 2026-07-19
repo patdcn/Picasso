@@ -30,8 +30,8 @@ def layout():
                  "pending tool-access requests.",
                  "/admin/users", "Open users & access"),
 
-        hub_card("Portal parameters",
-                 "All shared portal parameters, grouped by category: bell day rates & timing, dive planning, dive & saturation gas constants, and DP fuel (DG SFOC curve, fuel density).",
+        hub_card("Cost & timing assumptions",
+                 "Shared assumptions grouped by category: bell day rates & timing, dive planning, and dive & saturation gas constants.",
                  "/admin/params", "Open cost & timing assumptions"),
 
         hub_card("SAT systems",
@@ -40,6 +40,12 @@ def layout():
                   "(chambers, TUP, bell, HRL\u2026), set bell volume, single/twin "
                   "configuration and default depths."],
                  "/admin/sat-system", "Open SAT systems"),
+
+        hub_card("Fuel consumption",
+                 "DG specific fuel oil consumption curve (SFOC anchors, electrical "
+                 "basis) and fuel density \u2014 drives the expected-consumption "
+                 "estimate on the DP Environment Planner.",
+                 "/admin/fuel", "Open fuel consumption"),
 
         hub_card("DP power consumers",
                  "Named non-thruster consumers (cranes, SAT spread, ROV, hotel load) "

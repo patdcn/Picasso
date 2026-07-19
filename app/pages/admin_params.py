@@ -29,6 +29,8 @@ def layout():
     current = params.get_all()
     sections, last_cat = [], None
     for p in params.definitions():
+        if p["category"] == "DP fuel":
+            continue                      # own admin section: /admin/fuel
         if p["category"] != last_cat:
             sections.append(html.Div(p["category"], style={
                 "fontWeight": 700, "fontSize": "0.85rem", "color": MUTED,
