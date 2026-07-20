@@ -25,7 +25,6 @@ _CARD = {"background": "#fff", "border": f"1px solid {GRID}",
 
 def layout():
     docs = dpdocs.list_docs()
-    missing = dpdocs.missing_known()
 
     if docs:
         rows = [html.Div([
@@ -49,17 +48,4 @@ def layout():
                  style={"color": MUTED, "fontSize": "13px", "marginBottom": "12px"}),
         html.Div(doc_block, style=_CARD),
     ]
-    if missing:
-        children.append(html.Div([
-            html.B("Expected but not yet uploaded", style={"fontSize": "13px"}),
-            html.Div("Upload with exactly these filenames (Admin \u2192 Data volume "
-                     "files, folder docs/dp) and the portals' citation links "
-                     "activate automatically:",
-                     style={"fontSize": "12px", "color": MUTED, "margin": "4px 0 8px"}),
-            html.Ul([html.Li([
-                html.Span(m["title"] + " \u2014 "),
-                html.Code(m["filename"], style={"fontSize": "11.5px"}),
-            ], style={"marginBottom": "4px"}) for m in missing],
-                style={"fontSize": "12.5px", "paddingLeft": "18px"}),
-        ], style={**_CARD, "background": "#f8fafc"}))
     return html.Div(children, style={"maxWidth": "860px"})
