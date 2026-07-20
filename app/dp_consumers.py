@@ -20,7 +20,7 @@ Bus assignment
 distributes it across the buses that are energised in the selected DP mode,
 weighted by the number of DGs running on each bus (equal per-generator share).
 Seed assignments follow the as-built feeding arrangement per the Hareid
-El. Load Balance Calc. 2245-880-201 Rev 6: SAT diving (T1/T2), ROV (T3/T4),
+El. Load Balance Calc. 2245-880-201 Rev 7: SAT diving (T1/T2), ROV (T3/T4),
 the 140T crane (supply 1/2) and the bulk of hotel load (T5–T8) are fed
 PS/SB from Bus 1 and Bus 3 only ('bus13'); the 40T crane hangs on Bus 2; air
 diving feeds via the 450 V PS side on Bus 1. 'bus13' splits over Bus 1+3

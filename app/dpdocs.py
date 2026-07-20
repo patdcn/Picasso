@@ -58,9 +58,9 @@ KNOWN = {
         "MAN Diesel & Turbo — L27/38 GenSet Project Guide (SFOC sheet "
         "1689470-5.4; DG engines 9L27/38, 330 kW/cyl @ 720 rpm)"),
     "load_balance": (
-        "2245-880-201_El_Load_Balance_Main_AC.pdf",
+        "2245-880-201_El_Load_Balance_Main_AC_Rev7.pdf",
         "Hareid Group — El. Load Balance Calc. Main AC Sys. 690V/450V/230V "
-        "(2245-880-201 Rev 6, 2015)"),
+        "(2245-880-201 Rev 7, 2016; DNV-GL approved 2016-07-22)"),
     "single_line": (
         "2245-881-001_Main_Single_Line_AC.pdf",
         "Hareid Group — Main Single Line diagram AC Sys. 690V/450V/230V "
