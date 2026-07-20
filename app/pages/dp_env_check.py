@@ -633,7 +633,14 @@ def _basis_card(mode, res, current, hs):
 
 
 def _power_block(mode, case, inc, wind, current, hs, aux):
-    thr, s = rs.thruster_loads_est(mode, case, inc, wind, current, hs)
+    # The ESTIMATE reflects today's actual line-up — the intact condition
+    # (all thrusters active), exactly like the fuel expectation. The selected
+    # failure case governs the envelope and the verdict, not present demand:
+    # basing the estimate on the post-WCF case zeroes the "failed" thrusters
+    # and overstates the survivors.
+    est_case = ("All Thrusters Active"
+                if "All Thrusters Active" in rs.cases(mode) else case)
+    thr, s = rs.thruster_loads_est(mode, est_case, inc, wind, current, hs)
     p = rs.power_panel_est(mode, thr, aux)
     warn, lim = p["thresholds"]
     dg_kw = p["dg_nominal_kw"]
@@ -674,10 +681,13 @@ def _power_block(mode, case, inc, wind, current, hs, aux):
         ], style={"marginBottom": "10px"}))
 
     return html.Div([
-        html.B("Estimated power demand at your condition (App. E \u00d7 propeller law)",
+        html.B("Estimated power demand at your condition (intact line-up, "
+               "App. E \u00d7 propeller law)",
                style={"fontSize": "14px"}),
         html.Div(f"Thrust utilisation vs study limit: s = {s*100:.0f}%. Per-thruster "
                  f"estimate = Appendix E load \u00d7 s^1.5 (exact at s = 100%; clamped at 125%). "
+                 f"Estimates use the intact case (all thrusters active) \u2014 the selected "
+                 f"failure case governs the envelope and the verdict, not present demand. "
                  f"At the capability limit demand rises to the full Appendix E values. "
                  f"Threshold marks: PMS warning at {warn*100:.0f}% and thrust limitation at "
                  f"{lim*100:.0f}% of available bus power.",

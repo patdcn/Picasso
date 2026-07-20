@@ -211,6 +211,8 @@ def layout():
                                     "margin": "4px 0 8px"}),
                     _ws_table(),
                     dcc.Store(id="fp-ws-sel", data=None),
+                    dcc.Store(id="fp-wu-prev", data="ms"),
+                    dcc.Store(id="fp-cu-prev", data="ms"),
                     html.Div(id="fp-ws-note",
                              style={"fontSize": "12px", "color": ACCENT,
                                     "fontWeight": 600, "marginTop": "6px"}),
@@ -322,6 +324,24 @@ def _ws_select(clicks, wind, hs, sel, wu):
         if not match:
             return styles(None), None, None, no_update, no_update
     return styles(sel), no_update, note(sel), no_update, no_update
+
+
+# Convert the displayed wind/current value when the unit selector changes —
+# same behaviour as the DP pages (dpc-wu / dpe-wu). Without this the number
+# keeps its magnitude and is silently reinterpreted in the new unit.
+@callback(Output("fp-wind", "value", allow_duplicate=True),
+          Output("fp-wu-prev", "data"),
+          Input("fp-wu", "value"), State("fp-wind", "value"),
+          State("fp-wu-prev", "data"), prevent_initial_call=True)
+def _wind_unit_switch(unit, value, prev):
+    return units.convert(value, prev or "ms", unit), unit
+
+
+@callback(Output("fp-current", "value"), Output("fp-cu-prev", "data"),
+          Input("fp-cu", "value"), State("fp-current", "value"),
+          State("fp-cu-prev", "data"), prevent_initial_call=True)
+def _cur_unit_switch(unit, value, prev):
+    return units.convert(value, prev or "ms", unit), unit
 
 
 # ---------------------------------------------------------- state estimators

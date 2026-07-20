@@ -553,7 +553,9 @@ def _power_block(mode, case, inc, aux):
         html.B("Power demand at capability limit (Appendix E, exact study values)",
                style={"fontSize": "14px"}),
         html.Div("Marginal station keeping in the limiting wind at the selected incidence. "
-                 f"Actual demand below the limit is lower. Threshold marks: PMS warning at "
+                 f"Actual demand below the limit is lower. In failure cases the failed "
+                 f"thrusters correctly show 0 kW \u2014 the survivors carry the load. "
+                 f"Threshold marks: PMS warning at "
                  f"{warn*100:.0f}% and thrust limitation at {lim*100:.0f}% of available bus power.",
                  style={"fontSize": "12px", "color": MUTED, "margin": "4px 0 10px"}),
         html.Div(thr_cells, style={"display": "flex", "gap": "8px", "marginBottom": "12px",

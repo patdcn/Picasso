@@ -162,6 +162,13 @@ def _save_or_delete(_n, del_clicks, names, ids, kws, buses, cats, srcs, dons):
             return no_update, no_update
         _ok, msg = dcon.delete(trig["id"])
         return html.Span(msg, style={"color": ACCENT}), _table()
+    # Save ONLY on an actual Save-all click. Without this guard the callback
+    # also fires when the table's pattern components are re-created (after a
+    # move / add / delete) with an empty trigger, falling through to a
+    # spurious save + re-render that races with, and swallows, the next
+    # click on the order arrows.
+    if trig != "dpcon-save" or not _n:
+        return no_update, no_update
     updates = {}
     for i, cid_obj in enumerate(ids or []):
         cid = cid_obj["id"]
