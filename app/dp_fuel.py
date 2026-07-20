@@ -99,7 +99,8 @@ def estimate_uniform(total_kw, n_dg, dg_kw=2851.0):
 MP_TOTAL_KW = 7000.0     # 2 x 3,500 kW main propellers — cube-law cap
 
 
-def transit_estimate(speed_kn, n_dg, sea_margin_pct=15.0, distance_nm=None):
+def transit_estimate(speed_kn, n_dg, sea_margin_pct=15.0, distance_nm=None,
+                     aux_kw=0.0):
     """Transit fuel from a cube-law propulsion model anchored at the
     admin-set service point (transit_prop_kw_service at
     transit_service_speed_kn, per the electrical load balance transit
@@ -114,7 +115,7 @@ def transit_estimate(speed_kn, n_dg, sea_margin_pct=15.0, distance_nm=None):
     v = max(float(speed_kn or 0.0), 0.0)
     v_srv = float(params.get("transit_service_speed_kn"))
     p_srv = float(params.get("transit_prop_kw_service"))
-    aux = float(params.get("transit_aux_kw"))
+    aux = max(float(aux_kw or 0.0), 0.0)
     margin = max(float(sea_margin_pct or 0.0), 0.0) / 100.0
     prop = p_srv * (v / v_srv) ** 3 if v_srv > 0 else 0.0
     prop = min(prop * (1.0 + margin), MP_TOTAL_KW)

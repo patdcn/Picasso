@@ -79,12 +79,6 @@ REGISTRY = [
     # to other speeds. Validated against Oct 2025 fuel monitoring transit days.
     ("transit_service_speed_kn", "Transit service speed",           "kn", "Transit fuel", 12.0,   0.5, ("/fuel",)),
     ("transit_prop_kw_service",  "Propulsion power @ service speed","kW", "Transit fuel", 4326.0, 10,  ("/fuel",)),
-    ("transit_aux_kw",           "Auxiliary load in transit",       "kW", "Transit fuel", 780.0,  10,  ("/fuel",)),
-    # Harbour fuel — auxiliary-only states. Port value calibrated to Jul-Oct
-    # 2025 fuel monitoring port days (4.1-5.9, mean ~5.0 m3/day -> ~800 kWe on
-    # one DG). Anchorage is a planning value pending flagged actuals.
-    ("port_aux_kw",   "Auxiliary load in port",       "kW", "Harbour fuel", 800.0, 10, ("/fuel",)),
-    ("anchor_aux_kw", "Auxiliary load at anchorage",  "kW", "Harbour fuel", 900.0, 10, ("/fuel",)),
     ("sat_dive_rmv",          "Bell breathing rate (per diver)",   "L/min",       "Saturation gas", 40.0,  1,    ("/diving/sat-gas",)),
     ("sat_dive_run_min",      "Bell-run duration (reserve)",       "min",         "Saturation gas", 480.0, 15,   ("/diving/sat-gas",)),
     ("sat_dive_runs",         "Bell runs held in reserve",         "runs",        "Saturation gas", 2.0,   1,    ("/diving/sat-gas",)),

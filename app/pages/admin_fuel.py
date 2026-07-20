@@ -33,8 +33,7 @@ def layout():
     current = params.get_all()
     fields = []
     for cat, title in (("DP fuel", "DP — DG SFOC curve & density"),
-                       ("Transit fuel", "Transit — propulsion service point"),
-                       ("Harbour fuel", "Port & anchorage — auxiliary loads")):
+                       ("Transit fuel", "Transit — propulsion service point")):
         fields.append(html.Div(title, style={
             "fontWeight": 700, "fontSize": "0.85rem", "color": INK,
             "margin": "10px 0 6px", "borderBottom": "1px solid #e2e8f0",
