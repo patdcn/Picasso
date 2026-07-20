@@ -64,7 +64,7 @@ from app.nav import build_nav  # noqa: E402
 import os as _os
 from flask import send_from_directory, abort  # noqa: E402
 
-_GA_DIR = _os.getenv("GA_DATA_DIR", "/data/tools/ga")
+_GA_DIR = _os.getenv("GA_DATA_DIR", "/data/docs/crane")
 
 
 @server.route("/ga-file/<path:name>")

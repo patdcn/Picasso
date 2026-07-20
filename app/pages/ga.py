@@ -14,7 +14,7 @@ from dash import html
 dash.register_page(__name__, path="/reference/ga", name="General arrangements",
                    category="Reference", order=1)
 
-GA_DIR = os.getenv("GA_DATA_DIR", "/data/tools/ga")
+GA_DIR = os.getenv("GA_DATA_DIR", "/data/docs/crane")
 MUTED = "#64748b"
 GRID = "#e2e8f0"
 
@@ -77,7 +77,7 @@ def layout():
         return html.Div([
             html.H3("General arrangements"),
             html.P("No GA drawings have been uploaded yet. Add <key>.pdf and "
-                   "<key>.png pairs to the data volume under /data/tools/ga/ to "
+                   "<key>.png pairs to the data volume under /data/docs/crane/ to "
                    "show them here.", style={"color": MUTED, "maxWidth": "640px"}),
         ])
     return html.Div([

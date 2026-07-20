@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local env / secrets — never commit; these live in the Dokploy environment
+.env
+.env.*
+
+# Volume staging — proprietary/binary data (GA drawings, dive tables, .mat files)
+# belongs on the /data volume, uploaded via Admin -> Data volume, NOT the repo.
+ga-staging/
+*-staging/
+/data/
+
+# OS cruft
+.DS_Store
+Thumbs.db
