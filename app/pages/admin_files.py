@@ -7,6 +7,11 @@ files in to upload, create folders, and select files/folders to move, rename or
 delete. Everything is confined to /data by app/volume.py.
 """
 import os
+import io
+import time
+import zipfile
+import sqlite3
+import tempfile
 import dash
 from dash import html, dcc, dash_table, Input, Output, State, callback, no_update, ALL
 from dash.exceptions import PreventUpdate
@@ -61,6 +66,21 @@ def layout():
                style={"color": MUTED, "maxWidth": "720px"}),
         dcc.Link("\u2190 Back to Admin", href="/admin",
                  style={"color": ACCENT, "fontWeight": 600, "fontSize": "0.85rem"}),
+
+        html.Div([
+            _btn("\u2b07  Download full backup (.zip)", "fx-backup", primary=True),
+            html.Span(id="fx-backup-status",
+                      style={"fontSize": "0.82rem", "color": MUTED, "marginLeft": "10px"}),
+            html.Div("Downloads a single zip of the entire /data volume \u2014 all "
+                     "reference files plus the databases (snapshotted consistently) "
+                     "\u2014 with folder paths preserved. Store the file somewhere safe; "
+                     "to restore, unzip it back into /data.",
+                     style={"fontSize": "0.76rem", "color": MUTED, "marginTop": "6px",
+                            "maxWidth": "720px"}),
+        ], style={"margin": "14px 0 4px", "padding": "12px 14px",
+                  "background": "#f8fafc", "border": f"1px solid {LINE}",
+                  "borderRadius": "10px"}),
+        dcc.Download(id="fx-backup-dl"),
 
         dcc.Store(id="fx-cwd", data=""),
         dcc.Store(id="fx-refresh", data=0),
@@ -138,6 +158,71 @@ def _is_admin():
     return bool(u and u.get("is_admin"))
 
 
+def _sqlite_backup(src_path, dst_path):
+    """Consistent online snapshot of a SQLite DB (folds in WAL), read-only source."""
+    src = sqlite3.connect(f"file:{src_path}?mode=ro", uri=True, timeout=5.0)
+    try:
+        dst = sqlite3.connect(dst_path)
+        try:
+            with dst:
+                src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+
+
+def _make_backup_zip():
+    """Zip the entire /data volume, preserving relative paths. Returns (bytes,
+    n_files, notes). SQLite .db files are snapshotted consistently via the backup
+    API; their -wal/-shm sidecars are skipped (the snapshot already folds them in).
+    Anything that can't be read is skipped and noted rather than aborting."""
+    root = volume.DATA_ROOT
+    bio = io.BytesIO()
+    n_files = 0
+    skipped = []
+    with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as zf:
+        for dirpath, _dirs, filenames in os.walk(root):
+            for fn in sorted(filenames):
+                full = os.path.join(dirpath, fn)
+                rel = os.path.relpath(full, root)
+                # SQLite sidecars: skip; the .db snapshot below captures their data
+                if fn.endswith(("-wal", "-shm", "-journal")):
+                    continue
+                if fn.endswith(".db"):
+                    tmp = None
+                    try:
+                        fd, tmp = tempfile.mkstemp(suffix=".db")
+                        os.close(fd)
+                        _sqlite_backup(full, tmp)
+                        zf.write(tmp, rel)
+                        n_files += 1
+                    except Exception:
+                        # not a valid SQLite file (or locked): fall back to raw
+                        # copy, including sidecars so the state stays recoverable
+                        try:
+                            zf.write(full, rel)
+                            n_files += 1
+                            for sc in ("-wal", "-shm"):
+                                if os.path.exists(full + sc):
+                                    zf.write(full + sc, rel + sc)
+                        except Exception:
+                            skipped.append(rel)
+                    finally:
+                        if tmp and os.path.exists(tmp):
+                            try:
+                                os.remove(tmp)
+                            except OSError:
+                                pass
+                    continue
+                try:
+                    zf.write(full, rel)
+                    n_files += 1
+                except Exception:
+                    skipped.append(rel)
+    return bio.getvalue(), n_files, skipped
+
+
 def _rows_for(cwd):
     rel, entries = volume.list_dir(cwd)
     if entries is None:
@@ -179,6 +264,29 @@ def _dst_options():
 
 def _selected_rels(data, selected_rows):
     return [data[i]["rel"] for i in (selected_rows or []) if 0 <= i < len(data or [])]
+
+
+@callback(
+    Output("fx-backup-dl", "data"),
+    Output("fx-backup-status", "children"),
+    Input("fx-backup", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _backup(_n):
+    if not _is_admin():
+        raise PreventUpdate
+    try:
+        data, n_files, skipped = _make_backup_zip()
+    except Exception as e:  # pragma: no cover - defensive
+        return no_update, html.Span(f"Backup failed: {e}", style={"color": "#b91c1c"})
+    stamp = time.strftime("%Y%m%d_%H%M")
+    fname = f"picasso_data_backup_{stamp}.zip"
+    size_mb = len(data) / (1024 * 1024)
+    note = f"{n_files} file(s), {size_mb:.1f} MB."
+    if skipped:
+        note += f"  ({len(skipped)} unreadable, skipped.)"
+    return (dcc.send_bytes(data, fname),
+            html.Span(f"Backup ready \u2014 {note}", style={"color": ACCENT}))
 
 
 # --------------------------------------------------------------------------- #
