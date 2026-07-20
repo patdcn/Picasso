@@ -360,7 +360,8 @@ def _prefill_aux(selected, mode):
     note = [html.Span(
         f"Selected {total:,.0f} kW \u2192 Bus 1 {loads['bus1']:,.0f} / "
         f"Bus 2 {loads['bus2']:,.0f} / Bus 3 {loads['bus3']:,.0f} kW. "
-        "Assignments per El. Load Balance 2245-880-201 (PS/SB pairs on "
+        "Assignments per El. Load Balance 2245-880-201, verified against "
+        "as-built single line CMHI121-871-001 Rev Z (PS/SB pairs on "
         "Bus 1+3); \u2018split\u2019 shares over the live buses weighted by "
         "running DGs.")]
     for w in warns:

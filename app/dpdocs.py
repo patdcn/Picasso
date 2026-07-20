@@ -62,9 +62,19 @@ KNOWN = {
         "Hareid Group — El. Load Balance Calc. Main AC Sys. 690V/450V/230V "
         "(2245-880-201 Rev 7, 2016; DNV-GL approved 2016-07-22)"),
     "single_line": (
-        "2245-881-001_Main_Single_Line_AC.pdf",
-        "Hareid Group — Main Single Line diagram AC Sys. 690V/450V/230V "
-        "(2245-881-001)"),
+        "CMHI121-871-001_690V_MSB_Single_Line_RevZ.pdf",
+        "CMHI Shenzhen — 690V Main Switchboard Single Line System Block "
+        "Diagram (CMHI121-871-001 Rev Z, as-built 2017-03-16; 36 sheets)"),
+    "swbd_230": (
+        "CMHI121-871-003_230V_Swbd_Single_Line_RevZ.pdf",
+        "CMHI Shenzhen — 230V Switchboard Single Line System Block Diagram "
+        "(CMHI121-871-003 Rev Z, as-built 2017; 16 sheets, incl. ACB "
+        "interlock logic Bus 6/7)"),
+    "dive_distribution": (
+        "01814-00-002_Dive_Power_Distribution_Single_Line_RevD.pdf",
+        "Lexmar Engineering — Dive Power Distribution System Electrical "
+        "Single Line Diagram (01814-00-002 Rev D, 2014; 440V dive-side "
+        "chains)"),
 }
 
 # which study document backs each DP operating mode
@@ -112,7 +122,9 @@ _PATTERNS = {
     "fmea_addendum_prs": r"GM-PRJ121125-RP-?001",
     "load_balance": r"2245-880-201",
     "engine_pg": r"L27/38",
-    "single_line": r"2245-881-001",
+    "single_line": r"CMHI121-?871-?001",
+    "swbd_230": r"CMHI121-?871-?003",
+    "dive_distribution": r"01814-00-002",
 }
 
 

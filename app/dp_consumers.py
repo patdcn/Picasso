@@ -27,6 +27,17 @@ diving feeds via the 450 V PS side on Bus 1. 'bus13' splits over Bus 1+3
 weighted by their running DGs and never touches Bus 2. A consumer pinned to a bus that
 is offline in the selected mode (e.g. Bus 2 in 2-split) is redistributed over
 the live buses and flagged, so load is never silently dropped.
+
+As-built verification (CMHI121-871-001 Rev Z, 690V MSB single line, 2017)
+-------------------------------------------------------------------------
+Sheet-level cross-check of every seed pin, Jul 2026:
+Bus 1 — DG1+DG2 (sh 10/11); T1 dive 760F1, T3 ROV 830F1, T5 450V ASB Bus
+No.4 730F1, T7 230V 800F1; 140T crane supply 1 600F1(10F4) (sh 12-17).
+Bus 2 — DG3 alone (sh 25); RAT bow-azimuth converter transformer 1725 kVA
+1690F1(20F1) + 50 kVA aux transformer; 40T crane 1700F1/F4 slip ring
+(sh 22-23). Confirms DG3 removal kills Bus 2, the RAT and the 40T crane.
+Bus 3 — DG4+DG5 (sh 26/27); T2 dive, T4 ROV 2440F1, T6 450V ASB Bus No.5
+2480F1, T8 230V 2410F1; 140T crane supply 2 2560F1(30F2) (sh 29-35, 30).
 """
 import datetime
 import sqlite3
@@ -46,22 +57,28 @@ SEED = [
      "T5\u2013T8 per 2245-880-201.", 1, 10),
     ("140T crane \u2014 operating", 700.0, "bus13", "Cranes",
      "DPR good-weather observations 500\u2013700 kW; upper bound stored. "
-     "Dual supply Bus 1+3 per 2245-880-201 (design booking 1,415 kW in the "
-     "crane scenario \u2014 yard factors, conservative).", 0, 20),
+     "Dual supply Bus 1+3 per 2245-880-201; as-built confirmed \u2014 "
+     "CMHI121-871-001 Rev Z feeders 600F1(10F4)/2560F1(30F2) (design "
+     "booking 1,415 kW in the crane scenario \u2014 yard factors, "
+     "conservative).", 0, 20),
     ("40T crane \u2014 operating", 400.0, "bus2", "Cranes",
      "DPR good-weather observations 200\u2013400 kW; upper bound stored. "
-     "Fed from Busbar 2 per 2245-880-201.", 0, 30),
+     "Fed from Busbar 2 per 2245-880-201; as-built confirmed \u2014 "
+     "CMHI121-871-001 Rev Z feeders 1700F1/F4, slip ring, Main deck "
+     "FR55 PS.", 0, 30),
     ("SAT diving spread \u2014 normal ops", 990.0, "bus13", "Diving",
      "Lexmar ELA 05313-00-006 Rev F: essential 949.6 kW @ 440 V + 41.8 kW "
      "@ 230 V. Cross-check: 2245-880-201 books T1+T2 = 956 kW in the dive "
-     "scenario. Fed via T1 (Bus 1) / T2 (Bus 3).", 0, 40),
+     "scenario. Fed via T1 (Bus 1) / T2 (Bus 3); as-built confirmed \u2014 "
+     "CMHI121-871-001 Rev Z sh 12/32.", 0, 40),
     ("SAT diving spread \u2014 100% duty ceiling", 1637.0, "bus13", "Diving",
      "Lexmar ELA connected load 1595.5 kW @ 440 V + 41.8 kW @ 230 V \u2014 "
      "a ceiling, not an expectation.", 0, 50),
     ("Work-class ROV spread", 265.0, "bus13", "ROV",
      "Budgetary: 400 A \u00d7 480 V 3-ph, PF 0.8 assumed \u2014 confirm "
      "from spread datasheet. Fed via T3 (Bus 1) / T4 (Bus 3) per "
-     "2245-880-201.", 0, 60),
+     "2245-880-201; as-built confirmed \u2014 CMHI121-871-001 Rev Z "
+     "sh 13/33.", 0, 60),
     ("Observation-class ROV", 65.0, "bus13", "ROV",
      "Budgetary: 100 A \u00d7 480 V 3-ph, PF 0.8 assumed \u2014 confirm "
      "from spread datasheet. Fed via T3/T4 (Bus 1/3).", 0, 70),
