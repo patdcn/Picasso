@@ -3,27 +3,35 @@
 #
 # Environment variables to set in the Dokploy UI (NOT committed here):
 #   SECRET_KEY       long random string used to sign session cookies
-#   ADMIN_EMAIL      bootstrap admin email (created on first run)
-#   ADMIN_PASSWORD   bootstrap admin password (used once on first run)
-#   COOKIE_SECURE    "true" once HTTPS/Let's Encrypt is live; "false" until then
+#   ADMIN_EMAIL      bootstrap admin email (created on first run only)
+#   ADMIN_PASSWORD   bootstrap admin password (used once on first run only)
+#   COOKIE_SECURE    "true" once HTTPS is live (Traefik/Let's Encrypt); else "false"
+#   TRUST_PROXY      "true" once the app is reachable ONLY through Traefik; else "false"
 #
 # Optional (enables emailing access requests to admins; leave unset to disable):
 #   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM, SMTP_USE_TLS
 #
-# The worker/redis/postgres services get added here later if/when needed.
+# Routing/TLS is handled by Dokploy's Traefik: add the domain (host
+# portal.dcndiving.com, container port 8050, HTTPS on) in the Dokploy Domains
+# tab. Dokploy injects the Traefik labels and attaches this service to
+# dokploy-network at deploy time — no host port needs to be published.
 services:
   web:
     build: .
     restart: unless-stopped
-    ports:
-      - "8050:8050"
+    # NOTE: the host port publish has been removed on purpose. Traefik reaches
+    # the container internally on port 8050 over dokploy-network, so nothing
+    # needs to be exposed on the host. Re-adding `ports: ["8050:8050"]` would
+    # re-open plaintext, TLS-bypassing access at http://<server-ip>:8050 —
+    # don't, unless you deliberately need direct access for debugging.
     environment:
       - AUTH_DB=/data/auth.db
       - PARAM_DB=/data/parameter.db
       - SECRET_KEY=${SECRET_KEY}
       - ADMIN_EMAIL=${ADMIN_EMAIL}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
-      - COOKIE_SECURE=${COOKIE_SECURE}
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+      - TRUST_PROXY=${TRUST_PROXY:-false}
       # Optional SMTP for access-request notifications (safe to leave blank):
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -33,7 +41,6 @@ services:
       - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
     volumes:
       - picasso_data:/data        # persists auth.db + parameter.db across redeploys
-    # In Dokploy: attach the domain to this service, container port 8050, HTTPS on.
 
 volumes:
   picasso_data:
