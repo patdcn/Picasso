@@ -198,6 +198,22 @@ def delete_user(email):
     return True, f"Deleted user {email}."
 
 
+def set_password(email, new_password):
+    """Reset a user's password. Admin-only: the calling callback MUST verify
+    is_admin_request() first. Rehashes with werkzeug; the env ADMIN_PASSWORD is a
+    first-run seed only and never touches an existing account."""
+    email = (email or "").strip().lower()
+    u = get_user(email)
+    if not u:
+        return False, "User not found."
+    if not new_password or len(new_password) < 6:
+        return False, "Password must be at least 6 characters."
+    with _conn() as c:
+        c.execute("UPDATE users SET password_hash=? WHERE email=?",
+                  (generate_password_hash(new_password), email))
+    return True, f"Password reset for {email}."
+
+
 def verify_login(email, password):
     u_row = None
     with _conn() as c:

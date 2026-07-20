@@ -123,6 +123,18 @@ def layout():
             btn("Delete user", "adm-delete", primary=False),
             status("adm-user-status"),
         ]),
+
+        card([
+            html.H4("Reset password", style={"marginTop": 0}),
+            html.P("Set a new password for the user selected above, then share it "
+                   "with them manually. This is the only way to change a password "
+                   "\u2014 the ADMIN_PASSWORD environment variable only seeds the very "
+                   "first admin and is ignored afterwards.",
+                   style={"color": MUTED, "fontSize": "0.85rem", "marginTop": 0}),
+            input_field("adm-reset-pw", "new password (min 6 characters)", "text"),
+            btn("Reset password", "adm-reset"),
+            status("adm-reset-status"),
+        ]),
     ], style={"maxWidth": "680px"})
 
 
@@ -183,6 +195,27 @@ def _save(_n, email, acc_values, par_values, admin):
     ok, msg = auth.update_user(email, is_admin=("admin" in (admin or [])),
                                modules=modules, param_modules=param_modules)
     return html.Span(msg, style={"color": ACCENT if ok else "#b91c1c"})
+
+
+@callback(
+    Output("adm-reset-status", "children"),
+    Output("adm-reset-pw", "value"),
+    Input("adm-reset", "n_clicks"),
+    State("adm-user-dd", "value"),
+    State("adm-reset-pw", "value"),
+    prevent_initial_call=True,
+)
+def _reset_pw(_n, email, new_pw):
+    if not is_admin():
+        raise PreventUpdate
+    if not email:
+        return html.Span("Select a user above first.", style={"color": "#b91c1c"}), no_update
+    ok, msg = auth.set_password(email, new_pw)
+    if ok:
+        # a fresh password should also lift any brute-force lockout on that account
+        auth.clear_login_failures(email)
+        return html.Span(msg, style={"color": ACCENT}), ""
+    return html.Span(msg, style={"color": "#b91c1c"}), no_update
 
 
 @callback(
