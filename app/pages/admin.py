@@ -11,12 +11,14 @@ import dash
 from dash import html
 
 from app import auth
-from app.adminui import hub_card, MUTED
+from app.adminui import hub_card, is_admin, denied, MUTED
 
 dash.register_page(__name__, path="/admin", name="Admin")  # no category -> not in nav groups
 
 
 def layout():
+    if not is_admin():
+        return denied()
     n = auth.count_pending_requests()
     pending = f"  \u00b7  {n} pending request{'s' if n != 1 else ''}" if n else ""
     return html.Div([

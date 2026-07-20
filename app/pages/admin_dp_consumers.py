@@ -9,9 +9,11 @@ them here once the feeding arrangement is confirmed.
 """
 import dash
 from dash import html, dcc, Input, Output, State, callback, ALL, ctx, no_update
+from dash.exceptions import PreventUpdate
 
 from app import dp_consumers as dcon
-from app.adminui import card, btn, status, back_link, INK, MUTED, ACCENT
+from app.adminui import (card, btn, status, back_link,
+                         is_admin, denied, INK, MUTED, ACCENT)
 
 dash.register_page(__name__, path="/admin/dp-consumers", name="DP power consumers")
 
@@ -96,6 +98,8 @@ def _table(overrides=None):
 
 
 def layout():
+    if not is_admin():
+        return denied()
     return html.Div([
         back_link(),
         html.H3("DP power consumers"),
@@ -154,6 +158,8 @@ def layout():
     prevent_initial_call=True,
 )
 def _save_or_delete(_n, del_clicks, names, ids, kws, buses, cats, srcs, dons):
+    if not is_admin():
+        raise PreventUpdate
     trig = ctx.triggered_id
     if isinstance(trig, dict) and trig.get("type") == "dpcon-del":
         # Guard: pattern-matched buttons fire with n_clicks=0 when the table
@@ -199,6 +205,8 @@ def _save_or_delete(_n, del_clicks, names, ids, kws, buses, cats, srcs, dons):
     prevent_initial_call=True,
 )
 def _move(up_clicks, down_clicks, names, ids, kws, buses, cats, srcs, dons):
+    if not is_admin():
+        raise PreventUpdate
     trig = ctx.triggered_id
     if not (isinstance(trig, dict)
             and trig.get("type") in ("dpcon-up", "dpcon-down")):
@@ -235,6 +243,8 @@ def _move(up_clicks, down_clicks, names, ids, kws, buses, cats, srcs, dons):
     prevent_initial_call=True,
 )
 def _add(_n, name, kw, bus, src):
+    if not is_admin():
+        raise PreventUpdate
     ok, msg = dcon.add(name, kw, bus=bus or "split", source=src or "")
     span = html.Span(msg, style={"color": ACCENT if ok else "#b91c1c"})
     if not ok:

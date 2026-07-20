@@ -9,9 +9,11 @@ delete. Everything is confined to /data by app/volume.py.
 import os
 import dash
 from dash import html, dcc, dash_table, Input, Output, State, callback, no_update, ALL
+from dash.exceptions import PreventUpdate
 
 from app import auth
 from app import volume
+from app.adminui import denied
 
 dash.register_page(__name__, path="/admin/files", name="Data volume")
 
@@ -48,6 +50,8 @@ def _input(id_, ph, width="180px"):
 
 
 def layout():
+    if not _is_admin():
+        return denied()
     return html.Div([
         html.H3("Data volume"),
         html.P(["Browse and manage the persistent ", html.Code("/data"),
@@ -190,6 +194,8 @@ def _selected_rels(data, selected_rows):
     Input("fx-refresh", "data"),
 )
 def _render(cwd, _tick):
+    if not _is_admin():
+        raise PreventUpdate
     _rel, data = _rows_for(cwd or "")
     return data, _crumbs(cwd or ""), _dst_options(), [], None
 

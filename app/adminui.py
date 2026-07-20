@@ -1,9 +1,26 @@
 """Small shared UI helpers for the admin pages (hub + sub-pages)."""
 from dash import html, dcc
 
+from app import auth
+
 INK = "#1f2937"
 MUTED = "#6b7280"
 ACCENT = "#0f766e"
+
+
+def is_admin():
+    """True if the current request is an authenticated administrator."""
+    return auth.is_admin_request()
+
+
+def denied(msg="You don't have permission to view this page."):
+    """Standard 'not authorized' panel returned by admin layouts to non-admins."""
+    return html.Div([
+        html.H3("Not authorized"),
+        html.P(msg, style={"color": MUTED}),
+        dcc.Link("\u2190 Back to portal", href="/",
+                 style={"color": ACCENT, "fontWeight": 600}),
+    ], style={"maxWidth": "640px"})
 
 
 def card(children):

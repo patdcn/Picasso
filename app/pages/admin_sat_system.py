@@ -8,9 +8,11 @@ JSON documents on the data volume via app.sat_system.
 """
 import dash
 from dash import html, dcc, Input, Output, State, callback, ALL, ctx, no_update
+from dash.exceptions import PreventUpdate
 
 from app import sat_system
-from app.adminui import card, btn, status, back_link, INK, MUTED, ACCENT
+from app.adminui import (card, btn, status, back_link,
+                         is_admin, denied, INK, MUTED, ACCENT)
 
 dash.register_page(__name__, path="/admin/sat-system", name="SAT systems")
 
@@ -68,6 +70,8 @@ def _scalar_row():
 
 
 def layout():
+    if not is_admin():
+        return denied()
     systems = sat_system.list_systems()
     first = systems[0]["id"] if systems else NEW
     return html.Div([
@@ -168,6 +172,8 @@ def _rows_from_dom(labels, vols, incs, ids):
     Input("satsys-select", "value"),
 )
 def _load(sel):
+    if not is_admin():
+        raise PreventUpdate
     sysd = sat_system.blank_system() if (sel == NEW or not sel) else \
         (sat_system.get_system(sel) or sat_system.blank_system())
     return (sysd.get("components", []),
@@ -250,6 +256,8 @@ def _volume(vols, incs):
 )
 def _save(_n, cur_id, name, bellvol, bellcfg, storage, working, divers,
           labels, vols, incs, ids):
+    if not is_admin():
+        raise PreventUpdate
     if not (name or "").strip():
         return (html.Span("Give the system a name before saving.", style={"color": "#b91c1c"}),
                 no_update, no_update)
@@ -278,6 +286,8 @@ def _save(_n, cur_id, name, bellvol, bellcfg, storage, working, divers,
     prevent_initial_call=True,
 )
 def _delete(_n, cur_id):
+    if not is_admin():
+        raise PreventUpdate
     if cur_id in (None, NEW):
         return (html.Span("Nothing to delete \u2014 this system isn't saved yet.",
                           style={"color": "#b91c1c"}), no_update, no_update)

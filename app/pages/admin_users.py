@@ -8,10 +8,12 @@ so new tools appear here automatically.
 """
 import dash
 from dash import html, dcc, Input, Output, State, callback, no_update, ALL
+from dash.exceptions import PreventUpdate
 
 from app import auth
 from app import params
-from app.adminui import card, input_field, btn, status, back_link, INK, MUTED, ACCENT
+from app.adminui import (card, input_field, btn, status, back_link,
+                         is_admin, denied, INK, MUTED, ACCENT)
 
 dash.register_page(__name__, path="/admin/users", name="Users & access")
 
@@ -74,6 +76,8 @@ def _requests_list():
 
 
 def layout():
+    if not is_admin():
+        return denied()
     n = auth.count_pending_requests()
     return html.Div([
         back_link(),
@@ -135,6 +139,8 @@ def layout():
     prevent_initial_call=True,
 )
 def _create(_n, email, pw, admin):
+    if not is_admin():
+        raise PreventUpdate
     ok, msg = auth.create_user(email, pw, is_admin=("admin" in (admin or [])))
     if ok:
         return (html.Span(msg, style={"color": ACCENT}), _user_options(), "", "", [])
@@ -149,6 +155,8 @@ def _create(_n, email, pw, admin):
     prevent_initial_call=True,
 )
 def _select(email):
+    if not is_admin():
+        raise PreventUpdate
     u = auth.get_user(email)
     if not u:
         return _module_rows([], []), [], ""
@@ -166,6 +174,8 @@ def _select(email):
     prevent_initial_call=True,
 )
 def _save(_n, email, acc_values, par_values, admin):
+    if not is_admin():
+        raise PreventUpdate
     if not email:
         return html.Span("Select a user first.", style={"color": "#b91c1c"})
     modules = [v[0] for v in (acc_values or []) if v]
@@ -186,6 +196,8 @@ def _save(_n, email, acc_values, par_values, admin):
     prevent_initial_call=True,
 )
 def _delete(_n, email):
+    if not is_admin():
+        raise PreventUpdate
     if not email:
         return (html.Span("Select a user first.", style={"color": "#b91c1c"}),
                 no_update, no_update, no_update, no_update)
@@ -202,6 +214,8 @@ def _delete(_n, email):
     prevent_initial_call=True,
 )
 def _dismiss_request(clicks):
+    if not is_admin():
+        raise PreventUpdate
     trig = dash.callback_context.triggered_id
     if not trig or not any(c for c in (clicks or []) if c):
         return no_update

@@ -14,8 +14,26 @@ app = Dash(__name__, use_pages=True, title="DCN Diving Engineering Portal",
            suppress_callback_exceptions=True)
 server = app.server  # gunicorn target
 
+# ---- reverse-proxy trust (opt-in) ----
+# Set TRUST_PROXY=true once the app is served ONLY through Dokploy's Traefik
+# proxy, so request.remote_addr / request.is_secure reflect the real client and
+# original scheme (via X-Forwarded-*). Leave it false while the container port
+# is reachable directly, or clients could spoof those headers.
+if os.getenv("TRUST_PROXY", "false").lower() == "true":
+    from werkzeug.middleware.proxy_fix import ProxyFix  # noqa: E402
+    server.wsgi_app = ProxyFix(server.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
 # ---- session / cookie security ----
-server.secret_key = os.getenv("SECRET_KEY", "dev-insecure-key-change-me")
+# No insecure fallback: fail closed rather than run with a publicly-known key
+# (which would let anyone forge a signed admin session cookie). Ensure SECRET_KEY
+# is set in the deployment environment before deploying.
+_secret_key = os.getenv("SECRET_KEY")
+if not _secret_key:
+    raise RuntimeError(
+        "SECRET_KEY is not set. Refusing to start with an insecure default. "
+        "Set a long random SECRET_KEY in the deployment environment (Dokploy)."
+    )
+server.secret_key = _secret_key
 server.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
@@ -51,6 +69,10 @@ _GA_DIR = _os.getenv("GA_DATA_DIR", "/data/tools/ga")
 
 @server.route("/ga-file/<path:name>")
 def _ga_file(name):
+    # require a signed-in user with access to the GA reference page (admins pass).
+    user = auth.current_user()
+    if not user or not auth.can_access(user, "/reference/ga"):
+        abort(403)
     # only allow simple filenames within the GA dir
     if "/" in name or "\\" in name or ".." in name:
         abort(404)
@@ -65,6 +87,10 @@ _DP_DOCS_DIR = _os.getenv("DP_DOCS_DIR", "/data/docs/dp")
 
 @server.route("/dp-doc/<path:name>")
 def _dp_doc(name):
+    # require a signed-in user with access to the Picasso DP reference page (admins pass).
+    user = auth.current_user()
+    if not user or not auth.can_access(user, "/reference/picasso-dp"):
+        abort(403)
     if "/" in name or "\\" in name or ".." in name:
         abort(404)
     if (not _os.path.isdir(_DP_DOCS_DIR)

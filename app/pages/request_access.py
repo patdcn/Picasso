@@ -8,6 +8,7 @@ per-module access gate in app/auth.py.
 """
 import dash
 from dash import html, dcc, Input, Output, State, callback, no_update, ALL
+from dash.exceptions import PreventUpdate
 
 from app import auth, mailer
 
@@ -79,6 +80,10 @@ def layout():
     prevent_initial_call=True,
 )
 def _submit(_n, email, app_values, note):
+    user = auth.current_user()
+    if not user:
+        raise PreventUpdate
+    email = user["email"]  # bind to the signed-in user; ignore any client-supplied value
     requested = [v[0] for v in (app_values or []) if v]
     ok, msg = auth.create_access_request(email, requested, note)
     if not ok:

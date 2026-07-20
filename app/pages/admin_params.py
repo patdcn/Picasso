@@ -6,9 +6,11 @@ the params registry, so new parameters appear here automatically.
 """
 import dash
 from dash import html, dcc, Input, Output, State, callback, ALL
+from dash.exceptions import PreventUpdate
 
 from app import params
-from app.adminui import card, btn, status, back_link, INK, MUTED, ACCENT
+from app.adminui import (card, btn, status, back_link,
+                         is_admin, denied, INK, MUTED, ACCENT)
 
 dash.register_page(__name__, path="/admin/params", name="Cost & timing assumptions")
 
@@ -26,6 +28,8 @@ def _param_field(p, value):
 
 
 def layout():
+    if not is_admin():
+        return denied()
     current = params.get_all()
     sections, last_cat = [], None
     for p in params.definitions():
@@ -61,6 +65,8 @@ def layout():
     prevent_initial_call=True,
 )
 def _save_params(_n, values, ids):
+    if not is_admin():
+        raise PreventUpdate
     mapping = {i["key"]: v for i, v in zip(ids or [], values or [])}
     n, msg = params.set_many(mapping)
     return html.Span(msg, style={"color": ACCENT if n else "#b91c1c"})

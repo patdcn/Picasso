@@ -9,9 +9,11 @@ alternator efficiency implied by the 2,851 kWe DG rating.
 """
 import dash
 from dash import html, dcc, Input, Output, State, callback, ALL
+from dash.exceptions import PreventUpdate
 
 from app import params, dpdocs, dp_fuel
-from app.adminui import card, btn, status, back_link, INK, MUTED, ACCENT
+from app.adminui import (card, btn, status, back_link,
+                         is_admin, denied, INK, MUTED, ACCENT)
 
 dash.register_page(__name__, path="/admin/fuel", name="Fuel consumption")
 
@@ -30,6 +32,8 @@ def _field(p, value):
 
 
 def layout():
+    if not is_admin():
+        return denied()
     current = params.get_all()
     fields = []
     for cat, title in (("DP fuel", "DP — DG SFOC curve & density"),
@@ -71,6 +75,8 @@ def layout():
     prevent_initial_call=True,
 )
 def _save(_n, values, ids):
+    if not is_admin():
+        raise PreventUpdate
     mapping = {i["key"]: v for i, v in zip(ids or [], values or [])}
     n, msg = params.set_many(mapping)
     return html.Span(msg, style={"color": ACCENT if n else "#b91c1c"})

@@ -11,8 +11,10 @@ import datetime
 
 import dash
 from dash import html, dcc, Input, Output, State, callback, no_update
+from dash.exceptions import PreventUpdate
 
 from app import activity
+from app.adminui import is_admin, denied
 
 dash.register_page(__name__, path="/admin/activity", name="Activity Log")  # no category
 
@@ -90,6 +92,8 @@ def _table(cols, rows):
 # Layout
 # --------------------------------------------------------------------------- #
 def layout():
+    if not is_admin():
+        return denied()
     emails = activity.known_emails()
     paths = activity.known_paths()
     return html.Div([
@@ -212,6 +216,8 @@ def layout():
     Input("al-clear-refresh", "data"),
 )
 def _render(user, d0, d1, view, path, _n, _clr):
+    if not is_admin():
+        raise PreventUpdate
     user = user or None
     d0 = d0[:10] if d0 else None
     d1 = d1[:10] if d1 else None
@@ -257,6 +263,8 @@ def _render(user, d0, d1, view, path, _n, _clr):
     prevent_initial_call=True,
 )
 def _clear_all(_n, tick):
+    if not is_admin():
+        raise PreventUpdate
     n = activity.clear()
     return (html.Span(f"Deleted the entire activity log ({n} rows).",
                       style={"color": DANGER, "fontWeight": 600}), (tick or 0) + 1)
@@ -271,6 +279,8 @@ def _clear_all(_n, tick):
     prevent_initial_call=True,
 )
 def _clear_before(_n, before, tick):
+    if not is_admin():
+        raise PreventUpdate
     if not before:
         return html.Span("Pick a date first.", style={"color": DANGER}), no_update
     n = activity.clear(before=before[:10])
@@ -288,6 +298,8 @@ def _clear_before(_n, before, tick):
     prevent_initial_call=True,
 )
 def _csv(_n, data):
+    if not is_admin():
+        raise PreventUpdate
     if not data or not data.get("rows"):
         return no_update
     buf = io.StringIO()

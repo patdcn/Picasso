@@ -25,8 +25,19 @@ from app import activity
 
 AUTH_DB = os.getenv("AUTH_DB", "/data/auth.db")
 
-# Paths the guard always lets through (Dash internals, static assets, the login flow).
-PUBLIC_PREFIXES = ("/login", "/logout", "/assets", "/_dash", "/_reload", "/_favicon", "/favicon")
+# Paths the guard always lets through: the login flow, static assets, and the
+# framework's static JS bundles. NOTE: this intentionally does NOT include the
+# blanket "/_dash" prefix. The Dash callback endpoint (/_dash-update-component)
+# and the layout/dependency endpoints (/_dash-layout, /_dash-dependencies) all
+# live under /_dash and MUST require a signed-in session — otherwise anyone can
+# invoke callbacks (create users, edit parameters, delete data) without logging
+# in. Only the static component-suite bundles are safe to serve publicly.
+PUBLIC_PREFIXES = ("/login", "/logout", "/assets",
+                   "/_dash-component-suites", "/_reload", "/_favicon", "/favicon")
+
+# Login throttling (per-email rolling window). Configurable via env.
+LOGIN_MAX_FAILURES = int(os.getenv("LOGIN_MAX_FAILURES", "8"))
+LOGIN_WINDOW_SEC = int(os.getenv("LOGIN_WINDOW_SEC", "900"))
 
 
 # --------------------------------------------------------------------------- #
@@ -88,6 +99,15 @@ def init_db():
                 note       TEXT,
                 status     TEXT NOT NULL DEFAULT 'pending',
                 created_at TEXT NOT NULL
+            )
+        """)
+
+        # failed-login timestamps, used to throttle password brute-forcing.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS login_failures (
+                id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL,
+                ts    TEXT NOT NULL
             )
         """)
 
@@ -232,6 +252,66 @@ def current_user():
     return get_user(session.get("user_email"))
 
 
+def is_admin_request():
+    """True only if the *current request* carries a valid, signed-in admin session.
+
+    Call this at the top of every admin-only callback. The before_request guard
+    protects page navigation, but Dash callbacks POST to /_dash-update-component
+    and are therefore NOT covered by the page-level admin/module checks — each
+    state-changing or data-disclosing admin callback must re-verify here itself.
+    """
+    u = current_user()
+    return bool(u and u.get("is_admin"))
+
+
+# --------------------------------------------------------------------------- #
+# Login throttling
+# --------------------------------------------------------------------------- #
+def _prune_login_failures(c):
+    cutoff = (datetime.datetime.utcnow()
+              - datetime.timedelta(seconds=LOGIN_WINDOW_SEC)).isoformat(timespec="seconds")
+    c.execute("DELETE FROM login_failures WHERE ts < ?", (cutoff,))
+
+
+def record_login_failure(email):
+    email = (email or "").strip().lower()
+    if not email:
+        return
+    with _conn() as c:
+        _prune_login_failures(c)
+        c.execute("INSERT INTO login_failures (email, ts) VALUES (?,?)", (email, _now()))
+
+
+def clear_login_failures(email):
+    email = (email or "").strip().lower()
+    if not email:
+        return
+    with _conn() as c:
+        c.execute("DELETE FROM login_failures WHERE email=?", (email,))
+
+
+def login_locked(email):
+    """(locked, seconds_remaining) for this email, based on recent failures in
+    the rolling window. Shared across gunicorn workers via the database."""
+    email = (email or "").strip().lower()
+    if not email:
+        return False, 0
+    with _conn() as c:
+        _prune_login_failures(c)
+        rows = c.execute("SELECT ts FROM login_failures WHERE email=? ORDER BY ts",
+                         (email,)).fetchall()
+    if len(rows) < LOGIN_MAX_FAILURES:
+        return False, 0
+    try:
+        oldest = datetime.datetime.fromisoformat(rows[0]["ts"])
+    except Exception:
+        return True, LOGIN_WINDOW_SEC
+    remaining = LOGIN_WINDOW_SEC - (datetime.datetime.utcnow() - oldest).total_seconds()
+    if remaining <= 0:
+        return False, 0
+    return True, int(remaining)
+
+
 # --------------------------------------------------------------------------- #
 # Access requests + admin notification recipients
 # --------------------------------------------------------------------------- #
@@ -344,8 +424,16 @@ def register_auth(server):
     def login():
         nxt = request.args.get("next") or "/"
         if request.method == "POST":
-            user = verify_login(request.form.get("email", ""), request.form.get("password", ""))
+            email = request.form.get("email", "")
+            locked, wait = login_locked(email)
+            if locked:
+                mins = max(1, (wait + 59) // 60)
+                return _render_login(
+                    error=f"Too many failed attempts. Try again in about {mins} minute(s).",
+                    nxt=nxt if nxt != "/" else None)
+            user = verify_login(email, request.form.get("password", ""))
             if user:
+                clear_login_failures(email)
                 session["user_email"] = user["email"]
                 session.permanent = True
                 try:
@@ -353,6 +441,7 @@ def register_auth(server):
                 except Exception:
                     pass
                 return redirect(nxt if nxt.startswith("/") else "/")
+            record_login_failure(email)
             return _render_login(error="Invalid email or password.", nxt=nxt if nxt != "/" else None)
         if current_user():
             return redirect("/")
