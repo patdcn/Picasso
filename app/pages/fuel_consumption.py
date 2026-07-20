@@ -34,6 +34,7 @@ MUTED = "#64748b"
 ACCENT = "#0f766e"
 INK = "#0f172a"
 GRID = "#e2e8f0"
+BLUE = "#1d4ed8"
 DG_KW = 2851.0
 PMS_LIMIT = 0.85
 _CARD = {"background": "#ffffff", "border": f"1px solid {GRID}",
@@ -382,9 +383,10 @@ def _plant_lines(est):
 
 def _totals_line(est):
     return html.Div(
-        f'Total: {est["total_kg_h"]:,.0f} kg/h \u2248 {est["t_day"]:.1f} t/day '
-        f'\u2248 {est["m3_day"]:.1f} m\u00b3/day',
-        style={"fontWeight": 700, "fontSize": "14px", "margin": "6px 0 2px"})
+        f'Expected fuel consumption: {est["m3_day"]:.1f} m\u00b3/day '
+        f'({est["t_day"]:.1f} t/day \u00b7 {est["total_kg_h"]:,.0f} kg/h)',
+        style={"fontWeight": 700, "fontSize": "15px", "color": BLUE,
+               "margin": "6px 0 2px"})
 
 
 def _warn_lines(est):
@@ -494,8 +496,9 @@ def _sheet(mode, heading, winddir, wind, current, hs, wu, cu, dp_cons,
                      html.Th("Basis", style=th),
                      html.Th("kg/h", style={**th, "textAlign": "right"}),
                      html.Th("t/day", style={**th, "textAlign": "right"}),
-                     html.Th("m\u00b3/day",
-                             style={**th, "textAlign": "right"})])]
+                     html.Th("m\u00b3/day (expected)",
+                             style={**th, "textAlign": "right",
+                                    "color": BLUE})])]
 
     def row(state, basis_txt, est):
         if est is None:
@@ -508,7 +511,8 @@ def _sheet(mode, heading, winddir, wind, current, hs, wu, cu, dp_cons,
             html.Td(basis_txt, style={**td, "maxWidth": "340px"}),
             html.Td(f'{est["total_kg_h"]:,.0f}', style=tdr),
             html.Td(f'{est["t_day"]:.1f}', style=tdr),
-            html.Td(f'{est["m3_day"]:.1f}', style=tdr)]))
+            html.Td(html.B(f'{est["m3_day"]:.1f}'),
+                    style={**tdr, "color": BLUE})]))
 
     row("DP operations", dp_lab or "select an operating mode to include",
         dp_est)
