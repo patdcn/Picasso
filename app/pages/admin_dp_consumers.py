@@ -26,10 +26,21 @@ _TD = {"padding": "4px 6px", "verticalAlign": "top"}
 _BUS_OPTS = [{"label": dcon.BUS_LABELS[b], "value": b}
              for b in dcon.BUS_CHOICES]
 
+_MV = {"border": "1px solid #d1d5db", "background": "#fff", "color": INK,
+       "borderRadius": "5px", "cursor": "pointer", "padding": "0 6px",
+       "fontSize": "0.7rem", "lineHeight": "1.5"}
+
 
 def _row(r):
     cid = r["id"]
     return html.Tr([
+        html.Td(html.Div([
+            html.Button("\u25b2", id={"type": "dpcon-up", "id": cid},
+                        n_clicks=0, title="Move up", style=_MV),
+            html.Button("\u25bc", id={"type": "dpcon-down", "id": cid},
+                        n_clicks=0, title="Move down", style=_MV),
+        ], style={"display": "flex", "flexDirection": "column", "gap": "2px"}),
+                style={**_TD, "width": "30px"}),
         html.Td(dcc.Input(id={"type": "dpcon-name", "id": cid}, type="text",
                           value=r["name"], debounce=True, style=_IN), style={**_TD, "minWidth": "180px"}),
         html.Td(dcc.Input(id={"type": "dpcon-kw", "id": cid}, type="number",
@@ -59,15 +70,26 @@ def _row(r):
     ])
 
 
-def _table():
-    rs = dcon.rows()
+def _table(overrides=None):
+    rs = []
+    for r in dcon.rows():
+        o = (overrides or {}).get(r["id"])
+        if o:
+            r = dict(r)
+            for f in ("name", "kw", "bus", "category", "source"):
+                if o.get(f) is not None:
+                    r[f] = o[f]
+            if o.get("don_val") is not None:
+                r["default_on"] = 1 if o["don_val"] else 0
+        rs.append(r)
     head = html.Thead(html.Tr([
+        html.Th("Order", style=_TH),
         html.Th("Consumer", style=_TH), html.Th("kW (planning)", style=_TH),
         html.Th("Bus", style=_TH), html.Th("Category", style=_TH),
         html.Th("Source / provenance", style=_TH),
         html.Th("On by default", style=_TH), html.Th("", style=_TH)]))
     body = html.Tbody([_row(r) for r in rs]) if rs else html.Tbody(
-        [html.Tr(html.Td("No consumers defined.", colSpan=7,
+        [html.Tr(html.Td("No consumers defined.", colSpan=8,
                          style={**_TD, "color": MUTED}))])
     return html.Table([head, body],
                       style={"width": "100%", "borderCollapse": "collapse"})
@@ -153,6 +175,43 @@ def _save_or_delete(_n, del_clicks, names, ids, kws, buses, cats, srcs, dons):
         )
     n, msg = dcon.update_many(updates)
     return html.Span(msg, style={"color": ACCENT if n else "#b91c1c"}), _table()
+
+
+@callback(
+    Output("dpcon-status", "children", allow_duplicate=True),
+    Output("dpcon-table", "children", allow_duplicate=True),
+    Input({"type": "dpcon-up", "id": ALL}, "n_clicks"),
+    Input({"type": "dpcon-down", "id": ALL}, "n_clicks"),
+    State({"type": "dpcon-name", "id": ALL}, "value"),
+    State({"type": "dpcon-name", "id": ALL}, "id"),
+    State({"type": "dpcon-kw", "id": ALL}, "value"),
+    State({"type": "dpcon-bus", "id": ALL}, "value"),
+    State({"type": "dpcon-cat", "id": ALL}, "value"),
+    State({"type": "dpcon-src", "id": ALL}, "value"),
+    State({"type": "dpcon-don", "id": ALL}, "value"),
+    prevent_initial_call=True,
+)
+def _move(up_clicks, down_clicks, names, ids, kws, buses, cats, srcs, dons):
+    trig = ctx.triggered_id
+    if not (isinstance(trig, dict)
+            and trig.get("type") in ("dpcon-up", "dpcon-down")):
+        return no_update, no_update
+    # pattern-matched buttons fire with n_clicks=0 on table re-render
+    if not any((up_clicks or []) + (down_clicks or [])):
+        return no_update, no_update
+    ok, msg = dcon.move(trig["id"], -1 if trig["type"] == "dpcon-up" else 1)
+    overrides = {}
+    for i, cid_obj in enumerate(ids or []):
+        overrides[cid_obj["id"]] = dict(
+            name=(names or [])[i] if i < len(names or []) else None,
+            kw=(kws or [])[i] if i < len(kws or []) else None,
+            bus=(buses or [])[i] if i < len(buses or []) else None,
+            category=(cats or [])[i] if i < len(cats or []) else None,
+            source=(srcs or [])[i] if i < len(srcs or []) else None,
+            don_val=(dons or [])[i] if i < len(dons or []) else None,
+        )
+    return (html.Span(msg, style={"color": ACCENT if ok else "#b91c1c"}),
+            _table(overrides))
 
 
 @callback(

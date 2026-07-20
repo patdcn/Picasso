@@ -184,6 +184,29 @@ def update_many(updates):
                    if saved else "Nothing to save.")
 
 
+def move(cid, delta):
+    """Move a consumer one position up (delta=-1) or down (+1) in the display
+    order. Renumbers sort_order 10, 20, 30, ... in the new order, which also
+    repairs any legacy duplicate/zero sort values."""
+    with _conn() as c:
+        ordered = [r["id"] for r in c.execute(
+            "SELECT id FROM dp_consumers ORDER BY sort_order, name").fetchall()]
+        if cid not in ordered:
+            return False, "Unknown consumer."
+        i = ordered.index(cid)
+        j = i + (1 if delta > 0 else -1)
+        if j < 0 or j >= len(ordered):
+            return False, "Already at the " + ("top." if j < 0 else "bottom.")
+        ordered[i], ordered[j] = ordered[j], ordered[i]
+        now = _now()
+        for k, rid in enumerate(ordered):
+            c.execute("UPDATE dp_consumers SET sort_order=? WHERE id=?",
+                      ((k + 1) * 10, rid))
+        c.execute("UPDATE dp_consumers SET updated_at=? WHERE id IN (?, ?)",
+                  (now, cid, ordered[i]))
+    return True, "Order updated."
+
+
 def delete(cid):
     with _conn() as c:
         c.execute("DELETE FROM dp_consumers WHERE id=?", (cid,))
