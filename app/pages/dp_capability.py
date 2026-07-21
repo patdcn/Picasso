@@ -194,8 +194,17 @@ def _reference_block():
         [html.Tbody(rows)],
         style={"width": "100%", "fontSize": "12px", "borderCollapse": "collapse"},
         className="dpc-table")
-    prov = html.Ul([html.Li(dpdocs.linkify(p), style={"marginBottom": "3px"})
-                    for p in dp.provenance()],
+    prov_items = [html.Li(dpdocs.linkify(p), style={"marginBottom": "3px"})
+                  for p in dp.provenance()]
+    prov_items.append(html.Li(
+        dpdocs.link(
+            "sld_main",
+            "Bus split & consumer assignments per main single line 2245-881-001 "
+            "Rev 1: Bus 1 = DG1+DG2, Bus 2 = DG3 (single generator), "
+            "Bus 3 = DG4+DG5 (+ harbour set DG6, port only). PS/SB pair = Bus 1+3; "
+            "the 40 T crane sits on Bus 2 and is lost with DG3."),
+        style={"marginBottom": "3px"}))
+    prov = html.Ul(prov_items,
                    style={"fontSize": "12px", "color": MUTED, "paddingLeft": "18px"})
     disclaimer = html.Div([
         html.B("Use limits. "), "Envelopes are theoretical capability at the study's fixed "
@@ -270,7 +279,8 @@ def _prefill_aux(selected, mode):
         f"Selected {total:,.0f} kW \u2192 Bus 1 {loads['bus1']:,.0f} / "
         f"Bus 2 {loads['bus2']:,.0f} / Bus 3 {loads['bus3']:,.0f} kW. "
         "Assignments per El. Load Balance 2245-880-201, verified against "
-        "as-built single line CMHI121-871-001 Rev Z (PS/SB pairs on "
+        "main single line 2245-881-001 Rev 1 and as-built single line "
+        "CMHI121-871-001 Rev Z (Bus 2 = DG3; PS/SB pairs on "
         "Bus 1+3); \u2018split\u2019 shares over the live buses weighted by "
         "running DGs.")]
     for w in warns:

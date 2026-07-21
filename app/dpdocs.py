@@ -61,6 +61,10 @@ KNOWN = {
         "2245-880-201_El_Load_Balance_Main_AC_Rev7.pdf",
         "Hareid Group — El. Load Balance Calc. Main AC Sys. 690V/450V/230V "
         "(2245-880-201 Rev 7, 2016; DNV-GL approved 2016-07-22)"),
+    "sld_main": (
+        "2245-881-001_Main_Single_Line_AC_690_450_230_Rev1.pdf",
+        "Marin Teknikk / Hareid Group — Main Single Line Diagram AC Sys. "
+        "690V/450V/230V (2245-881-001 Rev 1; DNV-GL approved 2015-08-04)"),
     "single_line": (
         "CMHI121-871-001_690V_MSB_Single_Line_RevZ.pdf",
         "CMHI Shenzhen — 690V Main Switchboard Single Line System Block "
@@ -121,6 +125,7 @@ _PATTERNS = {
     "dpom_addendum_2026": r"(GM-PRJ123124-)?RP-?003\b",
     "fmea_addendum_prs": r"GM-PRJ121125-RP-?001",
     "load_balance": r"2245-880-201",
+    "sld_main": r"2245-881-001",
     "engine_pg": r"L27/38",
     "single_line": r"CMHI121-?871-?001",
     "swbd_230": r"CMHI121-?871-?003",
