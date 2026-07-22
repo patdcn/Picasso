@@ -76,6 +76,10 @@ UNIT_OPTS = [{"label": u, "value": u} for u in
 FILTER_FIELDS = ("category", "subcat", "ownership", "region", "unit")
 
 
+def _cur_opts():
+    return [{"label": c["code"], "value": c["code"]} for c in repo.list_currencies()]
+
+
 def _is_lib_admin():
     user = auth.current_user()
     return bool(user and repo.is_lib_admin(user["email"], user.get("is_admin")))
@@ -91,8 +95,7 @@ def _all_items(rate_set_id):
                 "description": i.get("description") or i.get("function") or "",
                 "category": LIB_LABEL[lib],
                 "subcat": i.get("category") or "",
-                "ownership": (i.get("ownership") or "")
-                if lib in ("personnel", "equipment") else "",
+                "ownership": i.get("ownership") or "internal",
                 "region": i.get("region") or "ALL",
                 "unit": i.get("unit") or "",
                 "currency": i.get("currency") or "",
@@ -142,8 +145,8 @@ def _edit_row(r, cats_by_lib, td):
                 if msc else "", style=td),
         html.Td(dcc.Dropdown(id={"type": "cl-ed-own", "u": u}, options=OWN_OPTS,
                              value=r["ownership"] or "internal", clearable=False,
-                             style={"fontSize": "0.78rem", "width": "110px"})
-                if not msc else "", style=td),
+                             style={"fontSize": "0.78rem", "width": "110px"}),
+                style=td),
         html.Td(dcc.Dropdown(id={"type": "cl-ed-reg", "u": u}, options=REG_OPTS,
                              value=r["region"], clearable=False,
                              style={"fontSize": "0.78rem", "width": "120px"}),
@@ -152,9 +155,10 @@ def _edit_row(r, cats_by_lib, td):
                              value=r["unit"] or "day", clearable=False,
                              style={"fontSize": "0.78rem", "width": "100px"}),
                 style=td),
-        html.Td(dcc.Input(id={"type": "cl-ed-cur", "u": u},
-                          value=r["currency"] or "USD",
-                          style={**SMALL, "width": "60px"}), style=td),
+        html.Td(dcc.Dropdown(id={"type": "cl-ed-cur", "u": u}, options=_cur_opts(),
+                             value=r["currency"] or "USD", clearable=False,
+                             style={"fontSize": "0.78rem", "width": "85px"}),
+                style=td),
     ]
     if per:
         cells.append(html.Td(html.Div([
@@ -234,6 +238,10 @@ def _overview(rate_set_id, filters, edit_uuid=None, status=""):
                 html.Button("Duplicate", id={"type": "cl-dup", "u": r["uuid"],
                                              "lib": r["lib"]}, n_clicks=0,
                             style=BTN_GHOST),
+                html.Button("Delete", id={"type": "cl-del", "u": r["uuid"],
+                                          "lib": r["lib"]}, n_clicks=0,
+                            style={**BTN_GHOST, "color": RED,
+                                   "border": "1px solid #fecaca"}),
             ], style={"whiteSpace": "nowrap"}), style=td))
         body.append(html.Tr(cells, style={"borderBottom": f"1px solid {LINE}"}))
     heads = ["Code", "Description", "Category", "Sub-category", "Int / Ext",
@@ -282,12 +290,11 @@ def _form_body(lib, division, prefill=None):
                                  value=pf.get("subcat") or None,
                                  placeholder="Sub-category *",
                                  style={**DD, "width": "220px"}))
-        row1.append(html.Div(dcc.Dropdown(id="cl-req-own"), style={"display": "none"}))
     else:
-        row1.append(dcc.Dropdown(id="cl-req-own", options=OWN_OPTS,
-                                 value=pf.get("ownership") or "internal",
-                                 clearable=False, style={**DD, "width": "140px"}))
         row1.append(html.Div(dcc.Dropdown(id="cl-req-cat"), style={"display": "none"}))
+    row1.append(dcc.Dropdown(id="cl-req-own", options=OWN_OPTS,
+                             value=pf.get("ownership") or "internal",
+                             clearable=False, style={**DD, "width": "140px"}))
     row1.append(dcc.Dropdown(id="cl-req-region", options=REG_OPTS,
                              value=pf.get("region") or None, placeholder="Region *",
                              style={**DD, "width": "150px"}))
@@ -295,8 +302,9 @@ def _form_body(lib, division, prefill=None):
     row2 = [dcc.Dropdown(id="cl-req-unit", options=UNIT_OPTS,
                          value=pf.get("unit") or "day", clearable=False,
                          style={**DD, "width": "110px"}),
-            dcc.Input(id="cl-req-cur", value=pf.get("currency") or "USD",
-                      placeholder="Currency *", style={**FIELD, "width": "100px"})]
+            dcc.Dropdown(id="cl-req-cur", options=_cur_opts(),
+                         value=pf.get("currency") or "USD", clearable=False,
+                         style={**DD, "width": "110px"})]
     if is_per:
         row2 += [dcc.Input(id="cl-req-off", type="number", value=pf.get("office_rate"),
                            placeholder="Office rate", style={**FIELD, "width": "120px"}),
@@ -401,7 +409,7 @@ def layout(**_qs):
         return html.Div()
     active = repo.active_rate_set()
     rs_id = active["id"] if active else None
-    return html.Div([
+    return html.Div(className="wide-page", children=[
         html.H3("Calculation libraries"),
         html.P("New items go through a check-in request; a library admin reviews "
                "before anything lands. The selectors below feed the request form. "
@@ -435,6 +443,9 @@ def layout(**_qs):
 
         # (3) queue (library admins)
         html.Div(id="cl-queue", children=_queue_body()),
+
+        # (3b) currencies & FX (library admins)
+        html.Div(id="cl-fx-wrap", children=_fx_card(rs_id)),
 
         # (4) unified overview
         dcc.Store(id="cl-filters", data={}),
@@ -509,6 +520,7 @@ def _live_dup(code, fctx):
 
 @callback(Output("cl-req-status", "children"),
           Output("cl-queue", "children", allow_duplicate=True),
+          Output("cl-form", "children", allow_duplicate=True),
           Input("cl-req-btn", "n_clicks"),
           State("cl-form-ctx", "data"),
           State("cl-req-desc", "value"), State("cl-req-cat", "value"),
@@ -522,7 +534,7 @@ def _submit(n, fctx, desc, cat, own, region, unit, cur, rate, off, yard, osh,
             code, note):
     user = auth.current_user()
     if not n or not user or not fctx:
-        return no_update, no_update
+        return no_update, no_update, no_update
     lib, division = fctx["lib"], fctx["division"]
     is_per, is_msc = lib == "personnel", lib in ("materials", "subcontracting")
     missing = []
@@ -542,19 +554,17 @@ def _submit(n, fctx, desc, cat, own, region, unit, cur, rate, off, yard, osh,
     elif rate is None:
         missing.append("rate")
     if missing:
-        return "Required: " + ", ".join(missing) + ".", no_update
+        return "Required: " + ", ".join(missing) + ".", no_update, no_update
     if repo.find_item_by_code(lib, code=code.strip()):
-        return "Duplicate code - see the message above.", no_update
-    item = {"code": code.strip(), "region": region, "unit": unit or "day"}
+        return "Duplicate code - see the message above.", no_update, no_update
+    item = {"code": code.strip(), "region": region, "unit": unit or "day",
+            "ownership": own or "internal"}
     if is_per:
         item["function"] = desc.strip()
-        item["ownership"] = own or "internal"
     else:
         item["description"] = desc.strip()
         if is_msc:
             item["category"] = cat
-        else:
-            item["ownership"] = own or "internal"
     rr = {"currency": cur.strip().upper()}
     if is_per:
         rr.update(office_rate=off, yard_rate=yard, offshore_rate=osh)
@@ -562,7 +572,9 @@ def _submit(n, fctx, desc, cat, own, region, unit, cur, rate, off, yard, osh,
         rr.update(rate=rate)
     repo.submit_request(f"{lib}_item", division, {"item": item, "rates": [rr]},
                         user["email"], note=(note or "").strip() or None)
-    return f"Submitted for review: {code.strip()}.", _queue_body()
+    # fresh, emptied form for the next entry (same lib/div)
+    return (f"Submitted for review: {code.strip()}.", _queue_body(),
+            _form_body(lib, division))
 
 
 # --------------------------------------------------------------------------- #
@@ -583,6 +595,110 @@ def _review(_ok, _no, filters, rs_id):
     user = auth.current_user()
     repo.review_request(trig["id"], trig["type"] == "cl-req-ok", user["email"])
     return _queue_body(), _overview(rs_id, filters)
+
+
+@callback(Output("cl-table", "children", allow_duplicate=True),
+          Input({"type": "cl-del", "u": ALL, "lib": ALL}, "n_clicks"),
+          State("cl-filters", "data"), State("cl-rsid", "data"),
+          prevent_initial_call=True)
+def _delete(_clicks, filters, rs_id):
+    trig = ctx.triggered_id
+    if not isinstance(trig, dict) or not ctx.triggered[0]["value"]:
+        raise PreventUpdate
+    if not _is_lib_admin():
+        raise PreventUpdate
+    repo.deactivate_item(trig["lib"], trig["u"])
+    return _overview(rs_id, filters)
+
+
+# --------------------------------------------------------------------------- #
+# currencies & FX (library admins; interim: live rates from the internet)
+# --------------------------------------------------------------------------- #
+def _fx_card(rs_id, status=""):
+    if not _is_lib_admin():
+        return html.Div()
+    fx = repo.get_fx(rs_id) if rs_id else {}
+    rows = [html.Tr([
+        html.Td(c["code"], style={"padding": "4px 8px",
+                                  "fontFamily": "ui-monospace,monospace"}),
+        html.Td(c["name"], style={"padding": "4px 8px"}),
+        html.Td("1.000000" if c["code"] == "USD"
+                else (f"{fx.get(c['code']):.6f}" if fx.get(c["code"]) else "\u2014"),
+                style={"padding": "4px 8px", "textAlign": "right",
+                       "fontFamily": "ui-monospace,monospace"}),
+    ], style={"borderBottom": f"1px solid {LINE}"})
+        for c in repo.list_currencies()]
+    return html.Div([
+        html.H4("Currencies & exchange rates (library admin)",
+                style={"marginTop": 0}),
+        html.P("Rate = 1 unit in USD, stored in the ACTIVE rate set and embedded in "
+               "each calc at creation. 'Fetch live rates' pulls current ECB-based "
+               "conversions from the internet (interim solution); values can be "
+               "overridden manually.",
+               style={"color": MUTED, "fontSize": "0.83rem"}),
+        html.Table([html.Thead(html.Tr([html.Th(h, style={
+            "textAlign": "left", "padding": "4px 8px", "fontSize": "0.75rem",
+            "color": MUTED, "borderBottom": f"2px solid {LINE}"})
+            for h in ("Code", "Name", "\u2192 USD")])), html.Tbody(rows)],
+            style={"borderCollapse": "collapse", "minWidth": "380px"}),
+        html.Div([
+            dcc.Input(id="cl-fx-code", placeholder="New currency code (e.g. AED)",
+                      style={**FIELD, "width": "220px"}),
+            dcc.Input(id="cl-fx-name", placeholder="Name",
+                      style={**FIELD, "width": "200px"}),
+            html.Button("Add currency", id="cl-fx-add", n_clicks=0, style=BTN_GHOST),
+            html.Span(" | ", style={"color": LINE}),
+            dcc.Input(id="cl-fx-manual-cur", placeholder="Code",
+                      style={**FIELD, "width": "90px", "marginLeft": "8px"}),
+            dcc.Input(id="cl-fx-manual-rate", type="number",
+                      placeholder="\u2192 USD", style={**FIELD, "width": "120px"}),
+            html.Button("Set manually", id="cl-fx-set", n_clicks=0, style=BTN_GHOST),
+            html.Button("Fetch live rates", id="cl-fx-live", n_clicks=0, style=BTN),
+        ], style={**ROW, "marginTop": "10px"}),
+        html.Div(status, style={"fontSize": "0.83rem", "marginTop": "6px",
+                                "minHeight": "1.1em", "color": TEAL,
+                                "fontWeight": 600}),
+    ], style=CARD)
+
+
+@callback(Output("cl-fx-wrap", "children"),
+          Output("cl-form", "children", allow_duplicate=True),
+          Input("cl-fx-add", "n_clicks"), Input("cl-fx-set", "n_clicks"),
+          Input("cl-fx-live", "n_clicks"),
+          State("cl-fx-code", "value"), State("cl-fx-name", "value"),
+          State("cl-fx-manual-cur", "value"), State("cl-fx-manual-rate", "value"),
+          State("cl-rsid", "data"), State("cl-form-ctx", "data"),
+          prevent_initial_call=True)
+def _fx(n_add, n_set, n_live, code, name, mcur, mrate, rs_id, fctx):
+    if not _is_lib_admin() or not rs_id:
+        raise PreventUpdate
+    trig = ctx.triggered_id
+    msg = ""
+    if trig == "cl-fx-add" and n_add:
+        if not code:
+            msg = "Give the new currency a code."
+        else:
+            repo.add_currency(code.strip().upper(), (name or code).strip())
+            msg = (f"{code.strip().upper()} added - set its rate manually or via "
+                   "Fetch live rates. It is now in the currency dropdowns.")
+    elif trig == "cl-fx-set" and n_set:
+        if not (mcur and mrate):
+            msg = "Currency code and rate are required."
+        else:
+            repo.add_currency(mcur.strip().upper(), mcur.strip().upper())
+            repo.set_fx(rs_id, mcur.strip().upper(), float(mrate))
+            msg = f"FX {mcur.strip().upper()} \u2192 USD = {mrate} saved."
+    elif trig == "cl-fx-live" and n_live:
+        updated, errors = repo.fetch_live_fx(rs_id)
+        parts = []
+        if updated:
+            parts.append("Updated: " + ", ".join(
+                f"{k}={v}" for k, v in sorted(updated.items())))
+        parts += errors
+        msg = "; ".join(parts) or "Nothing to update."
+    fctx = fctx or {"lib": "personnel", "division": "OFF"}
+    return (_fx_card(rs_id, status=msg),
+            _form_body(fctx["lib"], fctx["division"]))
 
 
 # --------------------------------------------------------------------------- #
@@ -668,23 +784,18 @@ def _edit_save(_s, descs, cats, owns, regs, units, curs, rates, offs, yards, osh
     tbl = repo.base_lib(lib)[0]
     data = {"uuid": u, "division": item["division"], "erp_no": item.get("erp_no"),
             "region": region or "ALL", "unit": unit or "day"}
+    data["ownership"] = own or "internal"
     if tbl == "personnel":
         data["function"] = desc.strip()
-        data["ownership"] = own or "internal"
     else:
         data["description"] = desc.strip()
         if tbl == "misc":
             data["category"] = cat or item.get("category")
-        else:
-            data["ownership"] = own or "internal"
     # code letters follow ownership/region edits (collision-checked)
     parts = item["code"].split("-")
-    if len(parts) >= 3:
-        if tbl != "misc" and len(parts) == 5:
-            parts[2] = repo.OWN_LETTER[own or "internal"]
-            parts[3] = repo.REGION_LETTER.get(region or "ALL", "A")
-        elif len(parts) == 4:
-            parts[2] = repo.REGION_LETTER.get(region or "ALL", "A")
+    if len(parts) == 5:
+        parts[2] = repo.OWN_LETTER[own or "internal"]
+        parts[3] = repo.REGION_LETTER.get(region or "ALL", "A")
         new_code = "-".join(parts)
         clash = repo.find_item_by_code(lib, code=new_code)
         if clash and clash["uuid"] != u:

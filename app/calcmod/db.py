@@ -16,7 +16,7 @@ import uuid as _uuid
 
 CALC_DB = os.getenv("CALC_DB", "/data/calc.db")
 
-SCHEMA_REV = 3
+SCHEMA_REV = 4
 _SCHEMA_FILE = os.path.join(os.path.dirname(__file__), "schema.sql")
 
 SEED_DIVISIONS = [("CIV", "Civil"), ("OFF", "Offshore"), ("HYD", "Hydropower")]
@@ -24,8 +24,7 @@ SEED_REGIONS = [("EUR", "Europe"), ("WAF", "West Africa"),
                 ("UAE", "United Arab Emirates"), ("SEA", "South East Asia"),
                 ("ALL", "All regions (rate fallback)")]
 SEED_CURRENCIES = [("USD", "US Dollar", "$"), ("EUR", "Euro", "\u20ac"),
-                   ("GBP", "Pound Sterling", "\u00a3"),
-                   ("AED", "UAE Dirham", "AED"), ("SGD", "Singapore Dollar", "S$")]
+                   ("GBP", "Pound Sterling", "\u00a3")]
 
 # Four elements, aligned with IBIS and Business Central so a future export
 # maps one-to-one. Internal/external is a refinement WITHIN labor and

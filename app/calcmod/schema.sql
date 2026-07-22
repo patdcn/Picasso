@@ -1,11 +1,11 @@
 -- ============================================================
---  DCN CALCULATION MODULE - calc.db - Schema Rev 3
+--  DCN CALCULATION MODULE - calc.db - Schema Rev 4
 --  Base currency: USD. All consolidated totals normalised to USD
 --  via the fx snapshot embedded in each revision.
 --  PRAGMA user_version marks the schema revision for migrations.
 -- ============================================================
 
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 
 -- ---------------- dimensions ----------------
 
@@ -107,6 +107,8 @@ CREATE TABLE IF NOT EXISTS misc_items (
     category TEXT NOT NULL,                     -- travel/fuel/gas/accommodation/service
     description TEXT NOT NULL,
     unit TEXT NOT NULL,
+    ownership TEXT NOT NULL DEFAULT 'internal'
+        CHECK (ownership IN ('internal','external')),
     region TEXT NOT NULL DEFAULT 'ALL' REFERENCES regions(code),
     active INTEGER NOT NULL DEFAULT 1
 );

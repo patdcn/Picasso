@@ -296,3 +296,6 @@ a.nav-footer-addr:hover { color: #0f766e; text-decoration: underline; }
   /* the planner prints the plot + summary + method full-width */
   .dpe-print-tight .js-plotly-plot { max-width: 100% !important; }
 }
+
+/* ------- calc module: full-width opt-in (pages containing .wide-page) ------- */
+.content:has(.wide-page) { max-width: none; }

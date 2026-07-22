@@ -198,6 +198,53 @@ def add_currency(code, name, symbol=None):
         c.close()
 
 
+def deactivate_item(lib, item_uuid):
+    """Soft delete: the item disappears from library lists and pickers.
+    Existing calcs are untouched (their snapshots are self-contained)."""
+    tbl, _el = base_lib(lib)
+    it, _ = _ITEM_TABLES[tbl]
+    c = conn()
+    try:
+        c.execute(f"UPDATE {it} SET active=0 WHERE uuid=?", (item_uuid,))
+        c.commit()
+    finally:
+        c.close()
+
+
+def fetch_live_fx(rate_set_id, fetcher=None):
+    """Update rate_to_usd for every non-USD currency in the currencies table
+    from internet exchange rates (frankfurter.app, ECB data; no API key).
+
+    Returns (updated: dict, errors: list). `fetcher` is injectable for tests.
+    Interim solution as agreed - a curated FX table per rate set remains the
+    system of record; this only fills it."""
+    import json as _json
+    import urllib.request
+
+    def _default_fetcher():
+        with urllib.request.urlopen(
+                "https://api.frankfurter.app/latest?from=USD", timeout=10) as r:
+            return _json.loads(r.read().decode())
+
+    try:
+        data = (fetcher or _default_fetcher)()
+        rates = data.get("rates") or {}
+    except Exception as e:
+        return {}, [f"Could not fetch live rates: {e}"]
+    updated, errors = {}, []
+    for cur in [c["code"] for c in list_currencies()]:
+        if cur == "USD":
+            set_fx(rate_set_id, "USD", 1.0)
+            continue
+        if cur in rates and rates[cur]:
+            val = 1.0 / float(rates[cur])       # 1 CUR -> USD
+            set_fx(rate_set_id, cur, round(val, 6))
+            updated[cur] = round(val, 6)
+        else:
+            errors.append(f"No live rate for {cur}")
+    return updated, errors
+
+
 def list_currencies():
     c = conn()
     try:
@@ -318,10 +365,9 @@ def suggest_code(lib, division, ownership="internal", region="ALL",
     number across the whole library table is allocated."""
     tbl, _el = base_lib(lib)
     it, _ = _ITEM_TABLES[tbl]
-    seg = [CODE_PREFIX[lib], DIV_LETTER.get(division, division)]
-    if tbl != "misc":
-        seg.append(OWN_LETTER.get(ownership or "internal", "I"))
-    seg.append(REGION_LETTER.get(region or "ALL", "A"))
+    seg = [CODE_PREFIX[lib], DIV_LETTER.get(division, division),
+           OWN_LETTER.get(ownership or "internal", "I"),
+           REGION_LETTER.get(region or "ALL", "A")]
     c = conn()
     try:
         num = None
@@ -387,7 +433,7 @@ def upsert_item(lib, data):
     tbl, _el = base_lib(lib)
     it, _ = _ITEM_TABLES[tbl]
     u = data.get("uuid") or new_uuid()
-    if tbl in ("personnel", "equipment") and not data.get("ownership"):
+    if not data.get("ownership"):
         data = {**data, "ownership": "internal"}
     if not data.get("region"):
         data = {**data, "region": "ALL"}
@@ -396,7 +442,7 @@ def upsert_item(lib, data):
             "personnel": ("erp_no", "code", "division", "function", "ownership",
                           "unit", "region", "notes"),
             "misc": ("erp_no", "code", "division", "category", "description",
-                     "unit", "region")}[tbl]
+                     "unit", "ownership", "region")}[tbl]
     if tbl == "personnel" and not data.get("unit"):
         data = {**data, "unit": "day"}
     c = conn()

@@ -194,7 +194,8 @@ def _rs_panel():
                                "cursor": "pointer", "fontWeight": 600}),
         ], style={"marginBottom": "10px"}),
         html.Div([
-            html.H5("FX (1 unit \u2192 USD)", style={"margin": "8px 0 4px"}),
+            html.H5("Currencies & FX (1 unit \u2192 USD)",
+                    style={"margin": "8px 0 4px"}),
             dcc.Input(id="ac-fx-cur", placeholder="Currency (EUR)",
                       style={**FIELD, "width": "130px"}),
             dcc.Input(id="ac-fx-rate", type="number", placeholder="Rate to USD",
@@ -202,6 +203,11 @@ def _rs_panel():
             html.Button("Set FX", id="ac-fx-set", n_clicks=0,
                         style={"padding": "7px 12px", "borderRadius": "8px",
                                "border": f"1px solid {LINE}", "background": "#fff",
+                               "cursor": "pointer", "marginRight": "10px"}),
+            html.Button("Fetch live rates (internet)", id="ac-fx-live", n_clicks=0,
+                        style={"padding": "7px 12px", "borderRadius": "8px",
+                               "border": "none", "background": ACCENT,
+                               "color": "#fff", "fontWeight": 600,
                                "cursor": "pointer"}),
         ]),
         html.Div([
@@ -341,7 +347,8 @@ def _review(_ok, _no):
 
 @callback(Output("ac-rs-status", "children"),
           Input("ac-rs-create", "n_clicks"), Input("ac-rs-activate", "n_clicks"),
-          Input("ac-fx-set", "n_clicks"), Input("ac-mk-set", "n_clicks"),
+          Input("ac-fx-set", "n_clicks"), Input("ac-fx-live", "n_clicks"),
+          Input("ac-mk-set", "n_clicks"),
           State("ac-rs-label", "value"), State("ac-rs-copy", "value"),
           State("ac-rs-sel", "value"),
           State("ac-fx-cur", "value"), State("ac-fx-rate", "value"),
@@ -350,7 +357,7 @@ def _review(_ok, _no):
           State("ac-mk-oh", "value"), State("ac-mk-rk", "value"),
           State("ac-mk-pf", "value"), State("ac-mk-mg", "value"),
           prevent_initial_call=True)
-def _rates(n_cr, n_act, n_fx, n_mk, label, copy_from, sel, fx_cur, fx_rate,
+def _rates(n_cr, n_act, n_fx, n_live, n_mk, label, copy_from, sel, fx_cur, fx_rate,
            mk_div, mk_reg, ll, le, oh, rk, pf, mg):
     if not is_admin():
         raise PreventUpdate
@@ -370,6 +377,16 @@ def _rates(n_cr, n_act, n_fx, n_mk, label, copy_from, sel, fx_cur, fx_rate,
             return "Select the rate set to activate."
         repo.activate_rate_set(sel)
         return "Activated. New calculations now snapshot from this set."
+    if trig == "ac-fx-live":
+        if not sel:
+            return "Select the rate set to fill with live rates."
+        updated, errors = repo.fetch_live_fx(sel)
+        parts = []
+        if updated:
+            parts.append("Updated: " + ", ".join(
+                f"{k}={v}" for k, v in sorted(updated.items())))
+        parts += errors
+        return "; ".join(parts) or "Nothing to update."
     if trig == "ac-fx-set":
         if not (sel and fx_cur and fx_rate):
             return "Select a rate set and give currency + rate."
