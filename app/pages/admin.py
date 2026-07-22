@@ -62,6 +62,12 @@ def layout():
                   " without going through the public repo."],
                  "/admin/files", "Open data volume explorer"),
 
+        hub_card("Calculation module",
+                 "Division grants (edit/read, library admin), the library check-in "
+                 "queue, versioned rate sets with FX and markups, and calc.db / "
+                 ".qcalc backups.",
+                 "/admin/calc", "Open calculation module"),
+
         hub_card("Activity log",
                  "Sign-ins and tool usage across users \u2014 who accessed which tool and when.",
                  "/admin/activity", "Open activity log"),
