@@ -53,6 +53,7 @@ CARD = {"background": "#fff", "border": f"1px solid {LINE}", "borderRadius": "12
 
 BASIS_OPTS = [{"label": b, "value": b} for b in ("offshore", "yard", "office", "unit")]
 ORIGIN_OPTS = [{"label": o, "value": o} for o in ("local", "expat")]
+OWN_OPTS = [{"label": "int.", "value": "internal"}, {"label": "ext.", "value": "external"}]
 ELEMENT_OPTS = [{"label": ELEMENT_LABELS[e], "value": e} for e in ELEMENTS]
 
 
@@ -169,8 +170,14 @@ def _lines_table(cx, block_id, snap, res):
                                  value=ln["rate_basis"], clearable=False,
                                  disabled=(not ed) or (not is_per),
                                  style={"width": "100px", "fontSize": "0.78rem"}), style=td),
+            html.Td(dcc.Dropdown(id={"type": "ce-ln-own", "id": ln["id"]}, options=OWN_OPTS,
+                                 value=ln.get("ownership") or "internal", clearable=False,
+                                 disabled=(not ed) or ln["element"] not in
+                                 ("labor", "equipment"),
+                                 style={"width": "80px", "fontSize": "0.78rem"}), style=td),
             html.Td(dcc.Dropdown(id={"type": "ce-ln-origin", "id": ln["id"]}, options=ORIGIN_OPTS,
-                                 value=ln["origin"], clearable=False, disabled=not ed,
+                                 value=ln["origin"], clearable=False,
+                                 disabled=(not ed) or ln["element"] != "labor",
                                  style={"width": "90px", "fontSize": "0.78rem"}), style=td),
             html.Td(dcc.Input(id={"type": "ce-ln-ovr", "id": ln["id"]}, type="number",
                               value=ln["unit_rate_override"], placeholder="snapshot",
@@ -196,7 +203,7 @@ def _lines_table(cx, block_id, snap, res):
                                                       "fontSize": "0.75rem"}, colSpan=2),
             html.Td(dcc.Input(id={"type": "ce-ref-qty", "id": r["id"]}, type="number",
                               value=r["qty"], debounce=True, disabled=not ed, style=NUM),
-                    style=td, colSpan=3),
+                    style=td, colSpan=4),
             html.Td(""),
             html.Td(_fmt(unit_cost * r["qty"]), style={**td, "textAlign": "right",
                                                        "fontFamily": "ui-monospace,monospace",
@@ -207,7 +214,8 @@ def _lines_table(cx, block_id, snap, res):
     return html.Table([
         html.Thead(html.Tr([html.Th(h, style=th) for h in
                             ("Code", "Description", "Element", "Qty", "Dur",
-                             "Basis", "Origin", "Rate ovr", "Cost+levy USD", "")])),
+                             "Basis", "Own", "Origin", "Rate ovr", "Cost+levy USD",
+                             "")])),
         html.Tbody(rows + ref_rows),
     ], style={"borderCollapse": "collapse", "width": "100%"})
 
@@ -267,8 +275,9 @@ def _block_panel(cx, block_id):
                             "fontSize": "0.8rem"}),
         dcc.Input(id="ce-add-desc", placeholder="Free-text description",
                   style={**FIELD, "width": "200px", "marginRight": "8px"}),
-        dcc.Dropdown(id="ce-add-el", options=ELEMENT_OPTS, placeholder="Element",
-                     style={"width": "180px", "display": "inline-block",
+        dcc.Dropdown(id="ce-add-el", options=ELEMENT_OPTS,
+                     placeholder="Element (auto from library item)",
+                     style={"width": "210px", "display": "inline-block",
                             "verticalAlign": "middle", "marginRight": "8px",
                             "fontSize": "0.8rem"}),
         html.Button("Add line", id="ce-add-line", n_clicks=0, style=BTN),
@@ -307,11 +316,20 @@ def _totals_panel(cx):
     if res["master_id"] is None:
         return html.Div()
     m = res["blocks"][res["master_id"]]
-    cells = [html.Div([
-        html.Div(ELEMENT_LABELS[e], style={"fontSize": "0.7rem", "color": MUTED}),
-        html.Div(_fmt(m["elements"][e]), style={"fontFamily": "ui-monospace,monospace",
-                                                "fontSize": "0.85rem"}),
-    ], style={"padding": "4px 12px 4px 0"}) for e in ELEMENTS]
+    def _cell(e):
+        sub = None
+        if e in ("labor", "equipment"):
+            sp = m["splits"][e]
+            sub = html.Div(f"int {_fmt(sp['internal'])} · ext {_fmt(sp['external'])}",
+                           style={"fontSize": "0.66rem", "color": MUTED})
+        return html.Div([
+            html.Div(ELEMENT_LABELS[e], style={"fontSize": "0.7rem", "color": MUTED}),
+            html.Div(_fmt(m["elements"][e]), style={"fontFamily": "ui-monospace,monospace",
+                                                    "fontSize": "0.85rem"}),
+            sub,
+        ], style={"padding": "4px 16px 4px 0"})
+
+    cells = [_cell(e) for e in ELEMENTS]
     wf = [html.Span(f"{lbl} {_fmt(amt)}", style={"marginRight": "16px",
                                                  "fontSize": "0.8rem", "color": MUTED})
           for lbl, amt in m["waterfall"]]
@@ -707,20 +725,28 @@ def _adds(n_line, n_pkg, n_blk, n_ref, item_val, desc, element, child_name,
     rev_id, user = cx["rev"]["id"], cx["user"]["email"]
     err = ""
     if trig == "ce-add-line" and n_line:
+        snap_id = None
+        if item_val and item_val.startswith("snap:"):
+            snap_id = int(item_val.split(":")[1])
+        elif item_val and item_val.startswith("lib:"):
+            _, lib, uid = item_val.split(":", 2)
+            snap_id = repo.snapshot_item(rev_id, lib, uid, cx["calc"]["region"], user)
+        snap = repo.load_snapshot(rev_id)
+        item = snap["items"].get(snap_id) if snap_id else None
+        ownership = None
+        if item:
+            # element + ownership prefill from the library (still editable per line)
+            def_el, def_own = repo.item_default_element(item["lib"], item)
+            element = element or def_el
+            ownership = def_own
         if not element:
-            err = "Choose an element for the new line."
+            err = "Choose an element (or pick a library item, which sets it)."
         else:
-            snap_id = None
-            if item_val and item_val.startswith("snap:"):
-                snap_id = int(item_val.split(":")[1])
-            elif item_val and item_val.startswith("lib:"):
-                _, lib, uid = item_val.split(":", 2)
-                snap_id = repo.snapshot_item(rev_id, lib, uid, cx["calc"]["region"], user)
-            snap = repo.load_snapshot(rev_id)
-            is_per = bool(snap_id and snap["items"].get(snap_id, {}).get("lib") == "personnel")
+            is_per = bool(item and item["lib"] == "personnel")
             repo.add_line(rev_id, selected, element, user, snap_item_id=snap_id,
                           description=(desc or None),
-                          rate_basis=("offshore" if is_per else "unit"))
+                          rate_basis=("offshore" if is_per else "unit"),
+                          ownership=ownership)
     elif trig == "ce-add-pkg" and n_pkg:
         if not child_name:
             err = "Give the new package a name."
@@ -748,11 +774,12 @@ def _adds(n_line, n_pkg, n_blk, n_ref, item_val, desc, element, child_name,
           Input({"type": "ce-ln-el", "id": ALL}, "value"),
           Input({"type": "ce-ln-basis", "id": ALL}, "value"),
           Input({"type": "ce-ln-origin", "id": ALL}, "value"),
+          Input({"type": "ce-ln-own", "id": ALL}, "value"),
           Input({"type": "ce-ln-ovr", "id": ALL}, "value"),
           Input({"type": "ce-ref-qty", "id": ALL}, "value"),
           State("ce-q", "data"), State("ce-rev", "data"), State("ce-selected", "data"),
           prevent_initial_call=True)
-def _edit_values(_q1, _q2, _q3, _q4, _q5, _q6, _q7, q, rev_no, selected):
+def _edit_values(_q1, _q2, _q3, _q4, _q5, _q6, _q7, _q8, q, rev_no, selected):
     trig = ctx.triggered_id
     if not isinstance(trig, dict):
         raise PreventUpdate
@@ -762,7 +789,7 @@ def _edit_values(_q1, _q2, _q3, _q4, _q5, _q6, _q7, q, rev_no, selected):
     t, oid = trig["type"], trig["id"]
     field = {"ce-ln-qty": "qty", "ce-ln-dur": "duration", "ce-ln-el": "element",
              "ce-ln-basis": "rate_basis", "ce-ln-origin": "origin",
-             "ce-ln-ovr": "unit_rate_override"}.get(t)
+             "ce-ln-own": "ownership", "ce-ln-ovr": "unit_rate_override"}.get(t)
     if field:
         if field in ("qty", "duration") and val in (None, ""):
             raise PreventUpdate

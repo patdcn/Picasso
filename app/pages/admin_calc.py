@@ -72,10 +72,14 @@ def _queue():
     out = []
     for r in reqs:
         p = r["payload"]
+        dup = None
         if r["kind"].endswith("_item"):
             item = p.get("item") or {}
             desc = item.get("description") or item.get("function") or ""
             body = f"{item.get('code')} \u00b7 {desc}"
+            dup = repo.find_item_by_code(r["kind"].split("_")[0],
+                                         code=item.get("code"),
+                                         erp_no=item.get("erp_no"))
             rates = "; ".join(
                 f"{x.get('region')}: " + (
                     f"{x.get('office_rate')}/{x.get('yard_rate')}/{x.get('offshore_rate')}"
@@ -95,14 +99,19 @@ def _queue():
             html.Div(rates, style={"fontSize": "0.8rem", "color": MUTED}),
             html.Div(r.get("note") or "", style={"fontSize": "0.8rem", "color": MUTED,
                                                  "fontStyle": "italic"}),
+            (html.Div(f"\u26a0 duplicate: {dup['code']} already exists - reject, or "
+                      "ask for a rate-change request instead.",
+                      style={"color": "#b91c1c", "fontSize": "0.8rem",
+                             "fontWeight": 600}) if dup else None),
             html.Div([
                 html.Button("Approve", id={"type": "ac-req-ok", "id": r["id"]},
-                            n_clicks=0, style={"padding": "6px 12px",
-                                               "borderRadius": "8px", "border": "none",
-                                               "background": ACCENT, "color": "#fff",
-                                               "fontWeight": 600, "cursor": "pointer",
-                                               "marginRight": "8px",
-                                               "fontSize": "0.8rem"}),
+                            n_clicks=0, disabled=bool(dup),
+                            style={"padding": "6px 12px",
+                                   "borderRadius": "8px", "border": "none",
+                                   "background": ACCENT, "color": "#fff",
+                                   "fontWeight": 600, "cursor": "pointer",
+                                   "marginRight": "8px", "fontSize": "0.8rem",
+                                   "opacity": 0.4 if dup else 1}),
                 html.Button("Reject", id={"type": "ac-req-no", "id": r["id"]},
                             n_clicks=0, style={"padding": "6px 12px",
                                                "borderRadius": "8px",
@@ -113,6 +122,51 @@ def _queue():
             ], style={"marginTop": "6px"}),
         ], style={"borderBottom": f"1px solid {LINE}", "padding": "10px 0"}))
     return html.Div(out)
+
+
+# ------------------------------------------------------- misc categories ----
+def _cats_table():
+    cats = repo.list_misc_categories(active_only=False)
+    th = {"textAlign": "left", "padding": "5px 9px", "fontSize": "0.75rem",
+          "color": MUTED, "borderBottom": f"2px solid {LINE}"}
+    td = {"padding": "5px 9px", "fontSize": "0.85rem"}
+    return html.Table([
+        html.Thead(html.Tr([html.Th(h, style=th) for h in
+                            ("Category", "Element", "Active", "")])),
+        html.Tbody([html.Tr([
+            html.Td(c["name"], style=td), html.Td(c["element"], style=td),
+            html.Td("✓" if c["active"] else "—", style=td),
+            html.Td(html.Button("Deactivate" if c["active"] else "Reactivate",
+                                id={"type": "ac-cat-tgl", "name": c["name"],
+                                    "el": c["element"], "act": c["active"]},
+                                n_clicks=0,
+                                style={"padding": "4px 9px", "borderRadius": "7px",
+                                       "border": f"1px solid {LINE}",
+                                       "background": "#fff", "cursor": "pointer",
+                                       "fontSize": "0.75rem"}), style=td),
+        ], style={"borderBottom": f"1px solid {LINE}"}) for c in cats]),
+    ], style={"borderCollapse": "collapse", "width": "100%"})
+
+
+@callback(Output("ac-cats", "children"),
+          Output("ac-cat-status", "children"),
+          Input("ac-cat-save", "n_clicks"),
+          Input({"type": "ac-cat-tgl", "name": ALL, "el": ALL, "act": ALL}, "n_clicks"),
+          State("ac-cat-name", "value"), State("ac-cat-el", "value"),
+          prevent_initial_call=True)
+def _cats(n_save, _n_tgl, name, element):
+    if not is_admin():
+        raise PreventUpdate
+    trig = ctx.triggered_id
+    if isinstance(trig, dict):
+        if not ctx.triggered[0]["value"]:
+            raise PreventUpdate
+        repo.set_misc_category(trig["name"], trig["el"], active=not trig["act"])
+        return _cats_table(), ""
+    if not (n_save and name and element):
+        return no_update, "Category name and element are required."
+    repo.set_misc_category(name, element)
+    return _cats_table(), f"Saved '{name.strip().lower()}' → {element}."
 
 
 # ------------------------------------------------------------- rate sets ----
@@ -202,7 +256,31 @@ def layout():
                                                     "minHeight": "1.1em"})]),
 
         card([html.H4("Library check-in queue", style={"marginTop": 0}),
-              html.Div(id="ac-queue", children=_queue())]),
+              html.Div(id="ac-queue", children=_queue()),
+              html.Div(id="ac-queue-status", style={"fontSize": "0.85rem",
+                                                    "color": "#b91c1c",
+                                                    "marginTop": "8px",
+                                                    "minHeight": "1.1em"})]),
+
+        card([html.H4("Misc sub-categories", style={"marginTop": 0}),
+              html.P("Each sub-category maps to the element it prefills in the editor: "
+                     "materials or sub-contracting. Deactivating hides it from new "
+                     "check-ins; existing items keep their category.",
+                     style={"color": MUTED, "fontSize": "0.85rem"}),
+              html.Div(id="ac-cats", children=_cats_table()),
+              html.Div([
+                  dcc.Input(id="ac-cat-name", placeholder="Category name",
+                            style={**FIELD, "width": "220px"}),
+                  dcc.Dropdown(id="ac-cat-el",
+                               options=[{"label": "Materials", "value": "materials"},
+                                        {"label": "Sub-contracting",
+                                         "value": "subcontracting"}],
+                               placeholder="Element", style={**DD, "width": "180px"}),
+                  btn("Save category", "ac-cat-save"),
+              ], style={"marginTop": "10px"}),
+              html.Div(id="ac-cat-status", style={"fontSize": "0.85rem",
+                                                  "marginTop": "8px",
+                                                  "minHeight": "1.1em"})]),
 
         card([html.H4("Rate sets, FX & markups", style={"marginTop": 0}),
               html.P("Rates live in versioned sets; existing calculations keep their "
@@ -245,6 +323,7 @@ def _grants(n_save, _n_del, user, division, level, lib):
 
 
 @callback(Output("ac-queue", "children"),
+          Output("ac-queue-status", "children"),
           Input({"type": "ac-req-ok", "id": ALL}, "n_clicks"),
           Input({"type": "ac-req-no", "id": ALL}, "n_clicks"),
           prevent_initial_call=True)
@@ -255,9 +334,9 @@ def _review(_ok, _no):
     if not isinstance(trig, dict) or not ctx.triggered[0]["value"]:
         raise PreventUpdate
     user = auth.current_user()
-    repo.review_request(trig["id"], trig["type"] == "ac-req-ok",
-                        user["email"] if user else "admin")
-    return _queue()
+    err = repo.review_request(trig["id"], trig["type"] == "ac-req-ok",
+                              user["email"] if user else "admin")
+    return _queue(), (err or "")
 
 
 @callback(Output("ac-rs-status", "children"),

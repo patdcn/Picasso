@@ -231,13 +231,114 @@ def list_items(lib, division=None, active_only=True, with_rates_for=None):
         c.close()
 
 
+def find_item_by_code(lib, code=None, erp_no=None):
+    """Existing item with this code or ERP number (any division), or None.
+    Used to catch duplicates at check-in submission, before they reach the
+    moderation queue - the DB UNIQUE constraints remain the hard backstop."""
+    it, _ = _ITEM_TABLES[lib]
+    c = conn()
+    try:
+        if code:
+            r = _row(c, f"SELECT * FROM {it} WHERE code=?", (code,))
+            if r:
+                return r
+        if erp_no:
+            return _row(c, f"SELECT * FROM {it} WHERE erp_no=?", (erp_no,))
+        return None
+    finally:
+        c.close()
+
+
+def list_misc_categories(active_only=True):
+    c = conn()
+    try:
+        w = "WHERE active=1" if active_only else ""
+        return _rows(c, f"SELECT * FROM misc_categories {w} ORDER BY element, name")
+    finally:
+        c.close()
+
+
+def set_misc_category(name, element, active=True):
+    c = conn()
+    try:
+        c.execute("INSERT INTO misc_categories (name, element, active) VALUES (?,?,?) "
+                  "ON CONFLICT(name) DO UPDATE SET element=excluded.element, "
+                  "active=excluded.active", (name.strip().lower(), element,
+                                             1 if active else 0))
+        c.commit()
+    finally:
+        c.close()
+
+
+CODE_PREFIX = {"personnel": "PER", "equipment": "EQP", "misc": "MSC"}
+
+
+def suggest_code(lib, division, counterpart_uuid=None):
+    """Suggest the next code: PREFIX-DIV-NNNN.
+
+    The 4-digit number identifies the CONCEPT across divisions (Diver = 0012
+    in OFF, CIV and HYD alike): with a counterpart chosen, its number is
+    reused with the new division; otherwise the next free number across the
+    whole library (all divisions) is allocated."""
+    it, _ = _ITEM_TABLES[lib]
+    pref = CODE_PREFIX[lib]
+    c = conn()
+    try:
+        if counterpart_uuid:
+            r = _row(c, f"SELECT code FROM {it} WHERE uuid=?", (counterpart_uuid,))
+            if r:
+                num = r["code"].rsplit("-", 1)[-1]
+                return f"{pref}-{division}-{num}"
+        nums = []
+        for r in c.execute(f"SELECT code FROM {it}").fetchall():
+            tail = r["code"].rsplit("-", 1)[-1]
+            if tail.isdigit():
+                nums.append(int(tail))
+        return f"{pref}-{division}-{(max(nums) + 1) if nums else 1:04d}"
+    finally:
+        c.close()
+
+
+def counterpart_options(lib, division):
+    """Items of the same library in OTHER divisions - candidates for
+    'same concept, new division' number reuse."""
+    it, _ = _ITEM_TABLES[lib]
+    c = conn()
+    try:
+        rows = _rows(c, f"SELECT uuid, code, division, "
+                        f"{'function' if lib == 'personnel' else 'description'} AS label "
+                        f"FROM {it} WHERE division<>? AND active=1 ORDER BY code",
+                     (division,))
+        return rows
+    finally:
+        c.close()
+
+
+def item_default_element(lib, item):
+    """Element a library pick prefills in the editor: personnel -> labor,
+    equipment -> equipment, misc -> its category's mapped element."""
+    if lib == "personnel":
+        return "labor", item.get("ownership") or "internal"
+    if lib == "equipment":
+        return "equipment", item.get("ownership") or "internal"
+    cat = (item.get("category") or "").strip().lower()
+    c = conn()
+    try:
+        r = _row(c, "SELECT element FROM misc_categories WHERE name=?", (cat,))
+        return (r["element"] if r else "subcontracting"), None
+    finally:
+        c.close()
+
+
 def upsert_item(lib, data):
     """Admin/moderation path only. data: dict of item columns; uuid generated
     when absent. Returns the uuid."""
     it, _ = _ITEM_TABLES[lib]
     u = data.get("uuid") or new_uuid()
+    if lib in ("personnel", "equipment") and not data.get("ownership"):
+        data = {**data, "ownership": "internal"}
     cols = {"equipment": ("erp_no", "code", "division", "description", "unit", "ownership", "notes"),
-            "personnel": ("erp_no", "code", "division", "function", "notes"),
+            "personnel": ("erp_no", "code", "division", "function", "ownership", "notes"),
             "misc": ("erp_no", "code", "division", "category", "description", "unit")}[lib]
     c = conn()
     try:
@@ -333,7 +434,12 @@ def review_request(req_id, approve, reviewer, note=None):
             return "Request not found or already handled"
         if approve:
             payload = json.loads(r["payload_json"])
-            _apply_request(payload, r["kind"], r["division"])
+            try:
+                _apply_request(payload, r["kind"], r["division"])
+            except Exception as e:
+                # e.g. duplicate code / ERP no (UNIQUE constraint): leave the
+                # request in the queue and tell the reviewer why.
+                return f"Could not apply: {e}"
         c.execute("UPDATE library_requests SET status=?, reviewed_by=?, reviewed_at=?, review_note=? "
                   "WHERE id=?", ("approved" if approve else "rejected", reviewer, _now(), note, req_id))
         c.commit()
@@ -699,7 +805,7 @@ def refresh_snapshot(rev_id, region, snap_ids, user):
 # Blocks, lines, refs (all journaled)
 # ========================================================================== #
 _LINE_COLS = ("block_id", "element", "snap_item_id", "description", "qty", "duration",
-              "rate_basis", "unit_rate_override", "origin", "sort_order")
+              "rate_basis", "unit_rate_override", "origin", "ownership", "sort_order")
 _BLOCK_COLS = ("revision_id", "parent_id", "kind", "name", "unit_label", "sort_order",
                "start_date", "end_date", "notes")
 
@@ -830,12 +936,13 @@ def delete_block(rev_id, block_id, user):
 
 
 def add_line(rev_id, block_id, element, user, snap_item_id=None, description=None,
-             qty=1, duration=1, rate_basis="unit", origin="local"):
+             qty=1, duration=1, rate_basis="unit", origin="local", ownership=None):
     c = conn()
     try:
         c.execute("INSERT INTO block_lines (block_id, element, snap_item_id, description, qty, "
-                  "duration, rate_basis, origin) VALUES (?,?,?,?,?,?,?,?)",
-                  (block_id, element, snap_item_id, description, qty, duration, rate_basis, origin))
+                  "duration, rate_basis, origin, ownership) VALUES (?,?,?,?,?,?,?,?,?)",
+                  (block_id, element, snap_item_id, description, qty, duration, rate_basis,
+                   origin, ownership))
         lid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
         _journal(c, rev_id, user, "line.add", {"table": "block_lines", "pk": lid})
         c.commit()
@@ -846,7 +953,7 @@ def add_line(rev_id, block_id, element, user, snap_item_id=None, description=Non
 
 def update_line(rev_id, line_id, fields, user):
     allowed = {"element", "description", "qty", "duration", "rate_basis",
-               "unit_rate_override", "origin", "sort_order"}
+               "unit_rate_override", "origin", "ownership", "sort_order"}
     fields = {k: v for k, v in fields.items() if k in allowed}
     if not fields:
         return

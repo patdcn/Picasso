@@ -21,7 +21,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, numbers
 
 from app.calcmod import repo, engine
-from app.calcmod.db import ELEMENTS, ELEMENT_LABELS
+from app.calcmod.db import ELEMENTS, ELEMENT_LABELS, SPLIT_ELEMENTS
 
 TEAL = "0F766E"
 HDR = Font(bold=True, color="FFFFFF")
@@ -93,7 +93,10 @@ def workbook_bytes(qnumber, rev_no=None):
 
     # ---- Elements ---------------------------------------------------------
     we = wb.create_sheet("Elements")
-    we.append(["Package"] + [ELEMENT_LABELS[e] for e in ELEMENTS] + ["Levies", "Cost total"])
+    split_cols = [f"{ELEMENT_LABELS[e]} {o}" for e in SPLIT_ELEMENTS
+                  for o in ("int.", "ext.")]
+    we.append(["Package"] + [ELEMENT_LABELS[e] for e in ELEMENTS] + split_cols
+              + ["Levies", "Cost total"])
     for cell in we[1]:
         cell.font, cell.fill = HDR, HDR_FILL
     we.column_dimensions["A"].width = 40
@@ -103,11 +106,15 @@ def workbook_bytes(qnumber, rev_no=None):
             r = res["blocks"][b["id"]]
             we.append(["    " * depth + b["name"]]
                       + [round(r["elements"][e], 2) for e in ELEMENTS]
+                      + [round(r["splits"][e][o], 2) for e in SPLIT_ELEMENTS
+                         for o in ("internal", "external")]
                       + [round(r["levies"], 2), round(r["cost"] + r["levies"], 2)])
             walk_el(b["id"], depth + 1)
 
     walk_el(master_id, 0)
     we.append(["MASTER TOTAL"] + [round(m["elements"][e], 2) for e in ELEMENTS]
+              + [round(m["splits"][e][o], 2) for e in SPLIT_ELEMENTS
+                 for o in ("internal", "external")]
               + [round(m["levies"], 2), round(m["cost"] + m["levies"], 2)])
     for cell in we[we.max_row]:
         cell.font = BOLD

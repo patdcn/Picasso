@@ -130,12 +130,13 @@ def import_qcalc(data, user, as_new_qnumber=None):
                           (block_map[b["parent_id"]], block_map[b["id"]]))
         for ln in data["lines"]:
             c.execute("INSERT INTO block_lines (block_id, element, snap_item_id, description, "
-                      "qty, duration, rate_basis, unit_rate_override, origin, sort_order) "
-                      "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                      "qty, duration, rate_basis, unit_rate_override, origin, ownership, "
+                      "sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                       (block_map[ln["block_id"]], ln["element"],
                        snap_map.get(ln.get("snap_item_id")), ln.get("description"),
                        ln["qty"], ln["duration"], ln["rate_basis"],
-                       ln.get("unit_rate_override"), ln["origin"], ln["sort_order"]))
+                       ln.get("unit_rate_override"), ln["origin"], ln.get("ownership"),
+                       ln["sort_order"]))
         for rf in data["refs"]:
             c.execute("INSERT INTO block_refs (host_block_id, ref_block_id, qty, sort_order) "
                       "VALUES (?,?,?,?)", (block_map[rf["host_block_id"]],

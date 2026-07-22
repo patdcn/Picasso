@@ -1,11 +1,11 @@
 -- ============================================================
---  DCN CALCULATION MODULE - calc.db - Schema Rev 1
+--  DCN CALCULATION MODULE - calc.db - Schema Rev 2
 --  Base currency: USD. All consolidated totals normalised to USD
 --  via the fx snapshot embedded in each revision.
 --  PRAGMA user_version marks the schema revision for migrations.
 -- ============================================================
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 
 -- ---------------- dimensions ----------------
 
@@ -74,6 +74,8 @@ CREATE TABLE IF NOT EXISTS personnel_items (
     code TEXT NOT NULL UNIQUE,                  -- 'PER-OFF-0007'
     division TEXT NOT NULL REFERENCES divisions(code),
     function TEXT NOT NULL,
+    ownership TEXT NOT NULL DEFAULT 'internal'
+        CHECK (ownership IN ('internal','external')),
     active INTEGER NOT NULL DEFAULT 1,
     notes TEXT
 );
@@ -86,6 +88,14 @@ CREATE TABLE IF NOT EXISTS personnel_rates (
     currency TEXT NOT NULL REFERENCES currencies(code),
     office_rate REAL, yard_rate REAL, offshore_rate REAL,
     UNIQUE (item_uuid, rate_set_id, region)
+);
+
+-- Misc sub-categories: admin-manageable; each maps to one of the two
+-- non-labor/non-equipment elements so library picks prefill correctly.
+CREATE TABLE IF NOT EXISTS misc_categories (
+    name TEXT PRIMARY KEY,
+    element TEXT NOT NULL CHECK (element IN ('materials','subcontracting')),
+    active INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS misc_items (
@@ -251,8 +261,7 @@ CREATE TABLE IF NOT EXISTS block_lines (
     id INTEGER PRIMARY KEY,
     block_id INTEGER NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
     element TEXT NOT NULL CHECK (element IN
-        ('internal_labor','external_labor','subcontracting','materials',
-         'internal_equipment','external_equipment','services')),
+        ('labor','subcontracting','materials','equipment')),
     snap_item_id INTEGER REFERENCES snap_items(id) ON DELETE SET NULL,
     description TEXT,                           -- free text / override
     qty REAL NOT NULL DEFAULT 1,
@@ -260,6 +269,7 @@ CREATE TABLE IF NOT EXISTS block_lines (
     rate_basis TEXT NOT NULL DEFAULT 'unit'
         CHECK (rate_basis IN ('office','yard','offshore','unit')),
     unit_rate_override REAL,                    -- NULL = snapshot rate
+    ownership TEXT CHECK (ownership IN ('internal','external')),  -- labor/equipment split
     origin TEXT NOT NULL DEFAULT 'local'
         CHECK (origin IN ('local','expat')),
     sort_order INTEGER NOT NULL DEFAULT 0

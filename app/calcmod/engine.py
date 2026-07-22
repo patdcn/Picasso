@@ -1,9 +1,10 @@
 """
 DCN Calculation Module - pricing engine.
 
-Element-based calculation, IBIS-style but with seven elements:
-internal_labor, external_labor, subcontracting, materials,
-internal_equipment, external_equipment, services.
+Element-based calculation on the four IBIS / Business Central elements:
+labor, subcontracting, materials, equipment - so a future BC export maps
+one-to-one. Internal/external is a line-level ownership refinement WITHIN
+labor and equipment, aggregated as splits alongside the element totals.
 
 Rules
 -----
@@ -27,7 +28,7 @@ Rules
 All figures come from the revision's EMBEDDED snapshot only - the engine
 never reads the library, by design.
 """
-from app.calcmod.db import ELEMENTS, LABOR_ELEMENTS
+from app.calcmod.db import ELEMENTS, LABOR_ELEMENTS, SPLIT_ELEMENTS
 
 WATERFALL = ("overhead_pct", "risk_pct", "profit_pct", "margin_pct")
 
@@ -87,36 +88,48 @@ def compute(tree, snap):
 
     memo, visiting = {}, set()
 
+    def _zsplit():
+        return {e: {"internal": 0.0, "external": 0.0} for e in SPLIT_ELEMENTS}
+
     def unit(bid):
         if bid in memo:
             return memo[bid]
         if bid in visiting:                    # cycle guard (shouldn't happen)
-            return _zero(), 0.0
+            return _zero(), 0.0, _zsplit()
         visiting.add(bid)
-        el, levies = _zero(), 0.0
+        el, levies, sp = _zero(), 0.0, _zsplit()
         for ln in lines_by_block.get(bid, []):
             cost, levy = line_cost_usd(ln, snap)
             el[ln["element"]] += cost
             levies += levy
+            if ln["element"] in SPLIT_ELEMENTS:
+                own = ln.get("ownership") or "internal"
+                sp[ln["element"]][own] += cost
         for kid in pkg_children.get(bid, []):
-            kel, klev = unit(kid)
+            kel, klev, ksp = unit(kid)
             for e in ELEMENTS:
                 el[e] += kel[e]
+            for e in SPLIT_ELEMENTS:
+                for o in ("internal", "external"):
+                    sp[e][o] += ksp[e][o]
             levies += klev
         for rf in refs_by_host.get(bid, []):
-            rel, rlev = unit(rf["ref_block_id"])
+            rel, rlev, rsp = unit(rf["ref_block_id"])
             q = float(rf["qty"])
             for e in ELEMENTS:
                 el[e] += rel[e] * q
+            for e in SPLIT_ELEMENTS:
+                for o in ("internal", "external"):
+                    sp[e][o] += rsp[e][o] * q
             levies += rlev * q
         visiting.discard(bid)
-        memo[bid] = (el, levies)
+        memo[bid] = (el, levies, sp)
         return memo[bid]
 
     mk = snap.get("markups") or {}
     out, master_id = {}, None
     for bid, b in blocks.items():
-        el, levies = unit(bid)
+        el, levies, sp = unit(bid)
         cost = sum(el.values())
         running = cost + levies
         wf = [("Levies", levies)]
@@ -124,7 +137,7 @@ def compute(tree, snap):
             amt = running * float(mk.get(key) or 0.0)
             wf.append((key.replace("_pct", "").capitalize(), amt))
             running += amt
-        out[bid] = {"elements": el, "levies": levies, "cost": cost,
+        out[bid] = {"elements": el, "splits": sp, "levies": levies, "cost": cost,
                     "sell": running, "waterfall": wf}
         if b["kind"] == "master":
             master_id = bid
