@@ -219,13 +219,16 @@ def list_items(lib, division=None, active_only=True, with_rates_for=None):
         w = ("WHERE " + " AND ".join(where)) if where else ""
         if with_rates_for:
             rs, region = with_rates_for
-            if lib == "personnel":
-                sel = "r.currency, r.office_rate, r.yard_rate, r.offshore_rate"
-            else:
-                sel = "r.currency, r.rate"
-            return _rows(c, f"SELECT i.*, {sel} FROM {it} i "
-                            f"LEFT JOIN {rt} r ON r.item_uuid=i.uuid AND r.rate_set_id=? AND r.region=? "
-                            f"{w} ORDER BY i.code", [rs, region] + args)
+            items = _rows(c, f"SELECT i.* FROM {it} i {w} ORDER BY i.code", args)
+            rate_fields = (("office_rate", "yard_rate", "offshore_rate")
+                           if lib == "personnel" else ("rate",))
+            for i in items:
+                r = _rate_for(c, lib, i["uuid"], rs, region) or {}
+                i["currency"] = r.get("currency")
+                i["rate_region"] = r.get("region")     # 'ALL' marks the fallback
+                for f in rate_fields:
+                    i[f] = r.get(f)
+            return items
         return _rows(c, f"SELECT i.* FROM {it} i {w} ORDER BY i.code", args)
     finally:
         c.close()
@@ -270,31 +273,43 @@ def set_misc_category(name, element, active=True):
         c.close()
 
 
-CODE_PREFIX = {"personnel": "PER", "equipment": "EQP", "misc": "MSC"}
+CODE_PREFIX = {"personnel": "P", "equipment": "E", "misc": "M"}
+DIV_LETTER = {"CIV": "C", "OFF": "O", "HYD": "H"}
+OWN_LETTER = {"internal": "I", "external": "E"}
 
 
-def suggest_code(lib, division, counterpart_uuid=None):
-    """Suggest the next code: PREFIX-DIV-NNNN.
+def suggest_code(lib, division, ownership="internal", counterpart_uuid=None):
+    """Suggest the next code.
 
-    The 4-digit number identifies the CONCEPT across divisions (Diver = 0012
-    in OFF, CIV and HYD alike): with a counterpart chosen, its number is
-    reused with the new division; otherwise the next free number across the
-    whole library (all divisions) is allocated."""
+    Format: P-O-I-0001 = library (P/E/M) - division (C/O/H) - ownership (I/E)
+    - concept number. Misc has no ownership segment: M-O-0001. Region is NOT
+    part of the code: one item carries rates per region (incl. ALL), so the
+    same Diver stays one entry per division/ownership.
+
+    The 4-digit number identifies the CONCEPT across divisions and ownership
+    variants (Diver = 0012 in OFF, CIV and HYD, internal or agency alike):
+    with a counterpart chosen its number is reused; otherwise the next free
+    number across the whole library is allocated."""
     it, _ = _ITEM_TABLES[lib]
-    pref = CODE_PREFIX[lib]
+    seg = [CODE_PREFIX[lib], DIV_LETTER.get(division, division)]
+    if lib != "misc":
+        seg.append(OWN_LETTER.get(ownership or "internal", "I"))
     c = conn()
     try:
+        num = None
         if counterpart_uuid:
             r = _row(c, f"SELECT code FROM {it} WHERE uuid=?", (counterpart_uuid,))
             if r:
-                num = r["code"].rsplit("-", 1)[-1]
-                return f"{pref}-{division}-{num}"
-        nums = []
-        for r in c.execute(f"SELECT code FROM {it}").fetchall():
-            tail = r["code"].rsplit("-", 1)[-1]
-            if tail.isdigit():
-                nums.append(int(tail))
-        return f"{pref}-{division}-{(max(nums) + 1) if nums else 1:04d}"
+                tail = r["code"].rsplit("-", 1)[-1]
+                num = tail if tail.isdigit() else None
+        if num is None:
+            nums = [0]
+            for r in c.execute(f"SELECT code FROM {it}").fetchall():
+                tail = r["code"].rsplit("-", 1)[-1]
+                if tail.isdigit():
+                    nums.append(int(tail))
+            num = f"{max(nums) + 1:04d}"
+        return "-".join(seg + [num])
     finally:
         c.close()
 
@@ -375,6 +390,17 @@ def set_item_rate(lib, item_uuid, rate_set_id, region, currency, **kw):
         c.commit()
     finally:
         c.close()
+
+
+def _rate_for(c, lib, item_uuid, rate_set_id, region):
+    """Rate row for an item: exact region first, else the ALL region."""
+    _, rt = _ITEM_TABLES[lib]
+    r = _row(c, f"SELECT * FROM {rt} WHERE item_uuid=? AND rate_set_id=? AND region=?",
+             (item_uuid, rate_set_id, region))
+    if r:
+        return r
+    return _row(c, f"SELECT * FROM {rt} WHERE item_uuid=? AND rate_set_id=? "
+                   "AND region='ALL'", (item_uuid, rate_set_id))
 
 
 def get_markups(rate_set_id, division, region):
@@ -722,8 +748,7 @@ def snapshot_item(rev_id, lib, item_uuid, region, user):
         rs = active_rate_set()
         it_t, rt_t = _ITEM_TABLES[lib]
         i = _row(c, f"SELECT * FROM {it_t} WHERE uuid=?", (item_uuid,))
-        r = _row(c, f"SELECT * FROM {rt_t} WHERE item_uuid=? AND rate_set_id=? AND region=?",
-                 (item_uuid, rs["id"] if rs else -1, region)) or {}
+        r = _rate_for(c, lib, item_uuid, rs["id"] if rs else -1, region) or {}
         c.execute("INSERT INTO snap_items (revision_id, lib, item_uuid, erp_no, code, description, "
                   "unit, ownership, currency, rate, office_rate, yard_rate, offshore_rate, "
                   "rate_set_label) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -751,9 +776,7 @@ def diff_snapshot(rev_id, region):
     c = conn()
     try:
         for s in c.execute("SELECT * FROM snap_items WHERE revision_id=?", (rev_id,)).fetchall():
-            _, rt_t = _ITEM_TABLES[s["lib"]]
-            cur = _row(c, f"SELECT * FROM {rt_t} WHERE item_uuid=? AND rate_set_id=? AND region=?",
-                       (s["item_uuid"], rs["id"], region))
+            cur = _rate_for(c, s["lib"], s["item_uuid"], rs["id"], region)
             if not cur:
                 continue
             fields = (("office_rate", "yard_rate", "offshore_rate")
@@ -780,9 +803,7 @@ def refresh_snapshot(rev_id, region, snap_ids, user):
             s = _row(c, "SELECT * FROM snap_items WHERE id=? AND revision_id=?", (sid, rev_id))
             if not s:
                 continue
-            _, rt_t = _ITEM_TABLES[s["lib"]]
-            cur = _row(c, f"SELECT * FROM {rt_t} WHERE item_uuid=? AND rate_set_id=? AND region=?",
-                       (s["item_uuid"], rs["id"], region))
+            cur = _rate_for(c, s["lib"], s["item_uuid"], rs["id"], region)
             if not cur:
                 continue
             before = {k: s[k] for k in ("currency", "rate", "office_rate", "yard_rate",

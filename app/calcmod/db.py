@@ -21,7 +21,8 @@ _SCHEMA_FILE = os.path.join(os.path.dirname(__file__), "schema.sql")
 
 SEED_DIVISIONS = [("CIV", "Civil"), ("OFF", "Offshore"), ("HYD", "Hydropower")]
 SEED_REGIONS = [("EUR", "Europe"), ("WAF", "West Africa"),
-                ("UAE", "United Arab Emirates"), ("SEA", "South East Asia")]
+                ("UAE", "United Arab Emirates"), ("SEA", "South East Asia"),
+                ("ALL", "All regions (rate fallback)")]
 SEED_CURRENCIES = [("USD", "US Dollar", "$"), ("EUR", "Euro", "\u20ac"),
                    ("GBP", "Pound Sterling", "\u00a3"),
                    ("AED", "UAE Dirham", "AED"), ("SGD", "Singapore Dollar", "S$")]
