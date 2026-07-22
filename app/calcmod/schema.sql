@@ -1,11 +1,11 @@
 -- ============================================================
---  DCN CALCULATION MODULE - calc.db - Schema Rev 2
+--  DCN CALCULATION MODULE - calc.db - Schema Rev 3
 --  Base currency: USD. All consolidated totals normalised to USD
 --  via the fx snapshot embedded in each revision.
 --  PRAGMA user_version marks the schema revision for migrations.
 -- ============================================================
 
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 
 -- ---------------- dimensions ----------------
 
@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS equipment_items (
     unit TEXT NOT NULL DEFAULT 'day',
     ownership TEXT NOT NULL DEFAULT 'internal'
         CHECK (ownership IN ('internal','external')),
+    region TEXT NOT NULL DEFAULT 'ALL' REFERENCES regions(code),
     active INTEGER NOT NULL DEFAULT 1,
     notes TEXT
 );
@@ -62,10 +63,9 @@ CREATE TABLE IF NOT EXISTS equipment_rates (
     id INTEGER PRIMARY KEY,
     item_uuid TEXT NOT NULL REFERENCES equipment_items(uuid) ON DELETE CASCADE,
     rate_set_id INTEGER NOT NULL REFERENCES rate_sets(id) ON DELETE CASCADE,
-    region TEXT NOT NULL REFERENCES regions(code),
     currency TEXT NOT NULL REFERENCES currencies(code),
     rate REAL NOT NULL,
-    UNIQUE (item_uuid, rate_set_id, region)
+    UNIQUE (item_uuid, rate_set_id)
 );
 
 CREATE TABLE IF NOT EXISTS personnel_items (
@@ -76,6 +76,8 @@ CREATE TABLE IF NOT EXISTS personnel_items (
     function TEXT NOT NULL,
     ownership TEXT NOT NULL DEFAULT 'internal'
         CHECK (ownership IN ('internal','external')),
+    unit TEXT NOT NULL DEFAULT 'day',
+    region TEXT NOT NULL DEFAULT 'ALL' REFERENCES regions(code),
     active INTEGER NOT NULL DEFAULT 1,
     notes TEXT
 );
@@ -84,10 +86,9 @@ CREATE TABLE IF NOT EXISTS personnel_rates (
     id INTEGER PRIMARY KEY,
     item_uuid TEXT NOT NULL REFERENCES personnel_items(uuid) ON DELETE CASCADE,
     rate_set_id INTEGER NOT NULL REFERENCES rate_sets(id) ON DELETE CASCADE,
-    region TEXT NOT NULL REFERENCES regions(code),
     currency TEXT NOT NULL REFERENCES currencies(code),
     office_rate REAL, yard_rate REAL, offshore_rate REAL,
-    UNIQUE (item_uuid, rate_set_id, region)
+    UNIQUE (item_uuid, rate_set_id)
 );
 
 -- Misc sub-categories: admin-manageable; each maps to one of the two
@@ -106,6 +107,7 @@ CREATE TABLE IF NOT EXISTS misc_items (
     category TEXT NOT NULL,                     -- travel/fuel/gas/accommodation/service
     description TEXT NOT NULL,
     unit TEXT NOT NULL,
+    region TEXT NOT NULL DEFAULT 'ALL' REFERENCES regions(code),
     active INTEGER NOT NULL DEFAULT 1
 );
 
@@ -113,10 +115,9 @@ CREATE TABLE IF NOT EXISTS misc_rates (
     id INTEGER PRIMARY KEY,
     item_uuid TEXT NOT NULL REFERENCES misc_items(uuid) ON DELETE CASCADE,
     rate_set_id INTEGER NOT NULL REFERENCES rate_sets(id) ON DELETE CASCADE,
-    region TEXT NOT NULL REFERENCES regions(code),
     currency TEXT NOT NULL REFERENCES currencies(code),
     rate REAL NOT NULL,
-    UNIQUE (item_uuid, rate_set_id, region)
+    UNIQUE (item_uuid, rate_set_id)
 );
 
 -- Markups: division x region per rate set. Percentages as fractions.
@@ -155,8 +156,8 @@ CREATE TABLE IF NOT EXISTS block_templates (
 CREATE TABLE IF NOT EXISTS library_requests (
     id INTEGER PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN
-        ('equipment_item','personnel_item','misc_item',
-         'rate_change','block_template')),
+        ('equipment_item','personnel_item','misc_item','materials_item',
+         'subcontracting_item','rate_change','block_template')),
     division TEXT NOT NULL REFERENCES divisions(code),
     payload_json TEXT NOT NULL,                 -- proposed item / rates / block
     note TEXT,

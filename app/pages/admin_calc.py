@@ -262,7 +262,7 @@ def layout():
                                                     "marginTop": "8px",
                                                     "minHeight": "1.1em"})]),
 
-        card([html.H4("Misc sub-categories", style={"marginTop": 0}),
+        card([html.H4("Sub-categories (Materials & Sub-contracting)", style={"marginTop": 0}),
               html.P("Each sub-category maps to the element it prefills in the editor: "
                      "materials or sub-contracting. Deactivating hides it from new "
                      "check-ins; existing items keep their category.",

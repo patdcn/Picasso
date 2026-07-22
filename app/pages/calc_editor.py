@@ -602,7 +602,7 @@ def _refresh_open(n, q, rev_no):
     cx = _ctx(q, rev_no)
     if not cx or not cx["editable"]:
         raise PreventUpdate
-    diffs = repo.diff_snapshot(cx["rev"]["id"], cx["calc"]["region"])
+    diffs = repo.diff_snapshot(cx["rev"]["id"])
     if not diffs:
         body = html.P("All embedded rates match the current active rate set.",
                       style={"color": MUTED})
@@ -658,7 +658,7 @@ def _refresh_apply(n_apply, n_cancel, picks, q, rev_no, selected):
     cx = _ctx(q, rev_no)
     if not cx or not cx["editable"]:
         return hidden, no_update, no_update, no_update
-    repo.refresh_snapshot(cx["rev"]["id"], cx["calc"]["region"], picks, cx["user"]["email"])
+    repo.refresh_snapshot(cx["rev"]["id"], picks, cx["user"]["email"])
     return hidden, _block_panel(cx, selected), _totals_panel(cx), _header(cx)
 
 
@@ -730,7 +730,7 @@ def _adds(n_line, n_pkg, n_blk, n_ref, item_val, desc, element, child_name,
             snap_id = int(item_val.split(":")[1])
         elif item_val and item_val.startswith("lib:"):
             _, lib, uid = item_val.split(":", 2)
-            snap_id = repo.snapshot_item(rev_id, lib, uid, cx["calc"]["region"], user)
+            snap_id = repo.snapshot_item(rev_id, lib, uid, user)
         snap = repo.load_snapshot(rev_id)
         item = snap["items"].get(snap_id) if snap_id else None
         ownership = None

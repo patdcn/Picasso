@@ -135,15 +135,15 @@ def create_rate_set(label, user, copy_from_id=None):
             c.execute("INSERT INTO exchange_rates (rate_set_id, currency, rate_to_usd) "
                       "SELECT ?, currency, rate_to_usd FROM exchange_rates WHERE rate_set_id=?",
                       (new_id, copy_from_id))
-            c.execute("INSERT INTO equipment_rates (item_uuid, rate_set_id, region, currency, rate) "
-                      "SELECT item_uuid, ?, region, currency, rate FROM equipment_rates WHERE rate_set_id=?",
+            c.execute("INSERT INTO equipment_rates (item_uuid, rate_set_id, currency, rate) "
+                      "SELECT item_uuid, ?, currency, rate FROM equipment_rates WHERE rate_set_id=?",
                       (new_id, copy_from_id))
-            c.execute("INSERT INTO personnel_rates (item_uuid, rate_set_id, region, currency, "
+            c.execute("INSERT INTO personnel_rates (item_uuid, rate_set_id, currency, "
                       "office_rate, yard_rate, offshore_rate) "
-                      "SELECT item_uuid, ?, region, currency, office_rate, yard_rate, offshore_rate "
+                      "SELECT item_uuid, ?, currency, office_rate, yard_rate, offshore_rate "
                       "FROM personnel_rates WHERE rate_set_id=?", (new_id, copy_from_id))
-            c.execute("INSERT INTO misc_rates (item_uuid, rate_set_id, region, currency, rate) "
-                      "SELECT item_uuid, ?, region, currency, rate FROM misc_rates WHERE rate_set_id=?",
+            c.execute("INSERT INTO misc_rates (item_uuid, rate_set_id, currency, rate) "
+                      "SELECT item_uuid, ?, currency, rate FROM misc_rates WHERE rate_set_id=?",
                       (new_id, copy_from_id))
             c.execute("INSERT INTO markup_sets (rate_set_id, division, region, levy_local_pct, "
                       "levy_expat_pct, profit_pct, risk_pct, overhead_pct, margin_pct) "
@@ -206,9 +206,15 @@ def list_currencies():
         c.close()
 
 
-def list_items(lib, division=None, active_only=True, with_rates_for=None):
-    """Library items, optionally joined with rates for (rate_set_id, region)."""
-    it, rt = _ITEM_TABLES[lib]
+def list_items(lib, division=None, active_only=True, with_rates_for=None,
+               region=None, calc_region=None):
+    """Library items (lib may be a virtual library: materials/subcontracting).
+
+    with_rates_for: rate_set_id -> joins the single rate row per item.
+    region: exact item-region filter. calc_region: items usable for a calc in
+    that region (item region == calc_region or 'ALL')."""
+    tbl, el = base_lib(lib)
+    it, rt = _ITEM_TABLES[tbl]
     c = conn()
     try:
         where, args = [], []
@@ -216,20 +222,26 @@ def list_items(lib, division=None, active_only=True, with_rates_for=None):
             where.append("i.division=?"); args.append(division)
         if active_only:
             where.append("i.active=1")
+        if region:
+            where.append("i.region=?"); args.append(region)
+        if calc_region:
+            where.append("i.region IN (?, 'ALL')"); args.append(calc_region)
+        if el:
+            where.append("i.category IN (SELECT name FROM misc_categories "
+                         "WHERE element=?)")
+            args.append(el)
         w = ("WHERE " + " AND ".join(where)) if where else ""
+        items = _rows(c, f"SELECT i.* FROM {it} i {w} ORDER BY i.code", args)
         if with_rates_for:
-            rs, region = with_rates_for
-            items = _rows(c, f"SELECT i.* FROM {it} i {w} ORDER BY i.code", args)
+            rs = with_rates_for if not isinstance(with_rates_for, tuple)                 else with_rates_for[0]
             rate_fields = (("office_rate", "yard_rate", "offshore_rate")
-                           if lib == "personnel" else ("rate",))
+                           if tbl == "personnel" else ("rate",))
             for i in items:
-                r = _rate_for(c, lib, i["uuid"], rs, region) or {}
+                r = _rate_for(c, tbl, i["uuid"], rs) or {}
                 i["currency"] = r.get("currency")
-                i["rate_region"] = r.get("region")     # 'ALL' marks the fallback
                 for f in rate_fields:
                     i[f] = r.get(f)
-            return items
-        return _rows(c, f"SELECT i.* FROM {it} i {w} ORDER BY i.code", args)
+        return items
     finally:
         c.close()
 
@@ -238,7 +250,8 @@ def find_item_by_code(lib, code=None, erp_no=None):
     """Existing item with this code or ERP number (any division), or None.
     Used to catch duplicates at check-in submission, before they reach the
     moderation queue - the DB UNIQUE constraints remain the hard backstop."""
-    it, _ = _ITEM_TABLES[lib]
+    tbl, _el = base_lib(lib)
+    it, _ = _ITEM_TABLES[tbl]
     c = conn()
     try:
         if code:
@@ -273,27 +286,42 @@ def set_misc_category(name, element, active=True):
         c.close()
 
 
-CODE_PREFIX = {"personnel": "P", "equipment": "E", "misc": "M"}
+CODE_PREFIX = {"personnel": "P", "equipment": "E",
+               "materials": "M", "subcontracting": "S"}
 DIV_LETTER = {"CIV": "C", "OFF": "O", "HYD": "H"}
 OWN_LETTER = {"internal": "I", "external": "E"}
+REGION_LETTER = {"EUR": "E", "WAF": "W", "UAE": "U", "SEA": "S", "ALL": "A"}
+
+# The four user-facing libraries map to three tables: materials and
+# subcontracting are virtual views on misc, distinguished by their
+# sub-category's element mapping.
+VIRTUAL_LIBS = {"materials": ("misc", "materials"),
+                "subcontracting": ("misc", "subcontracting")}
 
 
-def suggest_code(lib, division, ownership="internal", counterpart_uuid=None):
+def base_lib(lib):
+    """(table_lib, element_filter) for a user-facing library name."""
+    return VIRTUAL_LIBS.get(lib, (lib, None))
+
+
+def suggest_code(lib, division, ownership="internal", region="ALL",
+                 counterpart_uuid=None):
     """Suggest the next code.
 
-    Format: P-O-I-0001 = library (P/E/M) - division (C/O/H) - ownership (I/E)
-    - concept number. Misc has no ownership segment: M-O-0001. Region is NOT
-    part of the code: one item carries rates per region (incl. ALL), so the
-    same Diver stays one entry per division/ownership.
+    Format: P-O-I-A-0001 = library (P personnel / E equipment / M materials /
+    S sub-contracting) - division (C/O/H) - ownership (I/E, personnel &
+    equipment only) - region (E/W/U/S, A = all regions) - concept number.
 
-    The 4-digit number identifies the CONCEPT across divisions and ownership
-    variants (Diver = 0012 in OFF, CIV and HYD, internal or agency alike):
-    with a counterpart chosen its number is reused; otherwise the next free
-    number across the whole library is allocated."""
-    it, _ = _ITEM_TABLES[lib]
+    A Diver with genuinely different regional rates is separate items:
+    P-O-I-E-0001 (EUR) and P-O-I-U-0001 (UAE) share the concept number 0001.
+    With a counterpart chosen its number is reused; otherwise the next free
+    number across the whole library table is allocated."""
+    tbl, _el = base_lib(lib)
+    it, _ = _ITEM_TABLES[tbl]
     seg = [CODE_PREFIX[lib], DIV_LETTER.get(division, division)]
-    if lib != "misc":
+    if tbl != "misc":
         seg.append(OWN_LETTER.get(ownership or "internal", "I"))
+    seg.append(REGION_LETTER.get(region or "ALL", "A"))
     c = conn()
     try:
         num = None
@@ -314,16 +342,24 @@ def suggest_code(lib, division, ownership="internal", counterpart_uuid=None):
         c.close()
 
 
-def counterpart_options(lib, division):
-    """Items of the same library in OTHER divisions - candidates for
-    'same concept, new division' number reuse."""
-    it, _ = _ITEM_TABLES[lib]
+def counterpart_options(lib, division, region="ALL"):
+    """Items of the same library in another division OR region - candidates
+    for 'same concept elsewhere' number reuse."""
+    tbl, el = base_lib(lib)
+    it, _ = _ITEM_TABLES[tbl]
     c = conn()
     try:
-        rows = _rows(c, f"SELECT uuid, code, division, "
-                        f"{'function' if lib == 'personnel' else 'description'} AS label "
-                        f"FROM {it} WHERE division<>? AND active=1 ORDER BY code",
-                     (division,))
+        lbl = "function" if tbl == "personnel" else "description"
+        rows = _rows(c, f"SELECT i.uuid, i.code, i.division, i.region, i.{lbl} AS label "
+                        f"FROM {it} i WHERE i.active=1 "
+                        "AND NOT (i.division=? AND i.region=?) ORDER BY i.code",
+                     (division, region))
+        if el:
+            cats = {r["name"] for r in _rows(
+                c, "SELECT name FROM misc_categories WHERE element=?", (el,))}
+            rows = [r for r in rows if _row(
+                c, f"SELECT category FROM {it} WHERE uuid=?",
+                (r["uuid"],))["category"] in cats]
         return rows
     finally:
         c.close()
@@ -348,13 +384,21 @@ def item_default_element(lib, item):
 def upsert_item(lib, data):
     """Admin/moderation path only. data: dict of item columns; uuid generated
     when absent. Returns the uuid."""
-    it, _ = _ITEM_TABLES[lib]
+    tbl, _el = base_lib(lib)
+    it, _ = _ITEM_TABLES[tbl]
     u = data.get("uuid") or new_uuid()
-    if lib in ("personnel", "equipment") and not data.get("ownership"):
+    if tbl in ("personnel", "equipment") and not data.get("ownership"):
         data = {**data, "ownership": "internal"}
-    cols = {"equipment": ("erp_no", "code", "division", "description", "unit", "ownership", "notes"),
-            "personnel": ("erp_no", "code", "division", "function", "ownership", "notes"),
-            "misc": ("erp_no", "code", "division", "category", "description", "unit")}[lib]
+    if not data.get("region"):
+        data = {**data, "region": "ALL"}
+    cols = {"equipment": ("erp_no", "code", "division", "description", "unit",
+                          "ownership", "region", "notes"),
+            "personnel": ("erp_no", "code", "division", "function", "ownership",
+                          "unit", "region", "notes"),
+            "misc": ("erp_no", "code", "division", "category", "description",
+                     "unit", "region")}[tbl]
+    if tbl == "personnel" and not data.get("unit"):
+        data = {**data, "unit": "day"}
     c = conn()
     try:
         names = ", ".join(("uuid",) + cols)
@@ -369,38 +413,35 @@ def upsert_item(lib, data):
         c.close()
 
 
-def set_item_rate(lib, item_uuid, rate_set_id, region, currency, **kw):
-    _, rt = _ITEM_TABLES[lib]
+def set_item_rate(lib, item_uuid, rate_set_id, currency, **kw):
+    tbl, _el = base_lib(lib)
+    _, rt = _ITEM_TABLES[tbl]
     c = conn()
     try:
-        if lib == "personnel":
-            c.execute(f"INSERT INTO {rt} (item_uuid, rate_set_id, region, currency, "
-                      "office_rate, yard_rate, offshore_rate) VALUES (?,?,?,?,?,?,?) "
-                      "ON CONFLICT(item_uuid, rate_set_id, region) DO UPDATE SET "
+        if tbl == "personnel":
+            c.execute(f"INSERT INTO {rt} (item_uuid, rate_set_id, currency, "
+                      "office_rate, yard_rate, offshore_rate) VALUES (?,?,?,?,?,?) "
+                      "ON CONFLICT(item_uuid, rate_set_id) DO UPDATE SET "
                       "currency=excluded.currency, office_rate=excluded.office_rate, "
                       "yard_rate=excluded.yard_rate, offshore_rate=excluded.offshore_rate",
-                      (item_uuid, rate_set_id, region, currency,
-                       kw.get("office_rate"), kw.get("yard_rate"), kw.get("offshore_rate")))
+                      (item_uuid, rate_set_id, currency, kw.get("office_rate"),
+                       kw.get("yard_rate"), kw.get("offshore_rate")))
         else:
-            c.execute(f"INSERT INTO {rt} (item_uuid, rate_set_id, region, currency, rate) "
-                      "VALUES (?,?,?,?,?) "
-                      "ON CONFLICT(item_uuid, rate_set_id, region) DO UPDATE SET "
+            c.execute(f"INSERT INTO {rt} (item_uuid, rate_set_id, currency, rate) "
+                      "VALUES (?,?,?,?) "
+                      "ON CONFLICT(item_uuid, rate_set_id) DO UPDATE SET "
                       "currency=excluded.currency, rate=excluded.rate",
-                      (item_uuid, rate_set_id, region, currency, kw.get("rate")))
+                      (item_uuid, rate_set_id, currency, kw.get("rate")))
         c.commit()
     finally:
         c.close()
 
 
-def _rate_for(c, lib, item_uuid, rate_set_id, region):
-    """Rate row for an item: exact region first, else the ALL region."""
-    _, rt = _ITEM_TABLES[lib]
-    r = _row(c, f"SELECT * FROM {rt} WHERE item_uuid=? AND rate_set_id=? AND region=?",
-             (item_uuid, rate_set_id, region))
-    if r:
-        return r
-    return _row(c, f"SELECT * FROM {rt} WHERE item_uuid=? AND rate_set_id=? "
-                   "AND region='ALL'", (item_uuid, rate_set_id))
+def _rate_for(c, lib, item_uuid, rate_set_id):
+    """The item's rate row for a rate set (region lives on the item now)."""
+    _, rt = _ITEM_TABLES[base_lib(lib)[0]]
+    return _row(c, f"SELECT * FROM {rt} WHERE item_uuid=? AND rate_set_id=?",
+                (item_uuid, rate_set_id))
 
 
 def get_markups(rate_set_id, division, region):
@@ -475,15 +516,15 @@ def review_request(req_id, approve, reviewer, note=None):
 
 
 def _apply_request(payload, kind, division):
-    if kind in ("equipment_item", "personnel_item", "misc_item"):
-        lib = kind.split("_")[0]
+    if kind.endswith("_item"):
+        lib = kind[:-5]
         item = dict(payload.get("item") or {})
         item["division"] = division
         u = upsert_item(lib, item)
         rs = (active_rate_set() or {}).get("id")
         rate_keys = ("rate", "office_rate", "yard_rate", "offshore_rate")
         for rr in payload.get("rates") or []:
-            set_item_rate(lib, u, rr.get("rate_set_id") or rs, rr["region"],
+            set_item_rate(lib, u, rr.get("rate_set_id") or rs,
                           rr.get("currency", "USD"),
                           **{k: rr.get(k) for k in rate_keys})
     elif kind == "rate_change":
@@ -492,7 +533,7 @@ def _apply_request(payload, kind, division):
         for rr in payload.get("rates") or []:
             set_item_rate(lib, payload["item_uuid"],
                           rr.get("rate_set_id") or (active_rate_set() or {}).get("id"),
-                          rr["region"], rr.get("currency", "USD"),
+                          rr.get("currency", "USD"),
                           **{k: rr.get(k) for k in rate_keys})
     elif kind == "block_template":
         c = conn()
@@ -735,10 +776,11 @@ def load_snapshot(rev_id):
         c.close()
 
 
-def snapshot_item(rev_id, lib, item_uuid, region, user):
+def snapshot_item(rev_id, lib, item_uuid, user):
     """Embed one library item's CURRENT active-set rate into the revision.
     If already embedded, returns the existing snap id (a calc never re-reads
     the library implicitly)."""
+    tbl, _el = base_lib(lib)
     c = conn()
     try:
         ex = c.execute("SELECT id FROM snap_items WHERE revision_id=? AND item_uuid=?",
@@ -746,13 +788,13 @@ def snapshot_item(rev_id, lib, item_uuid, region, user):
         if ex:
             return ex["id"]
         rs = active_rate_set()
-        it_t, rt_t = _ITEM_TABLES[lib]
+        it_t, rt_t = _ITEM_TABLES[tbl]
         i = _row(c, f"SELECT * FROM {it_t} WHERE uuid=?", (item_uuid,))
-        r = _rate_for(c, lib, item_uuid, rs["id"] if rs else -1, region) or {}
+        r = _rate_for(c, tbl, item_uuid, rs["id"] if rs else -1) or {}
         c.execute("INSERT INTO snap_items (revision_id, lib, item_uuid, erp_no, code, description, "
                   "unit, ownership, currency, rate, office_rate, yard_rate, offshore_rate, "
                   "rate_set_label) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                  (rev_id, lib, item_uuid, i.get("erp_no"), i["code"],
+                  (rev_id, tbl, item_uuid, i.get("erp_no"), i["code"],
                    i.get("description") or i.get("function"), i.get("unit"), i.get("ownership"),
                    r.get("currency", "USD"), r.get("rate"),
                    r.get("office_rate"), r.get("yard_rate"), r.get("offshore_rate"),
@@ -766,7 +808,7 @@ def snapshot_item(rev_id, lib, item_uuid, region, user):
         c.close()
 
 
-def diff_snapshot(rev_id, region):
+def diff_snapshot(rev_id, region=None):
     """Compare embedded rates against the current ACTIVE rate set.
     Returns [{snap_id, code, description, field, old, new, currency}]."""
     rs = active_rate_set()
@@ -776,7 +818,7 @@ def diff_snapshot(rev_id, region):
     c = conn()
     try:
         for s in c.execute("SELECT * FROM snap_items WHERE revision_id=?", (rev_id,)).fetchall():
-            cur = _rate_for(c, s["lib"], s["item_uuid"], rs["id"], region)
+            cur = _rate_for(c, s["lib"], s["item_uuid"], rs["id"])
             if not cur:
                 continue
             fields = (("office_rate", "yard_rate", "offshore_rate")
@@ -793,7 +835,7 @@ def diff_snapshot(rev_id, region):
         c.close()
 
 
-def refresh_snapshot(rev_id, region, snap_ids, user):
+def refresh_snapshot(rev_id, snap_ids, user, region=None):
     """Explicitly update selected embedded items to the current active set.
     Journaled per item so it is undoable."""
     rs = active_rate_set()
@@ -803,7 +845,7 @@ def refresh_snapshot(rev_id, region, snap_ids, user):
             s = _row(c, "SELECT * FROM snap_items WHERE id=? AND revision_id=?", (sid, rev_id))
             if not s:
                 continue
-            cur = _rate_for(c, s["lib"], s["item_uuid"], rs["id"], region)
+            cur = _rate_for(c, s["lib"], s["item_uuid"], rs["id"])
             if not cur:
                 continue
             before = {k: s[k] for k in ("currency", "rate", "office_rate", "yard_rate",

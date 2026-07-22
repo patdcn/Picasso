@@ -16,7 +16,7 @@ import uuid as _uuid
 
 CALC_DB = os.getenv("CALC_DB", "/data/calc.db")
 
-SCHEMA_REV = 2
+SCHEMA_REV = 3
 _SCHEMA_FILE = os.path.join(os.path.dirname(__file__), "schema.sql")
 
 SEED_DIVISIONS = [("CIV", "Civil"), ("OFF", "Offshore"), ("HYD", "Hydropower")]
