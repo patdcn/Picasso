@@ -106,13 +106,25 @@ def _all_items(rate_set_id):
     return sorted(rows, key=lambda r: r["code"])
 
 
+def _numf(v):
+    """Display-safe numeric: tolerates legacy ''/str values in the DB."""
+    if v in (None, ""):
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _rate_text(r):
     if r["lib"] == "personnel":
-        vals = [r.get("office_rate"), r.get("yard_rate"), r.get("offshore_rate")]
+        vals = [_numf(r.get("office_rate")), _numf(r.get("yard_rate")),
+                _numf(r.get("offshore_rate"))]
         if all(v is None for v in vals):
             return "\u2014"
         return " / ".join("\u2014" if v is None else f"{v:g}" for v in vals)
-    return "\u2014" if r.get("rate") is None else f"{r['rate']:g}"
+    v = _numf(r.get("rate"))
+    return "\u2014" if v is None else f"{v:g}"
 
 
 # --------------------------------------------------------------------------- #
@@ -587,6 +599,7 @@ def _submit(n, fctx, desc, cat, own, region, unit, cur, rate, off, yard, osh,
         return no_update, no_update, no_update, no_update
     lib, division = fctx["lib"], fctx["division"]
     is_per, is_msc = lib == "personnel", lib in ("materials", "subcontracting")
+    rate, off, yard, osh = (_numf(v) for v in (rate, off, yard, osh))
     missing = []
     if not (desc or "").strip():
         missing.append("description/function")
@@ -781,6 +794,9 @@ def _fx_manual(_vals, rs_id):
     val = ctx.triggered[0]["value"]
     if val in (None, ""):
         raise PreventUpdate
+    val = _numf(val)
+    if val is None:
+        raise PreventUpdate
     current = (repo.get_fx(rs_id) or {}).get(trig["cur"])
     if current is not None and abs(float(current) - float(val)) < 1e-12:
         raise PreventUpdate                     # no-op: don't rerender (loop guard)
@@ -853,7 +869,8 @@ def _edit_save(_s, descs, cats, owns, regs, units, curs, rates, offs, yards, osh
     first = lambda lst: (lst or [None])[0]
     desc, cat, own = first(descs), first(cats), first(owns)
     region, unit, cur = first(regs), first(units), first(curs)
-    rate, off, yard, osh = first(rates), first(offs), first(yards), first(oshs)
+    rate, off, yard, osh = (_numf(first(x))
+                            for x in (rates, offs, yards, oshs))
 
     lib = item = None
     for lb in LIBS:

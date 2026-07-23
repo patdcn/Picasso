@@ -494,9 +494,20 @@ def upsert_item(lib, data):
         c.close()
 
 
+def _num(v):
+    """Normalize UI values: '' and None -> None; numeric strings -> float."""
+    if v in (None, ""):
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def set_item_rate(lib, item_uuid, rate_set_id, currency, **kw):
     tbl, _el = base_lib(lib)
     _, rt = _ITEM_TABLES[tbl]
+    kw = {k: _num(v) for k, v in kw.items()}
     c = conn()
     try:
         if tbl == "personnel":

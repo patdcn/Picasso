@@ -111,6 +111,18 @@ def init_db():
             c.execute("INSERT OR IGNORE INTO exchange_rates "
                       "(rate_set_id, currency, rate_to_usd) VALUES (?,?,1.0)",
                       (rs, "USD"))
+        # idempotent data repair: empty-string rates from a UI bug (iteration 6)
+        # become NULL so formatting and the engine never meet a str where a
+        # number belongs.
+        for tbl, cols in (("personnel_rates",
+                           ("office_rate", "yard_rate", "offshore_rate")),
+                          ("equipment_rates", ("rate",)),
+                          ("misc_rates", ("rate",))):
+            for col in cols:
+                try:
+                    c.execute(f"UPDATE {tbl} SET {col}=NULL WHERE {col}=''")
+                except Exception:
+                    pass
         c.commit()
     finally:
         c.close()
