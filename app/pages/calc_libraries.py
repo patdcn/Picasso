@@ -193,7 +193,8 @@ def _edit_row(r, cats_by_lib, td):
     return html.Tr(cells, style={"background": "#f0fdfa"})
 
 
-def _overview(rate_set_id, filters, edit_uuid=None, status=""):
+def _overview(rate_set_id, filters, edit_uuid=None, status="",
+              pending_delete=None):
     filters = filters or {}
     rows = _all_items(rate_set_id)
     for f, v in filters.items():
@@ -234,21 +235,36 @@ def _overview(rate_set_id, filters, edit_uuid=None, status=""):
             html.Td(_rate_text(r), style={**td, "whiteSpace": "nowrap"}),
         ]
         if editable:
-            cells.append(html.Td(html.Div([
-                html.Button("Edit", id={"type": "cl-edit", "u": r["uuid"],
-                                        "lib": r["lib"]}, n_clicks=0, style=BTN_GHOST),
-                html.Button("Duplicate", id={"type": "cl-dup", "u": r["uuid"],
-                                             "lib": r["lib"]}, n_clicks=0,
-                            style=BTN_GHOST),
-                dcc.ConfirmDialogProvider(
-                    html.Button("Delete", n_clicks=0,
+            if pending_delete == r["uuid"]:
+                actions = [
+                    html.Span("Delete?", style={"color": RED, "fontWeight": 700,
+                                                "fontSize": "0.78rem",
+                                                "marginRight": "6px"}),
+                    html.Button("Yes, delete", id={"type": "cl-delc", "u": r["uuid"],
+                                                   "lib": r["lib"]}, n_clicks=0,
+                                style={**BTN_GHOST, "background": RED,
+                                       "color": "#fff", "border": "none",
+                                       "fontWeight": 700}),
+                    html.Button("Cancel", id={"type": "cl-delx", "u": r["uuid"]},
+                                n_clicks=0, style=BTN_GHOST),
+                ]
+            else:
+                actions = [
+                    html.Button("Edit", id={"type": "cl-edit", "u": r["uuid"],
+                                            "lib": r["lib"]}, n_clicks=0,
+                                style=BTN_GHOST),
+                    html.Button("Duplicate", id={"type": "cl-dup", "u": r["uuid"],
+                                                 "lib": r["lib"]}, n_clicks=0,
+                                style=BTN_GHOST),
+                    html.Button("Delete", id={"type": "cl-del", "u": r["uuid"],
+                                              "lib": r["lib"]}, n_clicks=0,
                                 style={**BTN_GHOST, "color": RED,
                                        "border": "1px solid #fecaca"}),
-                    id={"type": "cl-del", "u": r["uuid"], "lib": r["lib"]},
-                    message=(f"Delete {r['code']} \u00b7 {r['description']} from the "
-                             "library?\nExisting calculations keep their embedded "
-                             "snapshot; the item disappears from lists and pickers.")),
-            ], style={"whiteSpace": "nowrap"}), style=td))
+                ]
+            cells.append(html.Td(
+                html.Div(actions, style={"display": "flex", "flexWrap": "nowrap",
+                                         "alignItems": "center"}),
+                style={**td, "whiteSpace": "nowrap", "minWidth": "215px"}))
         body.append(html.Tr(cells, style={"borderBottom": f"1px solid {LINE}"}))
     heads = ["Code", "Description", "Category", "Sub-category", "Int / Ext",
              "Region", "Unit", "Currency", "Rate (O/Y/Offsh for personnel)"]
@@ -613,16 +629,23 @@ def _review(_ok, _no, filters, rs_id):
 
 
 @callback(Output("cl-table", "children", allow_duplicate=True),
-          Input({"type": "cl-del", "u": ALL, "lib": ALL}, "submit_n_clicks"),
+          Input({"type": "cl-del", "u": ALL, "lib": ALL}, "n_clicks"),
+          Input({"type": "cl-delc", "u": ALL, "lib": ALL}, "n_clicks"),
+          Input({"type": "cl-delx", "u": ALL}, "n_clicks"),
           State("cl-filters", "data"), State("cl-rsid", "data"),
           prevent_initial_call=True)
-def _delete(_clicks, filters, rs_id):
+def _delete(_arm, _confirm, _cancel, filters, rs_id):
+    """Two-step delete: first click arms the row ('Delete? Yes/Cancel'),
+    the second actually deactivates. Any other rerender disarms."""
     trig = ctx.triggered_id
     if not isinstance(trig, dict) or not ctx.triggered[0]["value"]:
         raise PreventUpdate
     if not _is_lib_admin():
         raise PreventUpdate
-    repo.deactivate_item(trig["lib"], trig["u"])
+    if trig["type"] == "cl-del":
+        return _overview(rs_id, filters, pending_delete=trig["u"])
+    if trig["type"] == "cl-delc":
+        repo.deactivate_item(trig["lib"], trig["u"])
     return _overview(rs_id, filters)
 
 
@@ -737,6 +760,9 @@ def _fx_manual(_vals, rs_id):
     val = ctx.triggered[0]["value"]
     if val in (None, ""):
         raise PreventUpdate
+    current = (repo.get_fx(rs_id) or {}).get(trig["cur"])
+    if current is not None and abs(float(current) - float(val)) < 1e-12:
+        raise PreventUpdate                     # no-op: don't rerender (loop guard)
     repo.set_fx(rs_id, trig["cur"], float(val))
     return _fx_card(rs_id, status=f"{trig['cur']} \u2192 USD = {val} saved (manual).")
 
