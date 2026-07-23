@@ -542,14 +542,31 @@ def _export_xlsx(n, filters, rs_id):
 # --------------------------------------------------------------------------- #
 @callback(Output("cl-form", "children"),
           Input("cl-lib", "value"), Input("cl-div", "value"),
+          State("cl-req-desc", "value"), State("cl-req-cat", "value"),
+          State("cl-req-own", "value"), State("cl-req-region", "value"),
+          State("cl-req-unit", "value"), State("cl-req-cur", "value"),
+          State("cl-req-rate", "value"), State("cl-req-off", "value"),
+          State("cl-req-yard", "value"), State("cl-req-osh", "value"),
           prevent_initial_call=True)
-def _reshape(lib, division):
+def _reshape(lib, division, desc, cat, own, region, unit, cur,
+             rate, off, yard, osh):
+    """Rebuild the form for the new library/division WITHOUT losing what is
+    already typed (a duplicated item can be re-targeted to another division;
+    only the code suggestion follows the new context)."""
     if not (lib and division):
         raise PreventUpdate
-    return _form_body(lib, division)
+    prefill = {"description": (desc or "").strip() or None, "subcat": cat,
+               "ownership": own, "region": region, "unit": unit,
+               "currency": cur,
+               "rate": _numf(rate), "office_rate": _numf(off),
+               "yard_rate": _numf(yard), "offshore_rate": _numf(osh)}
+    if not any(v not in (None, "") for v in prefill.values()):
+        prefill = None
+    return _form_body(lib, division, prefill=prefill)
 
 
 @callback(Output("cl-form", "children", allow_duplicate=True),
+          Output("cl-lib", "value"), Output("cl-div", "value"),
           Input({"type": "cl-dup", "u": ALL, "lib": ALL}, "n_clicks"),
           State("cl-rsid", "data"),
           prevent_initial_call=True)
@@ -564,7 +581,10 @@ def _duplicate(_clicks, rs_id):
         raise PreventUpdate
     items = {i["uuid"]: i for i in repo.list_items(trig["lib"], active_only=False)}
     division = items[trig["u"]]["division"] if trig["u"] in items else "OFF"
-    return _form_body(trig["lib"], division, prefill=r)
+    # the top selectors follow the duplicated item; changing them afterwards
+    # (e.g. Offshore -> Civil) keeps the prefill via the state-preserving
+    # _reshape and only re-suggests the code.
+    return _form_body(trig["lib"], division, prefill=r), trig["lib"], division
 
 
 @callback(Output("cl-req-code", "value"),
