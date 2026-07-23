@@ -431,6 +431,23 @@ def _queue_body():
 # --------------------------------------------------------------------------- #
 # layout - order: (1) selectors, (2) form, (3) queue, (4) overview
 # --------------------------------------------------------------------------- #
+def _safe(label, fn, *args, **kwargs):
+    """Render one page section; on failure show an error card and log the
+    traceback instead of letting the exception abort the whole page swap."""
+    import traceback
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        print(f"[calc_libraries] section '{label}' failed:", flush=True)
+        traceback.print_exc()
+        return html.Div([
+            html.B(f"Section '{label}' could not be rendered."),
+            html.Div("The error is logged in the container output "
+                     "(Dokploy -> Logs). The rest of the page keeps working.",
+                     style={"fontSize": "0.83rem"}),
+        ], style={**CARD, "border": f"2px solid {RED}", "color": RED})
+
+
 def layout(**_qs):
     user = auth.current_user()
     if not user:
@@ -456,7 +473,8 @@ def layout(**_qs):
         # (2) check-in form
         html.Div([
             html.H4("Check-in request \u2014 new item", style={"marginTop": 0}),
-            html.Div(id="cl-form", children=_form_body("personnel", "OFF")),
+            html.Div(id="cl-form",
+                     children=_safe("check-in form", _form_body, "personnel", "OFF")),
             html.Div(id="cl-dup-msg", style={"fontSize": "0.83rem", "color": RED,
                                              "minHeight": "1.1em", "fontWeight": 600}),
             html.Div([
@@ -470,16 +488,19 @@ def layout(**_qs):
         ], style=CARD),
 
         # (3) queue (library admins)
-        html.Div(id="cl-queue", children=_queue_body()),
+        html.Div(id="cl-queue", children=_safe("check-in queue", _queue_body)),
 
         # (3b) currencies & FX (library admins)
-        html.Div(id="cl-fx-wrap", children=_fx_card(rs_id)),
+        html.Div(id="cl-fx-wrap",
+                 children=_safe("currencies & FX", _fx_card, rs_id)),
 
         # (4) unified overview
         dcc.Store(id="cl-filters", data={}),
         dcc.Store(id="cl-edit-uuid", data=None),
         dcc.Store(id="cl-rsid", data=rs_id),
-        html.Div(id="cl-table", children=_overview(rs_id, {}), style=CARD),
+        html.Div(id="cl-table",
+                 children=_safe("library overview", _overview, rs_id, {}),
+                 style=CARD),
     ])
 
 
