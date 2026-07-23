@@ -24,7 +24,17 @@ def _user_options():
             for u in auth.list_users()]
 
 
-def _module_rows(allowed, param_allowed):
+# Calc roles surface as per-page checkboxes, same pattern as edit parameters:
+#   "make calculations" on the DCN Calculations row  -> role 'user'
+#   "super-user"        on the Calculation admin row -> role 'super'
+# (super implies making calculations; one role per user is stored.)
+_CALC_ROLE_ROWS = {
+    "/calculation/calcs": ("user", " make calculations"),
+    "/calculation/admin": ("super", " super-user (moderate & manage)"),
+}
+
+
+def _module_rows(allowed, param_allowed, calc_role=None):
     pmods = set(params.param_edit_modules())
     allowed = set(allowed or [])
     param_allowed = set(param_allowed or [])
@@ -37,7 +47,16 @@ def _module_rows(allowed, param_allowed):
             value=[path] if path in allowed else [],
             inputStyle={"marginRight": "8px"})
         right = None
-        if path in pmods:
+        if path in _CALC_ROLE_ROWS:
+            kind, label = _CALC_ROLE_ROWS[path]
+            ticked = (calc_role == kind) or (kind == "user" and calc_role == "super")
+            right = dcc.Checklist(
+                id={"type": "adm-calcrole", "kind": kind},
+                options=[{"label": label, "value": kind}],
+                value=[kind] if ticked else [],
+                inputStyle={"marginRight": "6px"},
+                style={"fontSize": "0.82rem", "color": ACCENT, "whiteSpace": "nowrap"})
+        elif path in pmods:
             right = dcc.Checklist(
                 id={"type": "adm-par", "path": path},
                 options=[{"label": " edit parameters", "value": path}],
@@ -114,25 +133,12 @@ def layout():
             dcc.Checklist(id="adm-is-admin",
                           options=[{"label": " Administrator (full access)", "value": "admin"}],
                           value=[], style={"marginBottom": "12px"}),
-            html.Label("Calculation role", style={"fontSize": "0.8rem",
-                                                    "fontWeight": 600}),
-            html.Div("Applies to the Calculation module: 'user' may create and edit "
-                     "calculations; 'super' additionally moderates libraries, rates "
-                     "and currencies (Calculation admin page). Admins are super "
-                     "automatically. Page access below stays required.",
-                     style={"fontSize": "0.74rem", "color": MUTED,
-                            "margin": "2px 0 6px"}),
-            dcc.Dropdown(id="adm-calc-role",
-                         options=[{"label": "— (read-only)", "value": "none"},
-                                  {"label": "User — make calculations",
-                                   "value": "user"},
-                                  {"label": "Super-user — moderate & manage",
-                                   "value": "super"}],
-                         value="none", clearable=False,
-                         style={"marginBottom": "12px", "maxWidth": "340px"}),
             html.Label("Module access", style={"fontSize": "0.8rem", "fontWeight": 600}),
             html.Div("Tick to grant access. Where a tool has editable parameters, tick "
-                     "\u201cedit parameters\u201d to let that user change them on that page.",
+                     "\u201cedit parameters\u201d to let that user change them on that page. "
+                     "For the Calculation module: \u201cmake calculations\u201d = may create/edit "
+                     "calcs; \u201csuper-user\u201d = moderates libraries, rates and currencies "
+                     "(implies making calculations). Admins have everything automatically.",
                      style={"fontSize": "0.74rem", "color": MUTED, "margin": "2px 0 8px"}),
             html.Div(id="adm-module-rows", children=_module_rows([], []),
                      style={"margin": "6px 0 14px"}),
@@ -152,7 +158,7 @@ def layout():
             btn("Reset password", "adm-reset"),
             status("adm-reset-status"),
         ]),
-    ], style={"maxWidth": "680px"})
+    ], style={"maxWidth": "860px"})
 
 
 @callback(
@@ -179,7 +185,6 @@ def _create(_n, email, pw, admin):
 @callback(
     Output("adm-module-rows", "children"),
     Output("adm-is-admin", "value"),
-    Output("adm-calc-role", "value"),
     Output("adm-user-status", "children"),
     Input("adm-user-dd", "value"),
     prevent_initial_call=True,
@@ -189,10 +194,10 @@ def _select(email):
         raise PreventUpdate
     u = auth.get_user(email)
     if not u:
-        return _module_rows([], []), [], "none", ""
-    return (_module_rows(u["modules"], u["param_modules"]),
-            (["admin"] if u["is_admin"] else []),
-            calc_repo.get_role(email) or "none", "")
+        return _module_rows([], []), [], ""
+    return (_module_rows(u["modules"], u["param_modules"],
+                         calc_repo.get_role(email)),
+            (["admin"] if u["is_admin"] else []), "")
 
 
 @callback(
@@ -201,11 +206,11 @@ def _select(email):
     State("adm-user-dd", "value"),
     State({"type": "adm-acc", "path": ALL}, "value"),
     State({"type": "adm-par", "path": ALL}, "value"),
+    State({"type": "adm-calcrole", "kind": ALL}, "value"),
     State("adm-is-admin", "value"),
-    State("adm-calc-role", "value"),
     prevent_initial_call=True,
 )
-def _save(_n, email, acc_values, par_values, admin, calc_role):
+def _save(_n, email, acc_values, par_values, role_values, admin):
     if not is_admin():
         raise PreventUpdate
     if not email:
@@ -214,7 +219,9 @@ def _save(_n, email, acc_values, par_values, admin, calc_role):
     param_modules = [v[0] for v in (par_values or []) if v]
     ok, msg = auth.update_user(email, is_admin=("admin" in (admin or [])),
                                modules=modules, param_modules=param_modules)
-    calc_repo.set_role(email, calc_role if calc_role in ("user", "super") else None)
+    kinds = {v[0] for v in (role_values or []) if v}
+    role = "super" if "super" in kinds else ("user" if "user" in kinds else None)
+    calc_repo.set_role(email, role)
     return html.Span(msg, style={"color": ACCENT if ok else "#b91c1c"})
 
 
