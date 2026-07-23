@@ -16,7 +16,7 @@ import uuid as _uuid
 
 CALC_DB = os.getenv("CALC_DB", "/data/calc.db")
 
-SCHEMA_REV = 4
+SCHEMA_REV = 5
 _SCHEMA_FILE = os.path.join(os.path.dirname(__file__), "schema.sql")
 
 SEED_DIVISIONS = [("CIV", "Civil"), ("OFF", "Offshore"), ("HYD", "Hydropower")]
@@ -62,7 +62,7 @@ def conn():
 
 
 _MODULE_TABLES = [
-    "calc_grants", "locks", "edit_journal", "block_refs", "block_lines", "blocks",
+    "calc_roles", "calc_grants", "locks", "edit_journal", "block_refs", "block_lines", "blocks",
     "snap_items", "snap_markups", "snap_fx", "revisions", "calculations",
     "library_requests", "block_templates", "markup_sets", "misc_rates", "misc_items",
     "misc_categories", "personnel_rates", "personnel_items", "equipment_rates",

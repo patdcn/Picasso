@@ -35,73 +35,60 @@ def _row(c, sql, args=()):
 
 
 # ========================================================================== #
-# Grants
+# Roles (user / super) - portal admins are super implicitly
 # ========================================================================== #
-def get_grant(user_email, division):
-    """Effective level for a user in a division: 'edit', 'read' or None.
-    A '*' division grant applies to all divisions. Portal admins are resolved
-    by the caller (pages pass is_admin through)."""
+ALL_DIVISIONS = ["CIV", "OFF", "HYD"]
+
+
+def get_role(user_email):
     c = conn()
     try:
-        r = _row(c, "SELECT level, lib_admin FROM calc_grants WHERE user=? AND division IN (?, '*') "
-                    "ORDER BY CASE division WHEN ? THEN 0 ELSE 1 END LIMIT 1",
-                 (user_email, division, division))
-        return r
+        r = _row(c, "SELECT role FROM calc_roles WHERE user=?", (user_email,))
+        return r["role"] if r else None
     finally:
         c.close()
+
+
+def set_role(user_email, role):
+    c = conn()
+    try:
+        if role in ("user", "super"):
+            c.execute("INSERT INTO calc_roles (user, role) VALUES (?,?) "
+                      "ON CONFLICT(user) DO UPDATE SET role=excluded.role",
+                      (user_email, role))
+        else:
+            c.execute("DELETE FROM calc_roles WHERE user=?", (user_email,))
+        c.commit()
+    finally:
+        c.close()
+
+
+def list_roles():
+    c = conn()
+    try:
+        return _rows(c, "SELECT * FROM calc_roles ORDER BY user")
+    finally:
+        c.close()
+
+
+def get_grant(user_email, division):
+    """Compat shim for the pages: derives the old grant shape from the role.
+    Any role -> edit in every division; super carries the moderator flag.
+    No role -> None (page access alone = read-only)."""
+    role = get_role(user_email)
+    if role is None:
+        return None
+    return {"level": "edit", "lib_admin": 1 if role == "super" else 0}
 
 
 def visible_divisions(user_email, is_admin=False):
-    if is_admin:
-        return ["CIV", "OFF", "HYD"]
-    c = conn()
-    try:
-        rows = _rows(c, "SELECT division FROM calc_grants WHERE user=?", (user_email,))
-        divs = {r["division"] for r in rows}
-        return ["CIV", "OFF", "HYD"] if "*" in divs else sorted(divs)
-    finally:
-        c.close()
+    if is_admin or get_role(user_email):
+        return list(ALL_DIVISIONS)
+    return list(ALL_DIVISIONS)      # read-only viewers still see all divisions
 
 
 def is_lib_admin(user_email, is_admin=False):
-    if is_admin:
-        return True
-    c = conn()
-    try:
-        r = c.execute("SELECT 1 FROM calc_grants WHERE user=? AND lib_admin=1 LIMIT 1",
-                      (user_email,)).fetchone()
-        return bool(r)
-    finally:
-        c.close()
-
-
-def list_grants():
-    c = conn()
-    try:
-        return _rows(c, "SELECT * FROM calc_grants ORDER BY user, division")
-    finally:
-        c.close()
-
-
-def set_grant(user_email, division, level, lib_admin=False):
-    c = conn()
-    try:
-        c.execute("INSERT INTO calc_grants (user, division, level, lib_admin) VALUES (?,?,?,?) "
-                  "ON CONFLICT(user, division) DO UPDATE SET level=excluded.level, "
-                  "lib_admin=excluded.lib_admin",
-                  (user_email, division, level, 1 if lib_admin else 0))
-        c.commit()
-    finally:
-        c.close()
-
-
-def delete_grant(user_email, division):
-    c = conn()
-    try:
-        c.execute("DELETE FROM calc_grants WHERE user=? AND division=?", (user_email, division))
-        c.commit()
-    finally:
-        c.close()
+    return bool(is_admin or get_role(user_email) == "super")
 
 
 # ========================================================================== #

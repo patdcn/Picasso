@@ -1,11 +1,11 @@
 -- ============================================================
---  DCN CALCULATION MODULE - calc.db - Schema Rev 4
+--  DCN CALCULATION MODULE - calc.db - Schema Rev 5
 --  Base currency: USD. All consolidated totals normalised to USD
 --  via the fx snapshot embedded in each revision.
 --  PRAGMA user_version marks the schema revision for migrations.
 -- ============================================================
 
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;
 
 -- ---------------- dimensions ----------------
 
@@ -311,14 +311,15 @@ CREATE TABLE IF NOT EXISTS locks (
     heartbeat_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- ---------------- module grants (division x level, lives in calc.db so
---                  auth.db stays untouched; page visibility still uses the
---                  portal's per-page module grant as the outer gate) --------
+-- ---------------- module roles ------------------------------------------
+-- Two calc roles on top of the portal's per-page access grants:
+--   user  : may create/edit calculations
+--   super : moderator/super-user - everything a user can, plus the check-in
+--           queue, currencies & FX, rate sets, sub-categories, backups
+-- Portal admins have super rights implicitly. Page access without a role =
+-- read-only. Lives in calc.db; auth.db stays untouched.
 
-CREATE TABLE IF NOT EXISTS calc_grants (
-    user TEXT NOT NULL,
-    division TEXT NOT NULL,                     -- 'CIV','OFF','HYD' or '*'
-    level TEXT NOT NULL CHECK (level IN ('edit','read')),
-    lib_admin INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (user, division)
+CREATE TABLE IF NOT EXISTS calc_roles (
+    user TEXT PRIMARY KEY,
+    role TEXT NOT NULL CHECK (role IN ('user','super'))
 );

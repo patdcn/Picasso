@@ -26,7 +26,7 @@ from dash import html, dcc, Input, Output, State, callback, no_update, ALL, ctx
 from dash.exceptions import PreventUpdate
 
 from app import auth
-from app.calcmod import repo
+from app.calcmod import repo, excel_export
 
 dash.register_page(__name__, path="/calculation/libraries", name="Calculation libraries",
                    title="Calculation libraries", category="Calculation", order=4)
@@ -290,7 +290,12 @@ def _overview(rate_set_id, filters, edit_uuid=None, status="",
              html.Tbody(body)],
             style={"borderCollapse": "collapse", "width": "100%"})
     return html.Div([
-        html.H4("Library overview", style={"marginTop": 0}),
+        html.Div([
+            html.H4("Library overview", style={"marginTop": 0,
+                                               "display": "inline-block",
+                                               "marginRight": "16px"}),
+            html.Button("Export Excel", id="cl-xlsx", n_clicks=0, style=BTN_GHOST),
+        ]),
         chip_bar, table,
         html.Div(status, style={"fontSize": "0.83rem", "color": RED,
                                 "marginTop": "6px", "minHeight": "1.1em"}),
@@ -508,12 +513,28 @@ def layout(**_qs):
 
         # (4) unified overview
         dcc.Store(id="cl-filters", data={}),
+        dcc.Download(id="cl-xlsx-dl"),
         dcc.Store(id="cl-edit-uuid", data=None),
         dcc.Store(id="cl-rsid", data=rs_id),
         html.Div(id="cl-table",
                  children=_safe("library overview", _overview, rs_id, {}),
                  style=CARD),
     ])
+
+
+@callback(Output("cl-xlsx-dl", "data"),
+          Input("cl-xlsx", "n_clicks"),
+          State("cl-filters", "data"), State("cl-rsid", "data"),
+          prevent_initial_call=True)
+def _export_xlsx(n, filters, rs_id):
+    if not n or not rs_id:
+        raise PreventUpdate
+    rs = repo.active_rate_set() or {}
+    xb = excel_export.library_workbook_bytes(rs_id, rs.get("label", ""),
+                                             filters or {})
+    import datetime as _dt
+    name = f"calc_library_{_dt.date.today().isoformat()}.xlsx"
+    return dcc.send_bytes(lambda f: f.write(xb), name)
 
 
 # --------------------------------------------------------------------------- #

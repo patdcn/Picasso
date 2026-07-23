@@ -147,3 +147,61 @@ def workbook_bytes(qnumber, rev_no=None):
 
 def excel_filename(qnumber, rev_no):
     return f"{qnumber}_rev{rev_no}_pricing.xlsx"
+
+
+# --------------------------------------------------------------------------- #
+# Library overview export
+# --------------------------------------------------------------------------- #
+def library_workbook_bytes(rate_set_id, rate_set_label="", filters=None):
+    """The unified library overview as a workbook: one row per item, current
+    filters applied (also noted in the header), rates from the given set."""
+    from app.calcmod.repo import list_items, code_label
+
+    LIB_LABEL = {"personnel": "Personnel", "equipment": "Equipment",
+                 "materials": "Materials", "subcontracting": "Sub-contracting"}
+    rows = []
+    for lib in ("personnel", "equipment", "materials", "subcontracting"):
+        for i in list_items(lib, with_rates_for=rate_set_id):
+            rows.append({
+                "code": i["code"], "label": code_label(i["code"]),
+                "description": i.get("description") or i.get("function") or "",
+                "category": LIB_LABEL[lib], "subcat": i.get("category") or "",
+                "ownership": i.get("ownership") or "internal",
+                "region": i.get("region") or "ALL", "unit": i.get("unit") or "",
+                "erp_no": i.get("erp_no") or "",
+                "currency": i.get("currency") or "",
+                "office_rate": i.get("office_rate"), "yard_rate": i.get("yard_rate"),
+                "offshore_rate": i.get("offshore_rate"), "rate": i.get("rate"),
+            })
+    for f, v in (filters or {}).items():
+        rows = [r for r in rows if str(r.get(f) or "") == v]
+    rows.sort(key=lambda r: r["code"])
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Library"
+    ws["A1"] = "DCN Calculation Module \u2014 library overview"
+    ws["A1"].font = Font(bold=True, size=13)
+    ws["A2"] = (f"Rate set: {rate_set_label or rate_set_id} \u00b7 exported "
+                + datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+                + ("  \u00b7 filters: " + ", ".join(f"{k}={v}" for k, v in
+                                                     (filters or {}).items())
+                   if filters else ""))
+    ws["A2"].font = Font(color="6B7280")
+    heads = ["Code", "Code (long)", "Description", "Category", "Sub-category",
+             "Int/Ext", "Region", "Unit", "ERP no", "Currency",
+             "Office", "Yard", "Offshore", "Rate"]
+    ws.append([]); ws.append(heads)
+    for cell in ws[4]:
+        cell.font, cell.fill = HDR, HDR_FILL
+    widths = (14, 24, 34, 16, 18, 9, 8, 8, 14, 9, 10, 10, 10, 12)
+    for col, w in zip("ABCDEFGHIJKLMN", widths):
+        ws.column_dimensions[col].width = w
+    for r in rows:
+        ws.append([r["code"], r["label"], r["description"], r["category"],
+                   r["subcat"], r["ownership"], r["region"], r["unit"],
+                   r["erp_no"], r["currency"], r["office_rate"], r["yard_rate"],
+                   r["offshore_rate"], r["rate"]])
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()

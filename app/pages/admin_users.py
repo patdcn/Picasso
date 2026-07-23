@@ -12,6 +12,7 @@ from dash.exceptions import PreventUpdate
 
 from app import auth
 from app import params
+from app.calcmod import repo as calc_repo
 from app.adminui import (card, input_field, btn, status, back_link,
                          is_admin, denied, INK, MUTED, ACCENT)
 
@@ -113,6 +114,22 @@ def layout():
             dcc.Checklist(id="adm-is-admin",
                           options=[{"label": " Administrator (full access)", "value": "admin"}],
                           value=[], style={"marginBottom": "12px"}),
+            html.Label("Calculation role", style={"fontSize": "0.8rem",
+                                                    "fontWeight": 600}),
+            html.Div("Applies to the Calculation module: 'user' may create and edit "
+                     "calculations; 'super' additionally moderates libraries, rates "
+                     "and currencies (Calculation admin page). Admins are super "
+                     "automatically. Page access below stays required.",
+                     style={"fontSize": "0.74rem", "color": MUTED,
+                            "margin": "2px 0 6px"}),
+            dcc.Dropdown(id="adm-calc-role",
+                         options=[{"label": "— (read-only)", "value": "none"},
+                                  {"label": "User — make calculations",
+                                   "value": "user"},
+                                  {"label": "Super-user — moderate & manage",
+                                   "value": "super"}],
+                         value="none", clearable=False,
+                         style={"marginBottom": "12px", "maxWidth": "340px"}),
             html.Label("Module access", style={"fontSize": "0.8rem", "fontWeight": 600}),
             html.Div("Tick to grant access. Where a tool has editable parameters, tick "
                      "\u201cedit parameters\u201d to let that user change them on that page.",
@@ -162,6 +179,7 @@ def _create(_n, email, pw, admin):
 @callback(
     Output("adm-module-rows", "children"),
     Output("adm-is-admin", "value"),
+    Output("adm-calc-role", "value"),
     Output("adm-user-status", "children"),
     Input("adm-user-dd", "value"),
     prevent_initial_call=True,
@@ -171,9 +189,10 @@ def _select(email):
         raise PreventUpdate
     u = auth.get_user(email)
     if not u:
-        return _module_rows([], []), [], ""
+        return _module_rows([], []), [], "none", ""
     return (_module_rows(u["modules"], u["param_modules"]),
-            (["admin"] if u["is_admin"] else []), "")
+            (["admin"] if u["is_admin"] else []),
+            calc_repo.get_role(email) or "none", "")
 
 
 @callback(
@@ -183,9 +202,10 @@ def _select(email):
     State({"type": "adm-acc", "path": ALL}, "value"),
     State({"type": "adm-par", "path": ALL}, "value"),
     State("adm-is-admin", "value"),
+    State("adm-calc-role", "value"),
     prevent_initial_call=True,
 )
-def _save(_n, email, acc_values, par_values, admin):
+def _save(_n, email, acc_values, par_values, admin, calc_role):
     if not is_admin():
         raise PreventUpdate
     if not email:
@@ -194,6 +214,7 @@ def _save(_n, email, acc_values, par_values, admin):
     param_modules = [v[0] for v in (par_values or []) if v]
     ok, msg = auth.update_user(email, is_admin=("admin" in (admin or [])),
                                modules=modules, param_modules=param_modules)
+    calc_repo.set_role(email, calc_role if calc_role in ("user", "super") else None)
     return html.Span(msg, style={"color": ACCENT if ok else "#b91c1c"})
 
 
