@@ -58,25 +58,35 @@ def _cats_table():
     th = {"textAlign": "left", "padding": "5px 9px", "fontSize": "0.75rem",
           "color": MUTED, "borderBottom": f"2px solid {LINE}"}
     td = {"padding": "5px 9px", "fontSize": "0.85rem"}
+    # identical fixed column widths for BOTH tables so they line up
+    W_NAME, W_ACTIVE, W_BTN = "280px", "90px", "130px"
 
     def _tbl(element, title):
         rows = [c for c in cats if c["element"] == element]
         return html.Div([
             html.H5(title, style={"margin": "10px 0 4px"}),
             html.Table([
-                html.Thead(html.Tr([html.Th(h, style=th) for h in
-                                    ("Sub-category", "Active", "")])),
+                html.Thead(html.Tr([
+                    html.Th("Sub-category", style={**th, "width": W_NAME}),
+                    html.Th("Active", style={**th, "width": W_ACTIVE,
+                                             "textAlign": "center"}),
+                    html.Th("", style={**th, "width": W_BTN}),
+                ])),
                 html.Tbody([html.Tr([
-                    html.Td(c["name"], style=td),
-                    html.Td("\u2713" if c["active"] else "\u2014", style=td),
+                    html.Td(c["name"], style={**td, "width": W_NAME}),
+                    html.Td("\u2713" if c["active"] else "\u2014",
+                            style={**td, "width": W_ACTIVE,
+                                   "textAlign": "center"}),
                     html.Td(html.Button(
                         "Deactivate" if c["active"] else "Reactivate",
                         id={"type": "ca-cat-tgl", "name": c["name"],
                             "el": c["element"], "act": c["active"]},
                         n_clicks=0, style={**BTN_GHOST, "fontSize": "0.75rem",
-                                           "padding": "4px 9px"}), style=td),
+                                           "padding": "4px 9px", "width": "110px"}),
+                        style={**td, "width": W_BTN}),
                 ], style={"borderBottom": f"1px solid {LINE}"}) for c in rows]),
-            ], style={"borderCollapse": "collapse", "width": "100%"}),
+            ], style={"borderCollapse": "collapse", "tableLayout": "fixed",
+                      "width": "520px"}),
         ])
 
     return html.Div([_tbl("materials", "Materials sub-categories"),
