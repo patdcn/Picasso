@@ -76,7 +76,8 @@ def _queue():
         if r["kind"].endswith("_item"):
             item = p.get("item") or {}
             desc = item.get("description") or item.get("function") or ""
-            body = f"{item.get('code')} \u00b7 {desc}"
+            lbl = repo.code_label(item.get("code"))
+            body = f"{item.get('code')}" + (f" ({lbl})" if lbl else "") + f" \u00b7 {desc}"
             dup = repo.find_item_by_code(r["kind"].split("_")[0],
                                          code=item.get("code"),
                                          erp_no=item.get("erp_no"))

@@ -118,11 +118,12 @@ def _rate_text(r):
 # --------------------------------------------------------------------------- #
 # (4) unified overview with click-to-filter and inline edit
 # --------------------------------------------------------------------------- #
-def _flt_cell(field, value, shown=None):
+def _flt_cell(field, value, row_uuid, shown=None):
     if not value:
         return ""
-    return html.Span(shown or value, id={"type": "cl-flt", "field": field,
-                                         "value": str(value)},
+    return html.Span(shown or value,
+                     id={"type": "cl-flt", "field": field, "value": str(value),
+                         "u": row_uuid},                     # uuid keeps ids unique
                      n_clicks=0, style=CLICKABLE,
                      title=f"Click to filter on {shown or value}")
 
@@ -220,14 +221,15 @@ def _overview(rate_set_id, filters, edit_uuid=None, status=""):
             body.append(_edit_row(r, cats_by_lib, td))
             continue
         cells = [
-            html.Td(html.Span(r["code"], style={"fontFamily": "ui-monospace,monospace"}),
+            html.Td(html.Span(r["code"], title=repo.code_label(r["code"]),
+                              style={"fontFamily": "ui-monospace,monospace"}),
                     style=td),
             html.Td(r["description"], style=td),
-            html.Td(_flt_cell("category", r["category"]), style=td),
-            html.Td(_flt_cell("subcat", r["subcat"]), style=td),
-            html.Td(_flt_cell("ownership", r["ownership"]), style=td),
-            html.Td(_flt_cell("region", r["region"]), style=td),
-            html.Td(_flt_cell("unit", r["unit"]), style=td),
+            html.Td(_flt_cell("category", r["category"], r["uuid"]), style=td),
+            html.Td(_flt_cell("subcat", r["subcat"], r["uuid"]), style=td),
+            html.Td(_flt_cell("ownership", r["ownership"], r["uuid"]), style=td),
+            html.Td(_flt_cell("region", r["region"], r["uuid"]), style=td),
+            html.Td(_flt_cell("unit", r["unit"], r["uuid"]), style=td),
             html.Td(r["currency"], style=td),
             html.Td(_rate_text(r), style={**td, "whiteSpace": "nowrap"}),
         ]
@@ -238,10 +240,14 @@ def _overview(rate_set_id, filters, edit_uuid=None, status=""):
                 html.Button("Duplicate", id={"type": "cl-dup", "u": r["uuid"],
                                              "lib": r["lib"]}, n_clicks=0,
                             style=BTN_GHOST),
-                html.Button("Delete", id={"type": "cl-del", "u": r["uuid"],
-                                          "lib": r["lib"]}, n_clicks=0,
-                            style={**BTN_GHOST, "color": RED,
-                                   "border": "1px solid #fecaca"}),
+                dcc.ConfirmDialogProvider(
+                    html.Button("Delete", n_clicks=0,
+                                style={**BTN_GHOST, "color": RED,
+                                       "border": "1px solid #fecaca"}),
+                    id={"type": "cl-del", "u": r["uuid"], "lib": r["lib"]},
+                    message=(f"Delete {r['code']} \u00b7 {r['description']} from the "
+                             "library?\nExisting calculations keep their embedded "
+                             "snapshot; the item disappears from lists and pickers.")),
             ], style={"whiteSpace": "nowrap"}), style=td))
         body.append(html.Tr(cells, style={"borderBottom": f"1px solid {LINE}"}))
     heads = ["Code", "Description", "Category", "Sub-category", "Int / Ext",
@@ -281,7 +287,7 @@ def _form_body(lib, division, prefill=None):
     is_per = lib == "personnel"
     is_msc = lib in ("materials", "subcontracting")
 
-    row1 = [dcc.Input(id="cl-req-desc", value=pf.get("description"),
+    row1 = [dcc.Input(id="cl-req-desc", value=pf.get("description") or "",
                       placeholder=("Function (e.g. Diver) *" if is_per
                                    else "Description *"),
                       style={**FIELD, "width": "280px"})]
@@ -306,12 +312,12 @@ def _form_body(lib, division, prefill=None):
                          value=pf.get("currency") or "USD", clearable=False,
                          style={**DD, "width": "110px"})]
     if is_per:
-        row2 += [dcc.Input(id="cl-req-off", type="number", value=pf.get("office_rate"),
+        row2 += [dcc.Input(id="cl-req-off", type="number", value=pf.get("office_rate", ""),
                            placeholder="Office rate", style={**FIELD, "width": "120px"}),
-                 dcc.Input(id="cl-req-yard", type="number", value=pf.get("yard_rate"),
+                 dcc.Input(id="cl-req-yard", type="number", value=pf.get("yard_rate", ""),
                            placeholder="Yard rate", style={**FIELD, "width": "120px"}),
                  dcc.Input(id="cl-req-osh", type="number",
-                           value=pf.get("offshore_rate"),
+                           value=pf.get("offshore_rate", ""),
                            placeholder="Offshore rate",
                            style={**FIELD, "width": "130px"}),
                  html.Span("at least one rate *",
@@ -319,7 +325,7 @@ def _form_body(lib, division, prefill=None):
                  html.Div(dcc.Input(id="cl-req-rate", type="number"),
                           style={"display": "none"})]
     else:
-        row2 += [dcc.Input(id="cl-req-rate", type="number", value=pf.get("rate"),
+        row2 += [dcc.Input(id="cl-req-rate", type="number", value=pf.get("rate", ""),
                            placeholder="Rate *", style={**FIELD, "width": "130px"}),
                  html.Div([dcc.Input(id="cl-req-off", type="number"),
                            dcc.Input(id="cl-req-yard", type="number"),
@@ -336,6 +342,8 @@ def _form_body(lib, division, prefill=None):
         dcc.Input(id="cl-req-code", value=code, placeholder="Code",
                   style={**FIELD, "width": "160px",
                          "fontFamily": "ui-monospace,monospace"}),
+        html.Span(repo.code_label(code), id="cl-code-label",
+                  style={"color": TEAL, "fontSize": "0.8rem", "fontWeight": 600}),
     ]
     ctx_note = html.Span(f"\u2192 goes to: {LIB_LABEL[lib]} \u00b7 {division}"
                          + (" (duplicated item)" if prefill else ""),
@@ -380,6 +388,10 @@ def _queue_body():
         out.append(html.Div([
             html.Div([html.B(f"#{r['id']} \u00b7 {r['kind']} \u00b7 {r['division']} \u00b7 "
                              f"{item.get('code') or ''}"),
+                      html.Span(f"  ({repo.code_label(item.get('code'))})" if
+                                repo.code_label(item.get("code")) else "",
+                                style={"color": TEAL, "fontSize": "0.8rem",
+                                       "fontWeight": 600}),
                       html.Span(f"  by {r['submitted_by']} \u00b7 {r['submitted_at']}",
                                 style={"color": MUTED, "fontSize": "0.8rem"})]),
             html.Div(f"{desc}  \u00b7  {item.get('region') or ''}",
@@ -499,7 +511,7 @@ def _re_suggest(cp, own, region, fctx):
 
 @callback(Output("cl-req-code", "style"),
           Output("cl-dup-msg", "children"), Output("cl-req-btn", "disabled"),
-          Output("cl-req-btn", "style"),
+          Output("cl-req-btn", "style"), Output("cl-code-label", "children"),
           Input("cl-req-code", "value"),
           State("cl-form-ctx", "data"))
 def _live_dup(code, fctx):
@@ -515,12 +527,13 @@ def _live_dup(code, fctx):
             msg = f"Code {d['code']} already exists ({dd})."
             blocked = True
     btn_style = {**BTN, "opacity": 0.4, "cursor": "not-allowed"} if blocked else BTN
-    return code_style, msg, blocked, btn_style
+    return code_style, msg, blocked, btn_style, repo.code_label((code or "").strip())
 
 
 @callback(Output("cl-req-status", "children"),
           Output("cl-queue", "children", allow_duplicate=True),
           Output("cl-form", "children", allow_duplicate=True),
+          Output("cl-req-note", "value"),
           Input("cl-req-btn", "n_clicks"),
           State("cl-form-ctx", "data"),
           State("cl-req-desc", "value"), State("cl-req-cat", "value"),
@@ -534,7 +547,7 @@ def _submit(n, fctx, desc, cat, own, region, unit, cur, rate, off, yard, osh,
             code, note):
     user = auth.current_user()
     if not n or not user or not fctx:
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update
     lib, division = fctx["lib"], fctx["division"]
     is_per, is_msc = lib == "personnel", lib in ("materials", "subcontracting")
     missing = []
@@ -554,9 +567,11 @@ def _submit(n, fctx, desc, cat, own, region, unit, cur, rate, off, yard, osh,
     elif rate is None:
         missing.append("rate")
     if missing:
-        return "Required: " + ", ".join(missing) + ".", no_update, no_update
+        return ("Required: " + ", ".join(missing) + ".",
+                no_update, no_update, no_update)
     if repo.find_item_by_code(lib, code=code.strip()):
-        return "Duplicate code - see the message above.", no_update, no_update
+        return ("Duplicate code - see the message above.",
+                no_update, no_update, no_update)
     item = {"code": code.strip(), "region": region, "unit": unit or "day",
             "ownership": own or "internal"}
     if is_per:
@@ -574,7 +589,7 @@ def _submit(n, fctx, desc, cat, own, region, unit, cur, rate, off, yard, osh,
                         user["email"], note=(note or "").strip() or None)
     # fresh, emptied form for the next entry (same lib/div)
     return (f"Submitted for review: {code.strip()}.", _queue_body(),
-            _form_body(lib, division))
+            _form_body(lib, division), "")
 
 
 # --------------------------------------------------------------------------- #
@@ -598,7 +613,7 @@ def _review(_ok, _no, filters, rs_id):
 
 
 @callback(Output("cl-table", "children", allow_duplicate=True),
-          Input({"type": "cl-del", "u": ALL, "lib": ALL}, "n_clicks"),
+          Input({"type": "cl-del", "u": ALL, "lib": ALL}, "submit_n_clicks"),
           State("cl-filters", "data"), State("cl-rsid", "data"),
           prevent_initial_call=True)
 def _delete(_clicks, filters, rs_id):
@@ -618,23 +633,33 @@ def _fx_card(rs_id, status=""):
     if not _is_lib_admin():
         return html.Div()
     fx = repo.get_fx(rs_id) if rs_id else {}
-    rows = [html.Tr([
-        html.Td(c["code"], style={"padding": "4px 8px",
-                                  "fontFamily": "ui-monospace,monospace"}),
-        html.Td(c["name"], style={"padding": "4px 8px"}),
-        html.Td("1.000000" if c["code"] == "USD"
-                else (f"{fx.get(c['code']):.6f}" if fx.get(c["code"]) else "\u2014"),
-                style={"padding": "4px 8px", "textAlign": "right",
-                       "fontFamily": "ui-monospace,monospace"}),
-    ], style={"borderBottom": f"1px solid {LINE}"})
-        for c in repo.list_currencies()]
+    rows = []
+    for c in repo.list_currencies():
+        if c["code"] == "USD":
+            cell = html.Td("1.000000", style={"padding": "4px 8px",
+                                              "textAlign": "right",
+                                              "fontFamily":
+                                              "ui-monospace,monospace"})
+        else:
+            cell = html.Td(dcc.Input(
+                id={"type": "cl-fxr", "cur": c["code"]}, type="number",
+                value=fx.get(c["code"]),
+                placeholder="\u2014", debounce=True,
+                style={**SMALL, "width": "110px", "textAlign": "right"}),
+                style={"padding": "4px 8px"})
+        rows.append(html.Tr([
+            html.Td(c["code"], style={"padding": "4px 8px",
+                                      "fontFamily": "ui-monospace,monospace"}),
+            html.Td(c["name"], style={"padding": "4px 8px"}),
+            cell,
+        ], style={"borderBottom": f"1px solid {LINE}"}))
     return html.Div([
         html.H4("Currencies & exchange rates (library admin)",
                 style={"marginTop": 0}),
         html.P("Rate = 1 unit in USD, stored in the ACTIVE rate set and embedded in "
-               "each calc at creation. 'Fetch live rates' pulls current ECB-based "
-               "conversions from the internet (interim solution); values can be "
-               "overridden manually.",
+               "each calc at creation. Type directly in the table to set a rate "
+               "manually (e.g. with a currency-risk margin); 'Fetch live rates' "
+               "pulls current conversions from the internet.",
                style={"color": MUTED, "fontSize": "0.83rem"}),
         html.Table([html.Thead(html.Tr([html.Th(h, style={
             "textAlign": "left", "padding": "4px 8px", "fontSize": "0.75rem",
@@ -701,12 +726,27 @@ def _fx(n_add, n_set, n_live, code, name, mcur, mrate, rs_id, fctx):
             _form_body(fctx["lib"], fctx["division"]))
 
 
+@callback(Output("cl-fx-wrap", "children", allow_duplicate=True),
+          Input({"type": "cl-fxr", "cur": ALL}, "value"),
+          State("cl-rsid", "data"),
+          prevent_initial_call=True)
+def _fx_manual(_vals, rs_id):
+    trig = ctx.triggered_id
+    if not isinstance(trig, dict) or not _is_lib_admin() or not rs_id:
+        raise PreventUpdate
+    val = ctx.triggered[0]["value"]
+    if val in (None, ""):
+        raise PreventUpdate
+    repo.set_fx(rs_id, trig["cur"], float(val))
+    return _fx_card(rs_id, status=f"{trig['cur']} \u2192 USD = {val} saved (manual).")
+
+
 # --------------------------------------------------------------------------- #
 # overview: filters, edit, save
 # --------------------------------------------------------------------------- #
 @callback(Output("cl-filters", "data"),
           Output("cl-table", "children", allow_duplicate=True),
-          Input({"type": "cl-flt", "field": ALL, "value": ALL}, "n_clicks"),
+          Input({"type": "cl-flt", "field": ALL, "value": ALL, "u": ALL}, "n_clicks"),
           Input({"type": "cl-chip", "field": ALL}, "n_clicks"),
           State("cl-filters", "data"), State("cl-rsid", "data"),
           State("cl-edit-uuid", "data"),

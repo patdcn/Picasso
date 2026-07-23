@@ -221,16 +221,33 @@ def fetch_live_fx(rate_set_id, fetcher=None):
     import json as _json
     import urllib.request
 
+    ENDPOINTS = (        # tried in order; all free, no API key
+        "https://api.frankfurter.dev/v1/latest?base=USD",
+        "https://api.frankfurter.app/latest?from=USD",
+        "https://open.er-api.com/v6/latest/USD",
+    )
+
     def _default_fetcher():
-        with urllib.request.urlopen(
-                "https://api.frankfurter.app/latest?from=USD", timeout=10) as r:
-            return _json.loads(r.read().decode())
+        last_err = None
+        for url in ENDPOINTS:
+            try:
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": "DCN-Picasso-Portal/1.0 (engineering tool)",
+                    "Accept": "application/json"})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    data = _json.loads(r.read().decode())
+                if data.get("rates"):
+                    return data
+                last_err = RuntimeError(f"{url}: no rates in response")
+            except Exception as e:                      # try the next endpoint
+                last_err = e
+        raise last_err or RuntimeError("no FX endpoint reachable")
 
     try:
         data = (fetcher or _default_fetcher)()
         rates = data.get("rates") or {}
     except Exception as e:
-        return {}, [f"Could not fetch live rates: {e}"]
+        return {}, [f"Could not fetch live rates ({e}) - set rates manually below."]
     updated, errors = {}, []
     for cur in [c["code"] for c in list_currencies()]:
         if cur == "USD":
@@ -344,6 +361,24 @@ REGION_LETTER = {"EUR": "E", "WAF": "W", "UAE": "U", "SEA": "S", "ALL": "A"}
 # sub-category's element mapping.
 VIRTUAL_LIBS = {"materials": ("misc", "materials"),
                 "subcontracting": ("misc", "subcontracting")}
+
+_LBL_LIB = {"P": "Pers", "E": "Equip", "M": "Mat", "S": "Subc"}
+_LBL_DIV = {"C": "Civ", "O": "Off", "H": "Hyd"}
+_LBL_OWN = {"I": "Int", "E": "Ext"}
+_LBL_REG = {"E": "Eur", "W": "Waf", "U": "Uae", "S": "Sea", "A": "AllReg"}
+
+
+def code_label(code):
+    """Human-readable expansion: E-O-E-E-0001 -> 'Equip-Off-Ext-Eur-0001'."""
+    parts = (code or "").split("-")
+    if len(parts) != 5:
+        return ""
+    lib, div, own, reg, num = parts
+    bits = [_LBL_LIB.get(lib), _LBL_DIV.get(div), _LBL_OWN.get(own),
+            _LBL_REG.get(reg), num]
+    if any(b is None for b in bits):
+        return ""
+    return "-".join(bits)
 
 
 def base_lib(lib):
