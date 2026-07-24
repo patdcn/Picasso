@@ -1,11 +1,11 @@
 -- ============================================================
---  DCN CALCULATION MODULE - calc.db - Schema Rev 5
+--  DCN CALCULATION MODULE - calc.db - Schema Rev 6
 --  Base currency: USD. All consolidated totals normalised to USD
 --  via the fx snapshot embedded in each revision.
 --  PRAGMA user_version marks the schema revision for migrations.
 -- ============================================================
 
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;
 
 -- ---------------- dimensions ----------------
 
@@ -174,7 +174,9 @@ CREATE TABLE IF NOT EXISTS library_requests (
 
 CREATE TABLE IF NOT EXISTS calculations (
     qnumber TEXT PRIMARY KEY
-        CHECK (qnumber GLOB 'Q0[0-9][0-9][0-9][0-9]'),
+        -- EUR/SEA tenders: Q0XXXX - WAF/UAE tenders: UQ0XXXX
+        CHECK (qnumber GLOB 'Q0[0-9][0-9][0-9][0-9]'
+               OR qnumber GLOB 'UQ0[0-9][0-9][0-9][0-9]'),
     title TEXT NOT NULL,
     client TEXT,
     division TEXT NOT NULL REFERENCES divisions(code),

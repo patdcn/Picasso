@@ -16,7 +16,7 @@ import uuid as _uuid
 
 CALC_DB = os.getenv("CALC_DB", "/data/calc.db")
 
-SCHEMA_REV = 5
+SCHEMA_REV = 6
 _SCHEMA_FILE = os.path.join(os.path.dirname(__file__), "schema.sql")
 
 SEED_DIVISIONS = [("CIV", "Civil"), ("OFF", "Offshore"), ("HYD", "Hydropower")]
@@ -85,7 +85,28 @@ def init_db():
         has_tables = bool(c.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='revisions'"
         ).fetchone())
-        if has_tables and cur < SCHEMA_REV:
+        if has_tables and cur == 5:
+            # Targeted migration 5 -> 6: relax the Q-number CHECK to also
+            # allow UQ0XXXX (WAF/UAE convention). Only the calculations
+            # table is rebuilt; libraries, rates and roles are preserved.
+            c.execute("PRAGMA foreign_keys = OFF")
+            c.execute("""CREATE TABLE IF NOT EXISTS calculations_new (
+                qnumber TEXT PRIMARY KEY
+                    CHECK (qnumber GLOB 'Q0[0-9][0-9][0-9][0-9]'
+                           OR qnumber GLOB 'UQ0[0-9][0-9][0-9][0-9]'),
+                title TEXT NOT NULL, client TEXT,
+                division TEXT NOT NULL REFERENCES divisions(code),
+                region TEXT NOT NULL REFERENCES regions(code),
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                archived INTEGER NOT NULL DEFAULT 0)""")
+            c.execute("INSERT INTO calculations_new SELECT * FROM calculations")
+            c.execute("DROP TABLE calculations")
+            c.execute("ALTER TABLE calculations_new RENAME TO calculations")
+            c.execute("PRAGMA foreign_keys = ON")
+            c.execute("PRAGMA user_version = 6")
+            c.commit()
+        elif has_tables and cur < SCHEMA_REV:
             for t in _MODULE_TABLES:
                 c.execute(f"DROP TABLE IF EXISTS {t}")
             c.execute("DROP TRIGGER IF EXISTS trg_revision_issued_lock")

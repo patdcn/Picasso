@@ -644,6 +644,24 @@ def list_block_templates(division):
 # ========================================================================== #
 # Calculations & revisions
 # ========================================================================== #
+Q_PREFIX_REGIONS = {"EUR": "Q0", "SEA": "Q0", "WAF": "UQ0", "UAE": "UQ0"}
+
+
+def validate_qnumber(qnumber, region):
+    """Naming convention: EUR/SEA -> Q0XXXX, WAF/UAE -> UQ0XXXX.
+    Returns an error message or None."""
+    import re
+    q = (qnumber or "").strip().upper()
+    want = Q_PREFIX_REGIONS.get(region)
+    if want is None:
+        return f"Unknown region '{region}'."
+    if not re.fullmatch(want + r"\d{4}", q):
+        other = "UQ0XXXX (WAF/UAE)" if want == "Q0" else "Q0XXXX (EUR/SEA)"
+        return (f"For region {region} the Q number must be {want}XXXX "
+                f"(e.g. {want}1234) - not {other.split()[0]}-style.")
+    return None
+
+
 def list_calcs(divisions, include_archived=False):
     if not divisions:
         return []
@@ -696,6 +714,9 @@ def create_calc(qnumber, title, client, division, region, user):
     """New calc -> revision 0 (working) with a master block and markups/fx
     snapshotted from the ACTIVE rate set. Q numbers come from Business Central
     and are entered, never generated here."""
+    err = validate_qnumber(qnumber, region)
+    if err:
+        raise ValueError(err)
     rs = active_rate_set()
     c = conn()
     try:

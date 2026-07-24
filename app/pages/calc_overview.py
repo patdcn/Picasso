@@ -98,7 +98,7 @@ def layout(**_qs):
     new_card = html.Div([
         html.H4("New calculation", style={"marginTop": 0}),
         html.Div([
-            dcc.Input(id="co-new-q", placeholder="Q number (Q0XXXX, from Business Central)",
+            dcc.Input(id="co-new-q", placeholder="Q number: Q0XXXX (EUR/SEA) / UQ0XXXX (WAF/UAE)",
                       style={**FIELD, "width": "280px", "marginRight": "8px"}),
             dcc.Input(id="co-new-title", placeholder="Title",
                       style={**FIELD, "width": "280px", "marginRight": "8px"}),
@@ -183,6 +183,9 @@ def _create(n, q, title, client, division, region):
         return f"You have no edit rights in {DIV_LABEL.get(division, division)}.", no_update
     if repo.get_calc(q):
         return f"{q} already exists.", no_update
+    err = repo.validate_qnumber(q, region)
+    if err:
+        return err, no_update
     try:
         repo.create_calc(q, title.strip(), (client or "").strip() or None,
                          division, region, user["email"])
@@ -209,6 +212,10 @@ def _duplicate(n, src, new_q, title):
         return "You have no edit rights in the source calc's division.", no_update
     if repo.get_calc(new_q):
         return f"{new_q} already exists.", no_update
+    err = repo.validate_qnumber(new_q, src_calc["region"])
+    if err:
+        return (f"Duplicate keeps the source region ({src_calc['region']}): "
+                + err), no_update
     try:
         repo.duplicate_calc(src, new_q, title.strip(), src_calc.get("client"), user["email"])
     except Exception as e:
@@ -234,9 +241,15 @@ def _import(contents, filename, new_q):
     g = repo.get_grant(user["email"], division) if division else None
     if not (user.get("is_admin") or (g and g["level"] == "edit")):
         return "You have no edit rights in this file's division.", no_update
+    new_q_clean = (new_q or "").strip().upper() or None
+    if new_q_clean:
+        region = (data.get("calc") or {}).get("region")
+        err = repo.validate_qnumber(new_q_clean, region)
+        if err:
+            return err, no_update
     try:
-        q, r = qcalc_io.import_qcalc(
-            data, user["email"], as_new_qnumber=(new_q or "").strip().upper() or None)
+        q, r = qcalc_io.import_qcalc(data, user["email"],
+                                     as_new_qnumber=new_q_clean)
     except Exception as e:
         return f"Import failed: {e}", no_update
     return f"Imported as {q} rev {r}.", _table(user)
