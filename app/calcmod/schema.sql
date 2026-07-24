@@ -1,11 +1,11 @@
 -- ============================================================
---  DCN CALCULATION MODULE - calc.db - Schema Rev 6
+--  DCN CALCULATION MODULE - calc.db - Schema Rev 7
 --  Base currency: USD. All consolidated totals normalised to USD
 --  via the fx snapshot embedded in each revision.
 --  PRAGMA user_version marks the schema revision for migrations.
 -- ============================================================
 
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
 
 -- ---------------- dimensions ----------------
 
@@ -134,6 +134,10 @@ CREATE TABLE IF NOT EXISTS markup_sets (
     risk_pct REAL NOT NULL DEFAULT 0,
     overhead_pct REAL NOT NULL DEFAULT 0,
     margin_pct REAL NOT NULL DEFAULT 0,
+    labor_pct REAL NOT NULL DEFAULT 0,          -- element markups (grid col O)
+    equipment_pct REAL NOT NULL DEFAULT 0,
+    materials_pct REAL NOT NULL DEFAULT 0,
+    subcon_pct REAL NOT NULL DEFAULT 0,
     UNIQUE (rate_set_id, division, region)
 );
 
@@ -225,6 +229,10 @@ CREATE TABLE IF NOT EXISTS snap_markups (
     levy_local_pct REAL NOT NULL DEFAULT 0, levy_expat_pct REAL NOT NULL DEFAULT 0,
     profit_pct REAL NOT NULL DEFAULT 0, risk_pct REAL NOT NULL DEFAULT 0,
     overhead_pct REAL NOT NULL DEFAULT 0, margin_pct REAL NOT NULL DEFAULT 0,
+    labor_pct REAL NOT NULL DEFAULT 0,
+    equipment_pct REAL NOT NULL DEFAULT 0,
+    materials_pct REAL NOT NULL DEFAULT 0,
+    subcon_pct REAL NOT NULL DEFAULT 0,
     UNIQUE (revision_id)
 );
 
@@ -256,6 +264,7 @@ CREATE TABLE IF NOT EXISTS blocks (
     kind TEXT NOT NULL CHECK (kind IN ('master','package','block')),
     name TEXT NOT NULL,
     unit_label TEXT NOT NULL DEFAULT 'day',     -- 'day','lump','per platform',...
+    qty REAL NOT NULL DEFAULT 1,                -- level multiplier (Excel col I)
     sort_order INTEGER NOT NULL DEFAULT 0,
     start_date TEXT, end_date TEXT,             -- cash-flow phasing (later phase)
     notes TEXT
@@ -277,6 +286,11 @@ CREATE TABLE IF NOT EXISTS block_lines (
     ownership TEXT CHECK (ownership IN ('internal','external')),  -- labor/equipment split
     origin TEXT NOT NULL DEFAULT 'local'
         CHECK (origin IN ('local','expat')),
+    subcat TEXT,                                -- materials/subcon sub-category
+    unit TEXT,                                  -- free-line unit (library lines
+                                                -- take the snapshot's unit)
+    remarks TEXT,
+    markup_override REAL,                       -- NULL = element default applies
     sort_order INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_lines_block ON block_lines(block_id);

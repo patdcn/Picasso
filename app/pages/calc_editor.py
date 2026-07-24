@@ -1,71 +1,83 @@
 """
-Calculation - Calculation editor (module v1).
+Calculation - Calculation editor (module v1, GRID format).
 
-One page, query-string addressed: /calculation/editor?q=Q0XXXX[&rev=N].
+The agreed Excel/IBIS-style grid replaces the earlier panel editor. One
+spreadsheet-like table over the full screen width:
 
-Left: the structure - master with nested packages, plus a separate
-"Building blocks" list (kind=block roots; they price through references
-only, so parking them anywhere can never double-count). Right: the selected
-node - its own lines (element, library item or free text, qty x duration x
-rate with basis/origin), its references to building blocks (qty multiplies
-ALL element subtotals of the block), and its unit totals. The footer shows
-the master rollup: seven-element subtotals, levies, the markup waterfall
-and the sell price - recomputed live on every edit.
+  BOQ Code | Library Code | (ERP hidden) | Lvl | Description | Category |
+  Remarks | Local/Foreign | Qty | Unit | O/Y/Offs | Unit Price | Item Price |
+  Net Total | Markup
 
-Editing follows the module's concurrency model: one estimator per Q number
-(soft lock, 10-min stale timeout, heartbeat every minute). Everyone else -
-and every issued revision - gets the read-only view, which polls the edit
-journal and re-renders when the estimator changes something (the LIVE view).
-Every mutation is journaled, which is also what powers Undo.
+Two row kinds. LEVEL rows (chapters, level 1-5) carry the BOQ code, a level
+qty multiplier and the Net Total; the harmonica arrow collapses their whole
+subtree. ITEM rows live under a level: description with library type-ahead
+(matching text links the line to the library and prefills code / category /
+unit / price; anything else is free text with own category and price),
+per-line Local/Foreign for the levies, O/Y/Offs for personnel, and a Markup
+column prefilled from the element markups in the revision snapshot with a
+per-line override. Building-block references render as item rows with
+category "Building Block"; the blocks themselves are edited in their own
+section below and every reference follows live.
 
-Issued revisions are immutable - the only way to amend is a new revision.
+Math (anchored against the agreed sheet): item price = unit price x qty;
+level Net Total = (own item prices + child level Net Totals + refs) x level
+qty - multipliers compound down the tree. All prices in USD via the
+revision's embedded FX snapshot.
+
+Everything stays journaled/undoable; locks, revisions, issue flow, exports
+and the refresh-rates dialog carry over from the previous editor. "Apply
+admin markups" mass-updates the element markups from the current active set
+(explicit - the snapshot principle stays intact).
 """
 import json
 
 import dash
-from dash import (html, dcc, Input, Output, State, callback, no_update, ALL, ctx)
+from dash import html, dcc, Input, Output, State, callback, no_update, ALL, ctx
 from dash.exceptions import PreventUpdate
 
 from app import auth
 from app.calcmod import repo, engine, qcalc_io, excel_export
-from app.calcmod.db import ELEMENTS, ELEMENT_LABELS
 
 dash.register_page(__name__, path="/calculation/editor", name="Calculation editor",
                    title="Calculation editor", category="Calculation", order=3)
 
 MODULE = "/calculation/editor"
 
-INK, MUTED, TEAL, LINE = "#1f2937", "#6b7280", "#0f766e", "#e5e7eb"
-PANEL, PANEL2, RED = "#f8fafc", "#f1f5f9", "#b91c1c"
-BTN = {"padding": "7px 12px", "borderRadius": "8px", "border": "none", "background": TEAL,
-       "color": "#fff", "fontWeight": 600, "cursor": "pointer", "fontSize": "0.82rem",
-       "marginRight": "6px"}
-BTN_GHOST = {"padding": "6px 10px", "borderRadius": "8px", "border": f"1px solid {LINE}",
-             "background": "#fff", "color": INK, "cursor": "pointer", "fontSize": "0.78rem",
-             "marginRight": "6px"}
-BTN_DANGER = {**BTN_GHOST, "color": RED, "border": "1px solid #fecaca"}
-FIELD = {"padding": "6px 8px", "borderRadius": "7px", "border": f"1px solid {LINE}",
-         "fontSize": "0.82rem", "boxSizing": "border-box"}
-NUM = {**FIELD, "width": "70px", "textAlign": "right",
-       "fontFamily": "ui-monospace,monospace"}
+INK, MUTED, TEAL, LINE, RED = "#1f2937", "#6b7280", "#0f766e", "#e5e7eb", "#b91c1c"
+LVL_BG = {1: "#fecdd3", 2: "#e5e7eb", 3: "#d1d5db", 4: "#e7e5e4", 5: "#f5f5f4"}
+BTN = {"padding": "7px 12px", "borderRadius": "8px", "border": "none",
+       "background": TEAL, "color": "#fff", "fontWeight": 600, "cursor": "pointer",
+       "fontSize": "0.8rem", "marginRight": "6px"}
+BTN_GHOST = {"padding": "6px 10px", "borderRadius": "8px",
+             "border": f"1px solid {LINE}", "background": "#fff", "color": INK,
+             "cursor": "pointer", "fontSize": "0.78rem", "marginRight": "6px"}
+BTN_MINI = {"padding": "1px 7px", "borderRadius": "6px",
+            "border": f"1px solid {LINE}", "background": "#fff", "cursor": "pointer",
+            "fontSize": "0.72rem", "marginRight": "3px", "color": INK}
 CARD = {"background": "#fff", "border": f"1px solid {LINE}", "borderRadius": "12px",
-        "padding": "14px", "marginBottom": "14px"}
+        "padding": "14px 16px", "marginBottom": "14px"}
+CELL_IN = {"width": "100%", "border": "1px solid transparent", "borderRadius": "4px",
+           "padding": "2px 4px", "fontSize": "0.8rem", "background": "transparent",
+           "boxSizing": "border-box"}
+NUM_IN = {**CELL_IN, "textAlign": "right"}
+DDS = {"fontSize": "0.75rem"}
 
-BASIS_OPTS = [{"label": b, "value": b} for b in ("offshore", "yard", "office", "unit")]
-ORIGIN_OPTS = [{"label": o, "value": o} for o in ("local", "expat")]
-OWN_OPTS = [{"label": "int.", "value": "internal"}, {"label": "ext.", "value": "external"}]
-ELEMENT_OPTS = [{"label": ELEMENT_LABELS[e], "value": e} for e in ELEMENTS]
+ELEMENT_LABEL = {"labor": "Labour", "equipment": "Equipment",
+                 "materials": "Materials", "subcontracting": "Sub-contracting"}
+BASIS_OPTS = [{"label": "O", "value": "office"}, {"label": "Y", "value": "yard"},
+              {"label": "Offs", "value": "offshore"}]
+ORIGIN_OPTS = [{"label": "Local", "value": "local"},
+               {"label": "Foreign", "value": "expat"}]
+UNIT_OPTS = ["day", "night", "week", "hour", "each", "lump", "ton", "m3",
+             "liter", "ticket", "rolls"]
+MAX_DEPTH = 5
 
 
-# --------------------------------------------------------------------------- #
-# context helpers
-# --------------------------------------------------------------------------- #
 def _user():
     return auth.current_user()
 
 
 def _ctx(q, rev_no):
-    """Everything the render helpers need: calc, revision, edit-vs-readonly."""
     user = _user()
     calc = repo.get_calc(q) if q else None
     if not (user and calc):
@@ -87,263 +99,370 @@ def _fmt(v):
     return f"{v:,.2f}"
 
 
+def _num(v, default=None):
+    if v in (None, ""):
+        return default
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
 # --------------------------------------------------------------------------- #
-# render helpers
+# library option map for the description type-ahead
 # --------------------------------------------------------------------------- #
-def _tree_panel(cx, selected_id):
+def _lib_options(calc):
+    """[{label, lib, uuid, item}] for the calc's division+region; the label is
+    what appears in the datalist and what an exact match links on."""
+    out = []
+    for lib in ("personnel", "equipment", "materials", "subcontracting"):
+        for it in repo.list_items(lib, calc["division"], calc_region=calc["region"]):
+            desc = it.get("description") or it.get("function") or ""
+            out.append({"label": f"{it['code']} \u00b7 {desc}", "lib": lib,
+                        "uuid": it["uuid"], "desc": desc, "item": it})
+    return out
+
+
+def _cat_options():
+    opts = [{"label": "Labour", "value": "labor|"},
+            {"label": "Equipment", "value": "equipment|"}]
+    for c in repo.list_misc_categories():
+        el = "Materials" if c["element"] == "materials" else "Sub-contracting"
+        val = ("materials" if c["element"] == "materials" else "subcontracting")
+        opts.append({"label": f"{el} / {c['name']}", "value": f"{val}|{c['name']}"})
+    return opts
+
+
+# --------------------------------------------------------------------------- #
+# grid rendering
+# --------------------------------------------------------------------------- #
+HEADS = ["BOQ Code", "Library Code", "Lvl", "Description", "Category", "Remarks",
+         "Local / Foreign", "Qty", "Unit", "O/Y/Offs", "Unit Price",
+         "Item Price", "Net Total", "Markup %", ""]
+COL_W = ["96px", "120px", "34px", "300px", "170px", "170px", "92px", "64px",
+         "84px", "72px", "90px", "100px", "110px", "72px", "150px"]
+
+
+def _th():
+    return html.Tr([html.Th(h, style={"textAlign": "left", "padding": "6px 6px",
+                                      "fontSize": "0.72rem", "color": MUTED,
+                                      "borderBottom": f"2px solid {LINE}",
+                                      "width": w, "position": "sticky", "top": 0,
+                                      "background": "#fff", "zIndex": 2})
+                    for h, w in zip(HEADS, COL_W)])
+
+
+def _td(child, extra=None, right=False):
+    st = {"padding": "2px 5px", "fontSize": "0.8rem", "verticalAlign": "middle",
+          "borderBottom": f"1px solid {LINE}"}
+    if right:
+        st["textAlign"] = "right"
+    if extra:
+        st.update(extra)
+    return html.Td(child, style=st)
+
+
+def _line_row(ln, snap, g, ed, cat_opts):
+    """One ITEM row."""
+    lid = ln["id"]
+    item = snap["items"].get(ln.get("snap_item_id")) if ln.get("snap_item_id") else None
+    gl = g["lines"][lid]
+    lib_code = item["code"] if item else ""
+    is_per = bool(item and item["lib"] == "personnel")
+    # category cell
+    if item:
+        cat_txt = ELEMENT_LABEL.get(ln["element"], ln["element"])
+        sub = ln.get("subcat") or (item.get("category") if item else None)
+        cat_cell = (cat_txt + (f" / {sub}" if sub else ""))
+    elif ed:
+        cur = f"{ln['element']}|{ln.get('subcat') or ''}"
+        cat_cell = dcc.Dropdown(id={"t": "ge", "f": "cat", "id": lid},
+                                options=cat_opts, value=cur, clearable=False,
+                                style=DDS)
+    else:
+        sub = ln.get("subcat")
+        cat_cell = ELEMENT_LABEL.get(ln["element"], "") + (f" / {sub}" if sub else "")
+    # unit cell
+    unit_val = (item.get("unit") if item else ln.get("unit")) or ""
+    if item or not ed:
+        unit_cell = unit_val
+    else:
+        uopts = [{"label": u, "value": u} for u in
+                 dict.fromkeys(UNIT_OPTS + ([unit_val] if unit_val else []))]
+        unit_cell = dcc.Dropdown(id={"t": "ge", "f": "unitf", "id": lid},
+                                 options=uopts, value=unit_val or "day",
+                                 clearable=False, style=DDS)
+    # O/Y/Offs
+    if is_per:
+        basis_cell = dcc.Dropdown(id={"t": "ge", "f": "basis", "id": lid},
+                                  options=BASIS_OPTS,
+                                  value=ln.get("rate_basis") or "offshore",
+                                  clearable=False, style=DDS) if ed else \
+            {"office": "O", "yard": "Y", "offshore": "Offs"}.get(
+                ln.get("rate_basis") or "offshore", "")
+    else:
+        basis_cell = ""
+    # unit price
+    if item and ln.get("unit_rate_override") is None:
+        up_cell = html.Span(_fmt(gl["unit_price"]),
+                            title=f"library rate ({gl['currency']})")
+    elif ed:
+        up_cell = dcc.Input(id={"t": "ge", "f": "uprice", "id": lid}, type="number",
+                            value=ln.get("unit_rate_override"), debounce=True,
+                            style=NUM_IN)
+    else:
+        up_cell = _fmt(gl["unit_price"])
+    # markup: override or element default (placeholder)
+    default_pct = engine.line_markup_pct({**ln, "markup_override": None}, snap) * 100
+    mk_val = "" if ln.get("markup_override") is None \
+        else round(float(ln["markup_override"]) * 100, 4)
+    mk_cell = html.Span(dcc.Input(id={"t": "ge", "f": "markup", "id": lid},
+                                  type="number", value=mk_val,
+                                  placeholder=f"{default_pct:g}",
+                                  debounce=True, style=NUM_IN),
+                        title="Element default from admin; type to override, "
+                              "clear to fall back") if ed else \
+        f"{engine.line_markup_pct(ln, snap) * 100:g}"
+    desc_val = ln.get("description") or (item.get("description") if item else "") or ""
+    cells = [
+        _td(""),                                                    # BOQ
+        _td(html.Span(lib_code, title=repo.code_label(lib_code),
+                      style={"fontFamily": "ui-monospace,monospace",
+                             "fontSize": "0.74rem"})),
+        _td(""),                                                    # Lvl
+        _td(dcc.Input(id={"t": "ge", "f": "desc", "id": lid}, value=desc_val,
+                      debounce=True, list="ce-datalist",
+                      style={**CELL_IN, "border": f"1px solid {LINE}"})
+            if ed else desc_val),
+        _td(cat_cell),
+        _td(dcc.Input(id={"t": "ge", "f": "remarks", "id": lid},
+                      value=ln.get("remarks") or "", debounce=True, style=CELL_IN)
+            if ed else (ln.get("remarks") or "")),
+        _td(dcc.Dropdown(id={"t": "ge", "f": "origin", "id": lid},
+                         options=ORIGIN_OPTS, value=ln.get("origin") or "local",
+                         clearable=False, style=DDS) if ed else
+            ("Local" if (ln.get("origin") or "local") == "local" else "Foreign")),
+        _td(dcc.Input(id={"t": "ge", "f": "qty", "id": lid}, type="number",
+                      value=ln.get("qty"), debounce=True, style=NUM_IN)
+            if ed else f"{ln.get('qty'):g}", right=True),
+        _td(unit_cell),
+        _td(basis_cell),
+        _td(up_cell, right=True),
+        _td(_fmt(gl["item_price"]), right=True),
+        _td(""),                                                    # Net
+        _td(mk_cell, right=True),
+        _td(html.Button("\u2715", id={"t": "ga", "a": "delline", "b": lid},
+                        n_clicks=0, title="Delete line", style=BTN_MINI)
+            if ed else ""),
+    ]
+    return html.Tr(cells)
+
+
+def _ref_row(rf, blocks, g, ed):
+    """A building-block reference rendered as an item row."""
+    rid = rf["id"]
+    refb = blocks[rf["ref_block_id"]]
+    net = g["blocks"][rf["ref_block_id"]]["net"]
+    cells = [
+        _td(""),
+        _td(html.Span("BB", style={"fontFamily": "ui-monospace,monospace",
+                                   "fontSize": "0.74rem", "color": TEAL})),
+        _td(""),
+        _td(html.Span(refb["name"], style={"fontStyle": "italic"})),
+        _td(html.Span("Building Block", style={"color": TEAL, "fontWeight": 600})),
+        _td(""), _td(""),
+        _td(dcc.Input(id={"t": "ge", "f": "refqty", "id": rid}, type="number",
+                      value=rf["qty"], debounce=True, style=NUM_IN)
+            if ed else f"{rf['qty']:g}", right=True),
+        _td(refb.get("unit_label") or ""),
+        _td(""),
+        _td(_fmt(net), right=True),
+        _td(_fmt(net * float(rf["qty"])), right=True),
+        _td(""), _td(""),
+        _td(html.Button("\u2715", id={"t": "ga", "a": "delref", "b": rid},
+                        n_clicks=0, title="Remove reference", style=BTN_MINI)
+            if ed else ""),
+    ]
+    return html.Tr(cells, style={"background": "#f0fdfa"})
+
+
+def _level_row(b, depth, boq, g, ed, collapsed, armed, bb_opts, bb_mode=False):
+    bid = b["id"]
+    gb = g["blocks"][bid]
+    bg = LVL_BG.get(depth, "#f5f5f4") if not bb_mode else "#ccfbf1"
+    arrow = "\u25b8" if bid in collapsed else "\u25be"
+    if armed == bid and ed:
+        actions = [html.Span("Delete level + contents?",
+                             style={"color": RED, "fontWeight": 700,
+                                    "fontSize": "0.72rem", "marginRight": "4px"}),
+                   html.Button("Yes", id={"t": "ga", "a": "delblk2", "b": bid},
+                               n_clicks=0, style={**BTN_MINI, "background": RED,
+                                                  "color": "#fff", "border": "none"}),
+                   html.Button("No", id={"t": "ga", "a": "delcancel", "b": bid},
+                               n_clicks=0, style=BTN_MINI)]
+    elif ed:
+        actions = [html.Button("+item", id={"t": "ga", "a": "item", "b": bid},
+                               n_clicks=0, title="Add item line", style=BTN_MINI)]
+        if depth < MAX_DEPTH:
+            actions.append(html.Button("+lvl", id={"t": "ga", "a": "sub", "b": bid},
+                                       n_clicks=0, title="Add sub-level",
+                                       style=BTN_MINI))
+        if bb_opts and not bb_mode:
+            actions.append(html.Button("+BB", id={"t": "ga", "a": "refmenu", "b": bid},
+                                       n_clicks=0, title="Insert building-block "
+                                       "reference", style=BTN_MINI))
+        actions.append(html.Button("\u2715", id={"t": "ga", "a": "delblk", "b": bid},
+                                   n_clicks=0, title="Delete level", style=BTN_MINI))
+    else:
+        actions = []
+    cells = [
+        _td(html.Div([
+            html.Button(arrow, id={"t": "gc", "b": bid}, n_clicks=0,
+                        style={"border": "none", "background": "transparent",
+                               "cursor": "pointer", "fontSize": "0.8rem",
+                               "padding": "0 4px 0 0"}),
+            html.B(boq, style={"fontFamily": "ui-monospace,monospace",
+                               "fontSize": "0.76rem"}),
+        ], style={"whiteSpace": "nowrap"})),
+        _td(""),
+        _td(html.B(depth if not bb_mode else "BB")),
+        _td(dcc.Input(id={"t": "ge", "f": "bname", "id": bid}, value=b["name"],
+                      debounce=True,
+                      style={**CELL_IN, "fontWeight": 700,
+                             "paddingLeft": f"{(depth - 1) * 14}px"})
+            if ed else html.B(b["name"], style={"paddingLeft":
+                                                f"{(depth - 1) * 14}px"})),
+        _td(""),
+        _td(dcc.Input(id={"t": "ge", "f": "bnotes", "id": bid},
+                      value=b.get("notes") or "", debounce=True, style=CELL_IN)
+            if ed else (b.get("notes") or "")),
+        _td(""),
+        _td(dcc.Input(id={"t": "ge", "f": "bqty", "id": bid}, type="number",
+                      value=b.get("qty") or 1, debounce=True,
+                      style={**NUM_IN, "fontWeight": 700})
+            if ed else f"{b.get('qty') or 1:g}", right=True),
+        _td(""), _td(""), _td(""),
+        _td(_fmt(gb["items"]) if gb["items"] else "", right=True),
+        _td(html.B(_fmt(gb["net"])), right=True),
+        _td(""),
+        _td(html.Div(actions, style={"whiteSpace": "nowrap"})),
+    ]
+    return html.Tr(cells, style={"background": bg})
+
+
+def _grid(cx, collapsed=None, armed=None, refmenu=None):
+    """Render the whole grid: master BOQ + building-blocks section."""
+    collapsed = set(collapsed or [])
     tree = repo.get_tree(cx["rev"]["id"])
+    snap = repo.load_snapshot(cx["rev"]["id"])
+    g = engine.grid(tree, snap)
+    ed = cx["editable"]
     blocks = {b["id"]: b for b in tree["blocks"]}
-    kids = {}
+    lines_by_block, refs_by_host, children = {}, {}, {}
+    for ln in tree["lines"]:
+        lines_by_block.setdefault(ln["block_id"], []).append(ln)
+    for r in tree["refs"]:
+        refs_by_host.setdefault(r["host_block_id"], []).append(r)
     for b in tree["blocks"]:
-        kids.setdefault(b["parent_id"], []).append(b)
-
-    def node(b, depth):
-        sel = b["id"] == selected_id
-        style = {"padding": "5px 8px", "paddingLeft": f"{8 + depth * 16}px",
-                 "borderRadius": "7px", "cursor": "pointer", "fontSize": "0.85rem",
-                 "background": PANEL2 if sel else "transparent",
-                 "fontWeight": 700 if b["kind"] == "master" else (600 if sel else 400)}
-        label = b["name"] if b["kind"] != "block" else f"{b['name']}  ({b['unit_label']})"
-        items = [html.Div(label, id={"type": "ce-node", "id": b["id"]},
-                          n_clicks=0, style=style)]
-        for k in sorted([x for x in kids.get(b["id"], []) if x["kind"] == "package"],
-                        key=lambda x: (x["sort_order"], x["id"])):
-            items += node(k, depth + 1)
-        return items
-
+        if b["parent_id"] and b["kind"] == "package":
+            children.setdefault(b["parent_id"], []).append(b)
+    for v in children.values():
+        v.sort(key=lambda x: (x["sort_order"], x["id"]))
     master = next((b for b in tree["blocks"] if b["kind"] == "master"), None)
-    struct = node(master, 0) if master else []
-    bblocks = [b for b in tree["blocks"] if b["kind"] == "block"]
-    bb_items = []
-    for b in sorted(bblocks, key=lambda x: x["name"].lower()):
-        sel = b["id"] == selected_id
-        bb_items.append(html.Div(f"{b['name']}  ({b['unit_label']})",
-                                 id={"type": "ce-node", "id": b["id"]}, n_clicks=0,
-                                 style={"padding": "5px 8px", "borderRadius": "7px",
-                                        "cursor": "pointer", "fontSize": "0.85rem",
-                                        "background": PANEL2 if sel else "transparent",
-                                        "fontWeight": 600 if sel else 400}))
-    return html.Div([
-        html.Div("Structure", style={"fontWeight": 700, "fontSize": "0.8rem",
-                                     "color": MUTED, "marginBottom": "4px"}),
-        *struct,
-        html.Div("Building blocks", style={"fontWeight": 700, "fontSize": "0.8rem",
-                                           "color": MUTED, "margin": "12px 0 4px"}),
-        *(bb_items or [html.Div("none yet", style={"color": MUTED, "fontSize": "0.8rem",
-                                                   "paddingLeft": "8px"})]),
-    ])
+    bblocks = sorted([b for b in tree["blocks"] if b["kind"] == "block"],
+                     key=lambda x: (x["sort_order"], x["id"]))
+    bb_opts = [{"label": b["name"], "value": b["id"]} for b in bblocks]
+    cat_opts = _cat_options()
+    lib_opts = _lib_options(cx["calc"])
 
-
-def _lines_table(cx, block_id, snap, res):
-    tree = repo.get_tree(cx["rev"]["id"])
-    lines = [ln for ln in tree["lines"] if ln["block_id"] == block_id]
-    refs = [r for r in tree["refs"] if r["host_block_id"] == block_id]
-    blocks = {b["id"]: b for b in tree["blocks"]}
-    ed = cx["editable"]
-
-    th = {"textAlign": "left", "padding": "4px 6px", "fontSize": "0.72rem",
-          "color": MUTED, "borderBottom": f"2px solid {LINE}"}
-    td = {"padding": "3px 6px", "verticalAlign": "middle"}
     rows = []
-    for ln in lines:
-        item = snap["items"].get(ln["snap_item_id"]) if ln["snap_item_id"] else None
-        desc = (item["description"] if item else (ln.get("description") or "")) or ""
-        code = item["code"] if item else "\u2014"
-        is_per = bool(item and item["lib"] == "personnel")
-        cost, levy = engine.line_cost_usd(ln, snap)
-        rows.append(html.Tr([
-            html.Td(html.Span(code, title=desc, style={"fontFamily": "ui-monospace,monospace",
-                                                       "fontSize": "0.75rem"}), style=td),
-            html.Td(desc, style={**td, "maxWidth": "220px", "overflow": "hidden",
-                                 "textOverflow": "ellipsis", "whiteSpace": "nowrap",
-                                 "fontSize": "0.82rem"}),
-            html.Td(dcc.Dropdown(id={"type": "ce-ln-el", "id": ln["id"]}, options=ELEMENT_OPTS,
-                                 value=ln["element"], clearable=False, disabled=not ed,
-                                 style={"width": "170px", "fontSize": "0.78rem"}), style=td),
-            html.Td(dcc.Input(id={"type": "ce-ln-qty", "id": ln["id"]}, type="number",
-                              value=ln["qty"], debounce=True, disabled=not ed, style=NUM),
-                    style=td),
-            html.Td(dcc.Input(id={"type": "ce-ln-dur", "id": ln["id"]}, type="number",
-                              value=ln["duration"], debounce=True, disabled=not ed, style=NUM),
-                    style=td),
-            html.Td(dcc.Dropdown(id={"type": "ce-ln-basis", "id": ln["id"]}, options=BASIS_OPTS,
-                                 value=ln["rate_basis"], clearable=False,
-                                 disabled=(not ed) or (not is_per),
-                                 style={"width": "100px", "fontSize": "0.78rem"}), style=td),
-            html.Td(dcc.Dropdown(id={"type": "ce-ln-own", "id": ln["id"]}, options=OWN_OPTS,
-                                 value=ln.get("ownership") or "internal", clearable=False,
-                                 disabled=(not ed) or ln["element"] not in
-                                 ("labor", "equipment"),
-                                 style={"width": "80px", "fontSize": "0.78rem"}), style=td),
-            html.Td(dcc.Dropdown(id={"type": "ce-ln-origin", "id": ln["id"]}, options=ORIGIN_OPTS,
-                                 value=ln["origin"], clearable=False,
-                                 disabled=(not ed) or ln["element"] != "labor",
-                                 style={"width": "90px", "fontSize": "0.78rem"}), style=td),
-            html.Td(dcc.Input(id={"type": "ce-ln-ovr", "id": ln["id"]}, type="number",
-                              value=ln["unit_rate_override"], placeholder="snapshot",
-                              debounce=True, disabled=not ed,
-                              style={**NUM, "width": "90px"}), style=td),
-            html.Td(_fmt(cost + levy), style={**td, "textAlign": "right",
-                                              "fontFamily": "ui-monospace,monospace",
-                                              "fontSize": "0.8rem"}),
-            html.Td(html.Button("\u2715", id={"type": "ce-ln-del", "id": ln["id"]},
-                                n_clicks=0, style=BTN_DANGER, disabled=not ed), style=td),
-        ]))
-    ref_rows = []
-    for r in refs:
-        rb = blocks.get(r["ref_block_id"])
-        unit_sell = res["blocks"][r["ref_block_id"]]
-        unit_cost = unit_sell["cost"] + unit_sell["levies"]
-        ref_rows.append(html.Tr([
-            html.Td(html.Span("\u21b3 ref", style={"color": TEAL, "fontSize": "0.75rem",
-                                                   "fontWeight": 700}), style=td),
-            html.Td(f"{rb['name']} (per {rb['unit_label']}: {_fmt(unit_cost)} USD)",
-                    style={**td, "fontSize": "0.82rem"}),
-            html.Td("all elements \u00d7 qty", style={**td, "color": MUTED,
-                                                      "fontSize": "0.75rem"}, colSpan=2),
-            html.Td(dcc.Input(id={"type": "ce-ref-qty", "id": r["id"]}, type="number",
-                              value=r["qty"], debounce=True, disabled=not ed, style=NUM),
-                    style=td, colSpan=4),
-            html.Td(""),
-            html.Td(_fmt(unit_cost * r["qty"]), style={**td, "textAlign": "right",
-                                                       "fontFamily": "ui-monospace,monospace",
-                                                       "fontSize": "0.8rem"}),
-            html.Td(html.Button("\u2715", id={"type": "ce-ref-del", "id": r["id"]},
-                                n_clicks=0, style=BTN_DANGER, disabled=not ed), style=td),
-        ], style={"background": PANEL}))
-    return html.Table([
-        html.Thead(html.Tr([html.Th(h, style=th) for h in
-                            ("Code", "Description", "Element", "Qty", "Dur",
-                             "Basis", "Own", "Origin", "Rate ovr", "Cost+levy USD",
-                             "")])),
-        html.Tbody(rows + ref_rows),
-    ], style={"borderCollapse": "collapse", "width": "100%"})
 
+    def emit_block(b, depth, positions, bb_mode=False):
+        boq = ".".join(str(p) for p in (positions + [0] * (MAX_DEPTH - len(positions)))) \
+            if not bb_mode else f"BB-{positions[0]}"
+        rows.append(_level_row(b, depth, boq, g, ed, collapsed, armed, bb_opts,
+                               bb_mode))
+        if refmenu == b["id"] and ed and bb_opts:
+            rows.append(html.Tr([html.Td(html.Div([
+                html.Span("Insert building block: ",
+                          style={"fontSize": "0.78rem", "color": MUTED}),
+                dcc.Dropdown(id={"t": "ge", "f": "addref", "id": b["id"]},
+                             options=bb_opts, placeholder="choose block\u2026",
+                             style={**DDS, "width": "320px",
+                                    "display": "inline-block",
+                                    "verticalAlign": "middle"}),
+            ]), colSpan=len(HEADS),
+                style={"padding": "4px 8px", "background": "#f0fdfa"})]))
+        if b["id"] in collapsed:
+            return
+        for ln in sorted(lines_by_block.get(b["id"], []),
+                         key=lambda x: (x["sort_order"], x["id"])):
+            rows.append(_line_row(ln, snap, g, ed, cat_opts))
+        for rf in sorted(refs_by_host.get(b["id"], []),
+                         key=lambda x: (x["sort_order"], x["id"])):
+            if rf["ref_block_id"] in blocks:
+                rows.append(_ref_row(rf, blocks, g, ed))
+        for i, kid in enumerate(children.get(b["id"], []), start=1):
+            emit_block(kid, depth + 1, positions + [i], bb_mode)
 
-def _block_panel(cx, block_id):
-    tree = repo.get_tree(cx["rev"]["id"])
-    blocks = {b["id"]: b for b in tree["blocks"]}
-    b = blocks.get(block_id)
-    if not b:
-        return html.P("Select a node on the left.", style={"color": MUTED})
-    snap = repo.load_snapshot(cx["rev"]["id"])
-    res = engine.compute(tree, snap)
-    ed = cx["editable"]
-    r = res["blocks"][b["id"]]
+    if master:
+        for i, kid in enumerate(children.get(master["id"], []), start=1):
+            emit_block(kid, 1, [i])
+    add_bar = html.Div([
+        html.Button("+ Level-1 chapter", id="ce-add-l1", n_clicks=0, style=BTN_GHOST),
+    ], style={"margin": "8px 0"}) if ed else html.Div()
 
-    # add-line: library item picker options (already-embedded first, then library)
-    calc = cx["calc"]
-    lib_opts = []
-    for sid, s in sorted(snap["items"].items(), key=lambda kv: kv[1]["code"]):
-        lib_opts.append({"label": f"\u2713 {s['code']} \u00b7 {s['description']}",
-                         "value": f"snap:{sid}"})
-    rs = repo.active_rate_set()
-    for lib in ("personnel", "equipment", "misc"):
-        for it in repo.list_items(lib, calc["division"]):
-            if any(s["item_uuid"] == it["uuid"] for s in snap["items"].values()):
-                continue
-            lbl = it.get("description") or it.get("function")
-            lib_opts.append({"label": f"{it['code']} \u00b7 {lbl}",
-                             "value": f"lib:{lib}:{it['uuid']}"})
+    # building blocks section
+    bb_rows = []
+    for i, bb in enumerate(bblocks, start=1):
+        emit_target = len(rows)
+        emit_block(bb, 1, [i], bb_mode=True)
+        bb_rows.extend(rows[emit_target:])
+        del rows[emit_target:]
+    bb_bar = html.Div([
+        dcc.Input(id="ce-bb-name", placeholder="New building block name",
+                  value="", debounce=False,
+                  style={"padding": "6px 9px", "borderRadius": "8px",
+                         "border": f"1px solid {LINE}", "fontSize": "0.8rem",
+                         "marginRight": "8px", "width": "280px"}),
+        html.Button("+ Building block", id="ce-bb-add", n_clicks=0, style=BTN_GHOST),
+    ], style={"margin": "8px 0"}) if ed else html.Div()
 
-    ref_candidates = [{"label": f"{x['name']} ({x['unit_label']})", "value": x["id"]}
-                      for x in tree["blocks"]
-                      if x["kind"] == "block" and x["id"] != b["id"]]
+    master_g = g["blocks"].get(master["id"]) if master else None
+    totals_bar = html.Div([
+        html.Span("Net total: ", style={"color": MUTED}),
+        html.B(_fmt(master_g["net"]) if master_g else "0.00",
+               style={"marginRight": "18px"}),
+        html.Span("Sell total (incl. markups): ", style={"color": MUTED}),
+        html.B(_fmt(master_g["net_sell"]) if master_g else "0.00",
+               style={"color": TEAL}),
+        html.Span("  \u00b7 USD", style={"color": MUTED, "fontSize": "0.78rem"}),
+    ], style={"fontSize": "0.95rem", "margin": "2px 0 10px"})
 
-    unit_line = html.Div([
-        html.Span(f"Unit totals (per {b['unit_label']}):  ", style={"color": MUTED}),
-        html.B(f"cost {_fmt(r['cost'])}  +  levies {_fmt(r['levies'])}  =  "
-               f"{_fmt(r['cost'] + r['levies'])} USD"),
-    ], style={"fontSize": "0.85rem", "marginTop": "10px"})
-
-    header = html.Div([
-        dcc.Input(id="ce-blk-name", value=b["name"], debounce=True, disabled=not ed,
-                  style={**FIELD, "width": "340px", "fontWeight": 600, "marginRight": "8px"}),
-        html.Span("unit:", style={"color": MUTED, "fontSize": "0.8rem",
-                                  "marginRight": "4px"}),
-        dcc.Input(id="ce-blk-unit", value=b["unit_label"], debounce=True, disabled=not ed,
-                  style={**FIELD, "width": "110px", "marginRight": "12px"}),
-        (html.Button("Delete block", id="ce-blk-del", n_clicks=0, style=BTN_DANGER)
-         if ed and b["kind"] != "master" else None),
+    datalist = html.Datalist(id="ce-datalist",
+                             children=[html.Option(value=o["label"])
+                                       for o in lib_opts])
+    table = html.Table([html.Thead(_th()), html.Tbody(rows)],
+                       style={"borderCollapse": "collapse", "width": "100%",
+                              "tableLayout": "fixed"})
+    bb_section = html.Div([
+        html.H4("Building blocks", style={"margin": "18px 0 4px"}),
+        html.P("Sub-calculations you can reference from the BOQ above (category "
+               "'Building Block'). Edit a block here and every reference follows.",
+               style={"color": MUTED, "fontSize": "0.8rem", "margin": "0 0 6px"}),
+        (html.Table([html.Thead(_th()), html.Tbody(bb_rows)],
+                    style={"borderCollapse": "collapse", "width": "100%",
+                           "tableLayout": "fixed"})
+         if bb_rows else html.P("No building blocks yet.",
+                                style={"color": MUTED, "fontSize": "0.8rem"})),
+        bb_bar,
     ])
-
-    add_row = html.Div([
-        dcc.Dropdown(id="ce-add-item", options=lib_opts, placeholder="Library item "
-                     "(\u2713 = already in this calc's snapshot) \u2014 or leave empty for free text",
-                     style={"width": "420px", "display": "inline-block",
-                            "verticalAlign": "middle", "marginRight": "8px",
-                            "fontSize": "0.8rem"}),
-        dcc.Input(id="ce-add-desc", placeholder="Free-text description",
-                  style={**FIELD, "width": "200px", "marginRight": "8px"}),
-        dcc.Dropdown(id="ce-add-el", options=ELEMENT_OPTS,
-                     placeholder="Element (auto from library item)",
-                     style={"width": "210px", "display": "inline-block",
-                            "verticalAlign": "middle", "marginRight": "8px",
-                            "fontSize": "0.8rem"}),
-        html.Button("Add line", id="ce-add-line", n_clicks=0, style=BTN),
-    ], style={"marginTop": "10px"}) if ed else None
-
-    add_child = html.Div([
-        dcc.Input(id="ce-add-child-name", placeholder="New package / block name",
-                  style={**FIELD, "width": "240px", "marginRight": "8px"}),
-        html.Button("+ package (in tree)", id="ce-add-pkg", n_clicks=0, style=BTN_GHOST),
-        html.Button("+ building block", id="ce-add-blk", n_clicks=0, style=BTN_GHOST),
-        html.Span(" | ", style={"color": LINE}),
-        dcc.Dropdown(id="ce-add-ref-block", options=ref_candidates,
-                     placeholder="Reference a building block\u2026",
-                     style={"width": "260px", "display": "inline-block",
-                            "verticalAlign": "middle", "margin": "0 8px",
-                            "fontSize": "0.8rem"}),
-        dcc.Input(id="ce-add-ref-qty", type="number", value=1, style=NUM),
-        html.Button("Add ref", id="ce-add-ref", n_clicks=0,
-                    style={**BTN, "marginLeft": "8px"}),
-    ], style={"marginTop": "10px"}) if ed else None
-
-    return html.Div([
-        header,
-        html.Div(_lines_table(cx, b["id"], snap, res), style={"marginTop": "10px",
-                                                              "overflowX": "auto"}),
-        add_row, add_child, unit_line,
-        html.Div(id="ce-blk-status", style={"fontSize": "0.82rem", "color": RED,
-                                            "marginTop": "6px", "minHeight": "1.1em"}),
-    ])
+    return html.Div([datalist, totals_bar, table, add_bar, bb_section], style=CARD)
 
 
-def _totals_panel(cx):
-    tree = repo.get_tree(cx["rev"]["id"])
-    snap = repo.load_snapshot(cx["rev"]["id"])
-    res = engine.compute(tree, snap)
-    if res["master_id"] is None:
-        return html.Div()
-    m = res["blocks"][res["master_id"]]
-    def _cell(e):
-        sub = None
-        if e in ("labor", "equipment"):
-            sp = m["splits"][e]
-            sub = html.Div(f"int {_fmt(sp['internal'])} · ext {_fmt(sp['external'])}",
-                           style={"fontSize": "0.66rem", "color": MUTED})
-        return html.Div([
-            html.Div(ELEMENT_LABELS[e], style={"fontSize": "0.7rem", "color": MUTED}),
-            html.Div(_fmt(m["elements"][e]), style={"fontFamily": "ui-monospace,monospace",
-                                                    "fontSize": "0.85rem"}),
-            sub,
-        ], style={"padding": "4px 16px 4px 0"})
-
-    cells = [_cell(e) for e in ELEMENTS]
-    wf = [html.Span(f"{lbl} {_fmt(amt)}", style={"marginRight": "16px",
-                                                 "fontSize": "0.8rem", "color": MUTED})
-          for lbl, amt in m["waterfall"]]
-    return html.Div([
-        html.Div(cells, style={"display": "flex", "flexWrap": "wrap"}),
-        html.Div([html.Span("Cost ", style={"color": MUTED}),
-                  html.B(_fmt(m["cost"]) + " USD", style={"marginRight": "24px"}), *wf,
-                  html.Span("Sell ", style={"color": MUTED, "marginLeft": "8px"}),
-                  html.B(_fmt(m["sell"]) + " USD",
-                         style={"color": TEAL, "fontSize": "1.05rem"})],
-                 style={"marginTop": "6px"}),
-    ], style=CARD)
-
-
+# --------------------------------------------------------------------------- #
+# header
+# --------------------------------------------------------------------------- #
 def _header(cx):
     calc, rev = cx["calc"], cx["rev"]
     revs = repo.get_revisions(calc["qnumber"])
@@ -352,7 +471,8 @@ def _header(cx):
     lock_badge = None
     if rev["status"] == "working" and cx["may_edit"] and not cx["lock_ok"]:
         st = repo.lock_status(calc["qnumber"])
-        lock_badge = html.Span(f"\U0001f512 locked by {st['user']} \u2014 read-only, live view",
+        lock_badge = html.Span(f"\U0001f512 locked by {st['user']} \u2014 read-only, "
+                               "live view",
                                style={"background": "#fee2e2", "borderRadius": "6px",
                                       "padding": "3px 10px", "fontSize": "0.78rem",
                                       "marginLeft": "10px"})
@@ -365,6 +485,10 @@ def _header(cx):
         html.Button("Undo", id="ce-undo", n_clicks=0, style=BTN_GHOST, disabled=not ed),
         html.Button("Refresh rates\u2026", id="ce-refresh-open", n_clicks=0,
                     style=BTN_GHOST, disabled=not ed),
+        html.Button("Apply admin markups", id="ce-apply-markups", n_clicks=0,
+                    style=BTN_GHOST, disabled=not ed,
+                    title="Copy the element markups of the current active rate set "
+                          "into this revision (lines with an override keep it)"),
         html.Button("Issue this revision", id="ce-issue", n_clicks=0, style=BTN_GHOST,
                     disabled=not ed),
         html.Button("New revision", id="ce-newrev", n_clicks=0, style=BTN_GHOST,
@@ -381,7 +505,8 @@ def _header(cx):
         html.Div([
             html.Span(f"{calc['division']} \u00b7 {calc['region']} \u00b7 rate set "
                       f"{rev.get('rate_set_label') or '-'}",
-                      style={"color": MUTED, "fontSize": "0.82rem", "marginRight": "16px"}),
+                      style={"color": MUTED, "fontSize": "0.82rem",
+                             "marginRight": "16px"}),
             dcc.Dropdown(id="ce-rev-select", options=rev_opts, value=rev["rev_no"],
                          clearable=False, style={"width": "170px",
                                                  "display": "inline-block",
@@ -390,16 +515,10 @@ def _header(cx):
                                                  "fontSize": "0.8rem"}),
             *btns,
         ], style={"marginTop": "8px"}),
-        html.Div(id="ce-header-status", style={"fontSize": "0.82rem", "marginTop": "6px",
+        html.Div(id="ce-header-status", style={"fontSize": "0.82rem",
+                                               "marginTop": "6px",
                                                "minHeight": "1.1em"}),
     ], style=CARD)
-
-
-def _render_all(cx, selected_id):
-    return (_header(cx),
-            _tree_panel(cx, selected_id),
-            _block_panel(cx, selected_id),
-            _totals_panel(cx))
 
 
 # --------------------------------------------------------------------------- #
@@ -420,67 +539,47 @@ def layout(q=None, rev=None, **_qs):
     cx = _ctx(q, rev)
     if not cx:
         return html.Div(html.P("Revision not found.", style={"color": MUTED}))
-    tree = repo.get_tree(cx["rev"]["id"])
-    master = next((b["id"] for b in tree["blocks"] if b["kind"] == "master"), None)
-    hdr, tp, bp, tot = _render_all(cx, master)
-    return html.Div([
+    return html.Div(className="wide-page", children=[
         dcc.Store(id="ce-q", data=q),
         dcc.Store(id="ce-rev", data=cx["rev"]["rev_no"]),
-        dcc.Store(id="ce-selected", data=master),
+        dcc.Store(id="ce-collapsed", data=[]),
+        dcc.Store(id="ce-delarm", data=None),
+        dcc.Store(id="ce-refmenu", data=None),
         dcc.Store(id="ce-lastseq", data=repo.last_seq(cx["rev"]["id"])),
         dcc.Interval(id="ce-poll", interval=3000, disabled=cx["editable"]),
         dcc.Interval(id="ce-heartbeat", interval=60000, disabled=not cx["editable"]),
         dcc.Download(id="ce-download"),
-        html.Div(id="ce-header", children=hdr),
-        html.Div([
-            html.Div(id="ce-tree", children=tp,
-                     style={**CARD, "width": "300px", "flexShrink": 0,
-                            "maxHeight": "70vh", "overflowY": "auto"}),
-            html.Div(id="ce-block", children=bp, style={**CARD, "flexGrow": 1}),
-        ], style={"display": "flex", "gap": "14px", "alignItems": "flex-start"}),
-        html.Div(id="ce-totals", children=tot),
-        # refresh-rates modal
+        html.Div(id="ce-header", children=_header(cx)),
+        html.Div(id="ce-grid", children=_grid(cx)),
         html.Div(id="ce-refresh-modal", style={"display": "none"}),
     ])
 
 
-# --------------------------------------------------------------------------- #
-# selection, polling, heartbeat
-# --------------------------------------------------------------------------- #
-@callback(Output("ce-selected", "data"),
-          Output("ce-tree", "children", allow_duplicate=True),
-          Output("ce-block", "children", allow_duplicate=True),
-          Input({"type": "ce-node", "id": ALL}, "n_clicks"),
-          State("ce-q", "data"), State("ce-rev", "data"),
-          prevent_initial_call=True)
-def _select(_clicks, q, rev_no):
-    if not ctx.triggered_id or not any(_clicks):
-        raise PreventUpdate
-    bid = ctx.triggered_id["id"]
+def _guard(q, rev_no):
     cx = _ctx(q, rev_no)
-    if not cx:
+    if not cx or not cx["editable"]:
         raise PreventUpdate
-    return bid, _tree_panel(cx, bid), _block_panel(cx, bid)
+    return cx
 
 
+# --------------------------------------------------------------------------- #
+# polling / heartbeat / revision switching
+# --------------------------------------------------------------------------- #
 @callback(Output("ce-lastseq", "data"),
           Output("ce-header", "children", allow_duplicate=True),
-          Output("ce-tree", "children", allow_duplicate=True),
-          Output("ce-block", "children", allow_duplicate=True),
-          Output("ce-totals", "children", allow_duplicate=True),
+          Output("ce-grid", "children", allow_duplicate=True),
           Input("ce-poll", "n_intervals"),
           State("ce-q", "data"), State("ce-rev", "data"),
-          State("ce-selected", "data"), State("ce-lastseq", "data"),
+          State("ce-collapsed", "data"), State("ce-lastseq", "data"),
           prevent_initial_call=True)
-def _poll(_n, q, rev_no, selected, seen):
+def _poll(_n, q, rev_no, collapsed, seen):
     cx = _ctx(q, rev_no)
     if not cx:
         raise PreventUpdate
     seq = repo.last_seq(cx["rev"]["id"])
     if seq == seen:
         raise PreventUpdate
-    hdr, tp, bp, tot = _render_all(cx, selected)
-    return seq, hdr, tp, bp, tot
+    return seq, _header(cx), _grid(cx, collapsed)
 
 
 @callback(Output("ce-heartbeat", "disabled"),
@@ -493,14 +592,9 @@ def _beat(_n, q):
     return False
 
 
-# --------------------------------------------------------------------------- #
-# revision switching + header actions
-# --------------------------------------------------------------------------- #
 @callback(Output("ce-rev", "data"),
           Output("ce-header", "children", allow_duplicate=True),
-          Output("ce-tree", "children", allow_duplicate=True),
-          Output("ce-block", "children", allow_duplicate=True),
-          Output("ce-totals", "children", allow_duplicate=True),
+          Output("ce-grid", "children", allow_duplicate=True),
           Output("ce-poll", "disabled"),
           Input("ce-rev-select", "value"),
           State("ce-q", "data"), prevent_initial_call=True)
@@ -508,30 +602,43 @@ def _switch_rev(rev_no, q):
     cx = _ctx(q, rev_no)
     if not cx:
         raise PreventUpdate
-    tree = repo.get_tree(cx["rev"]["id"])
-    master = next((b["id"] for b in tree["blocks"] if b["kind"] == "master"), None)
-    hdr, tp, bp, tot = _render_all(cx, master)
-    return rev_no, hdr, tp, bp, tot, cx["editable"]
+    return rev_no, _header(cx), _grid(cx), cx["editable"]
 
 
+# --------------------------------------------------------------------------- #
+# header actions
+# --------------------------------------------------------------------------- #
 @callback(Output("ce-header", "children", allow_duplicate=True),
-          Output("ce-tree", "children", allow_duplicate=True),
-          Output("ce-block", "children", allow_duplicate=True),
-          Output("ce-totals", "children", allow_duplicate=True),
+          Output("ce-grid", "children", allow_duplicate=True),
           Input("ce-undo", "n_clicks"),
-          State("ce-q", "data"), State("ce-rev", "data"), State("ce-selected", "data"),
+          State("ce-q", "data"), State("ce-rev", "data"),
+          State("ce-collapsed", "data"),
           prevent_initial_call=True)
-def _undo(n, q, rev_no, selected):
+def _undo(n, q, rev_no, collapsed):
     if not n:
         raise PreventUpdate
-    cx = _ctx(q, rev_no)
-    if not cx or not cx["editable"]:
-        raise PreventUpdate
+    cx = _guard(q, rev_no)
     repo.undo_last(cx["rev"]["id"], cx["user"]["email"])
-    return _render_all(cx, selected)
+    return _header(cx), _grid(cx, collapsed)
 
 
 @callback(Output("ce-header-status", "children"),
+          Output("ce-grid", "children", allow_duplicate=True),
+          Input("ce-apply-markups", "n_clicks"),
+          State("ce-q", "data"), State("ce-rev", "data"),
+          State("ce-collapsed", "data"),
+          prevent_initial_call=True)
+def _apply_markups(n, q, rev_no, collapsed):
+    if not n:
+        raise PreventUpdate
+    cx = _guard(q, rev_no)
+    err = repo.apply_admin_markups(cx["rev"]["id"], q, cx["user"]["email"])
+    msg = err or ("Element markups updated from the active rate set "
+                  "(overridden lines kept their value). Undoable.")
+    return msg, _grid(cx, collapsed)
+
+
+@callback(Output("ce-header-status", "children", allow_duplicate=True),
           Output("ce-header", "children", allow_duplicate=True),
           Input("ce-issue", "n_clicks"),
           State("ce-q", "data"), State("ce-rev", "data"),
@@ -539,9 +646,7 @@ def _undo(n, q, rev_no, selected):
 def _issue(n, q, rev_no):
     if not n:
         raise PreventUpdate
-    cx = _ctx(q, rev_no)
-    if not cx or not cx["editable"]:
-        raise PreventUpdate
+    cx = _guard(q, rev_no)
     repo.issue_revision(q, cx["rev"]["rev_no"], cx["user"]["email"])
     repo.release_lock(q, cx["user"]["email"])
     cx = _ctx(q, rev_no)
@@ -568,8 +673,8 @@ def _newrev(n, q):
     repo.new_revision(q, user["email"])
     new = repo.get_revision(q)
     cx = _ctx(q, new["rev_no"])
-    return (f"Rev {new['rev_no']} created from rev {latest['rev_no']}. Select it in the "
-            "revision dropdown.", _header(cx))
+    return (f"Rev {new['rev_no']} created from rev {latest['rev_no']}. Select it in "
+            "the revision dropdown.", _header(cx))
 
 
 @callback(Output("ce-download", "data"),
@@ -589,7 +694,7 @@ def _export(n1, n2, q, rev_no):
 
 
 # --------------------------------------------------------------------------- #
-# refresh-rates diff modal
+# refresh-rates modal
 # --------------------------------------------------------------------------- #
 @callback(Output("ce-refresh-modal", "children"),
           Output("ce-refresh-modal", "style"),
@@ -599,32 +704,32 @@ def _export(n1, n2, q, rev_no):
 def _refresh_open(n, q, rev_no):
     if not n:
         raise PreventUpdate
-    cx = _ctx(q, rev_no)
-    if not cx or not cx["editable"]:
-        raise PreventUpdate
+    cx = _guard(q, rev_no)
     diffs = repo.diff_snapshot(cx["rev"]["id"])
     if not diffs:
         body = html.P("All embedded rates match the current active rate set.",
                       style={"color": MUTED})
-        opts, footer = None, html.Button("Close", id="ce-refresh-cancel", n_clicks=0,
-                                         style=BTN_GHOST)
+        footer = html.Button("Close", id="ce-refresh-cancel", n_clicks=0,
+                             style=BTN_GHOST)
     else:
-        opts = dcc.Checklist(
-            id="ce-refresh-picks",
-            options=[{"label": f"  {d['code']} \u00b7 {d['description']} \u00b7 {d['field']}: "
-                               f"{d['old']} \u2192 {d['new']} {d['currency']}",
-                      "value": d["snap_id"]} for d in diffs],
-            value=[d["snap_id"] for d in diffs],
-            style={"fontSize": "0.85rem"}, labelStyle={"display": "block",
-                                                       "marginBottom": "4px"})
         body = html.Div([
             html.P("These embedded rates differ from the current active rate set. "
                    "Tick what to update - unticked items keep their snapshot values. "
                    "This is undoable.", style={"color": MUTED, "fontSize": "0.85rem"}),
-            opts])
+            dcc.Checklist(
+                id="ce-refresh-picks",
+                options=[{"label": f"  {d['code']} \u00b7 {d['description']} \u00b7 "
+                                   f"{d['field']}: {d['old']} \u2192 {d['new']} "
+                                   f"{d['currency']}",
+                          "value": d["snap_id"]} for d in diffs],
+                value=[d["snap_id"] for d in diffs],
+                style={"fontSize": "0.85rem"},
+                labelStyle={"display": "block", "marginBottom": "4px"})])
         footer = html.Div([
-            html.Button("Update selected", id="ce-refresh-apply", n_clicks=0, style=BTN),
-            html.Button("Cancel", id="ce-refresh-cancel", n_clicks=0, style=BTN_GHOST),
+            html.Button("Update selected", id="ce-refresh-apply", n_clicks=0,
+                        style=BTN),
+            html.Button("Cancel", id="ce-refresh-cancel", n_clicks=0,
+                        style=BTN_GHOST),
         ], style={"marginTop": "12px"})
     modal = html.Div(html.Div([
         html.H4("Refresh rates against the library", style={"marginTop": 0}),
@@ -634,187 +739,175 @@ def _refresh_open(n, q, rev_no):
               "overflowY": "auto"}),
         style={"position": "fixed", "inset": 0, "background": "rgba(15,23,42,0.45)",
                "zIndex": 1000})
-    if not diffs:
-        # still show the modal so the user gets the confirmation
-        return modal, {"display": "block"}
     return modal, {"display": "block"}
 
 
 @callback(Output("ce-refresh-modal", "style", allow_duplicate=True),
-          Output("ce-block", "children", allow_duplicate=True),
-          Output("ce-totals", "children", allow_duplicate=True),
+          Output("ce-grid", "children", allow_duplicate=True),
           Output("ce-header", "children", allow_duplicate=True),
           Input("ce-refresh-apply", "n_clicks"), Input("ce-refresh-cancel", "n_clicks"),
           State("ce-refresh-picks", "value"),
-          State("ce-q", "data"), State("ce-rev", "data"), State("ce-selected", "data"),
+          State("ce-q", "data"), State("ce-rev", "data"),
+          State("ce-collapsed", "data"),
           prevent_initial_call=True)
-def _refresh_apply(n_apply, n_cancel, picks, q, rev_no, selected):
+def _refresh_apply(n_apply, n_cancel, picks, q, rev_no, collapsed):
     trig = ctx.triggered_id
     hidden = {"display": "none"}
     if trig == "ce-refresh-cancel" or not picks:
-        if trig == "ce-refresh-apply" and not picks:
-            return hidden, no_update, no_update, no_update
-        return hidden, no_update, no_update, no_update
+        return hidden, no_update, no_update
     cx = _ctx(q, rev_no)
     if not cx or not cx["editable"]:
-        return hidden, no_update, no_update, no_update
+        return hidden, no_update, no_update
     repo.refresh_snapshot(cx["rev"]["id"], picks, cx["user"]["email"])
-    return hidden, _block_panel(cx, selected), _totals_panel(cx), _header(cx)
+    return hidden, _grid(cx, collapsed), _header(cx)
 
 
 # --------------------------------------------------------------------------- #
-# block panel mutations
+# collapse / expand
 # --------------------------------------------------------------------------- #
-def _mutate_guard(q, rev_no):
-    cx = _ctx(q, rev_no)
-    if not cx or not cx["editable"]:
-        raise PreventUpdate
-    return cx
-
-
-@callback(Output("ce-block", "children", allow_duplicate=True),
-          Output("ce-totals", "children", allow_duplicate=True),
-          Output("ce-tree", "children", allow_duplicate=True),
-          Input("ce-blk-name", "value"), Input("ce-blk-unit", "value"),
-          State("ce-q", "data"), State("ce-rev", "data"), State("ce-selected", "data"),
+@callback(Output("ce-collapsed", "data"),
+          Output("ce-grid", "children", allow_duplicate=True),
+          Input({"t": "gc", "b": ALL}, "n_clicks"),
+          State("ce-q", "data"), State("ce-rev", "data"),
+          State("ce-collapsed", "data"),
           prevent_initial_call=True)
-def _blk_meta(name, unit, q, rev_no, selected):
-    cx = _mutate_guard(q, rev_no)
-    fields = {}
-    if name:
-        fields["name"] = name
-    if unit:
-        fields["unit_label"] = unit
-    if fields:
-        repo.update_block(cx["rev"]["id"], selected, fields, cx["user"]["email"])
-    return _block_panel(cx, selected), _totals_panel(cx), _tree_panel(cx, selected)
-
-
-@callback(Output("ce-selected", "data", allow_duplicate=True),
-          Output("ce-block", "children", allow_duplicate=True),
-          Output("ce-totals", "children", allow_duplicate=True),
-          Output("ce-tree", "children", allow_duplicate=True),
-          Input("ce-blk-del", "n_clicks"),
-          State("ce-q", "data"), State("ce-rev", "data"), State("ce-selected", "data"),
-          prevent_initial_call=True)
-def _blk_delete(n, q, rev_no, selected):
-    if not n:
-        raise PreventUpdate
-    cx = _mutate_guard(q, rev_no)
-    repo.delete_block(cx["rev"]["id"], selected, cx["user"]["email"])
-    tree = repo.get_tree(cx["rev"]["id"])
-    master = next((b["id"] for b in tree["blocks"] if b["kind"] == "master"), None)
-    return master, _block_panel(cx, master), _totals_panel(cx), _tree_panel(cx, master)
-
-
-@callback(Output("ce-block", "children", allow_duplicate=True),
-          Output("ce-totals", "children", allow_duplicate=True),
-          Output("ce-tree", "children", allow_duplicate=True),
-          Output("ce-blk-status", "children"),
-          Input("ce-add-line", "n_clicks"), Input("ce-add-pkg", "n_clicks"),
-          Input("ce-add-blk", "n_clicks"), Input("ce-add-ref", "n_clicks"),
-          State("ce-add-item", "value"), State("ce-add-desc", "value"),
-          State("ce-add-el", "value"), State("ce-add-child-name", "value"),
-          State("ce-add-ref-block", "value"), State("ce-add-ref-qty", "value"),
-          State("ce-q", "data"), State("ce-rev", "data"), State("ce-selected", "data"),
-          prevent_initial_call=True)
-def _adds(n_line, n_pkg, n_blk, n_ref, item_val, desc, element, child_name,
-          ref_block, ref_qty, q, rev_no, selected):
-    trig = ctx.triggered_id
-    cx = _mutate_guard(q, rev_no)
-    rev_id, user = cx["rev"]["id"], cx["user"]["email"]
-    err = ""
-    if trig == "ce-add-line" and n_line:
-        snap_id = None
-        if item_val and item_val.startswith("snap:"):
-            snap_id = int(item_val.split(":")[1])
-        elif item_val and item_val.startswith("lib:"):
-            _, lib, uid = item_val.split(":", 2)
-            snap_id = repo.snapshot_item(rev_id, lib, uid, user)
-        snap = repo.load_snapshot(rev_id)
-        item = snap["items"].get(snap_id) if snap_id else None
-        ownership = None
-        if item:
-            # element + ownership prefill from the library (still editable per line)
-            def_el, def_own = repo.item_default_element(item["lib"], item)
-            element = element or def_el
-            ownership = def_own
-        if not element:
-            err = "Choose an element (or pick a library item, which sets it)."
-        else:
-            is_per = bool(item and item["lib"] == "personnel")
-            repo.add_line(rev_id, selected, element, user, snap_item_id=snap_id,
-                          description=(desc or None),
-                          rate_basis=("offshore" if is_per else "unit"),
-                          ownership=ownership)
-    elif trig == "ce-add-pkg" and n_pkg:
-        if not child_name:
-            err = "Give the new package a name."
-        else:
-            repo.add_block(rev_id, selected, "package", child_name, "lump", user)
-    elif trig == "ce-add-blk" and n_blk:
-        if not child_name:
-            err = "Give the new building block a name."
-        else:
-            repo.add_block(rev_id, None, "block", child_name, "day", user)
-    elif trig == "ce-add-ref" and n_ref:
-        if not ref_block:
-            err = "Choose a building block to reference."
-        else:
-            _, e = repo.add_ref(rev_id, selected, int(ref_block),
-                                float(ref_qty or 1), user)
-            err = e or ""
-    return (_block_panel(cx, selected), _totals_panel(cx), _tree_panel(cx, selected), err)
-
-
-@callback(Output("ce-block", "children", allow_duplicate=True),
-          Output("ce-totals", "children", allow_duplicate=True),
-          Input({"type": "ce-ln-qty", "id": ALL}, "value"),
-          Input({"type": "ce-ln-dur", "id": ALL}, "value"),
-          Input({"type": "ce-ln-el", "id": ALL}, "value"),
-          Input({"type": "ce-ln-basis", "id": ALL}, "value"),
-          Input({"type": "ce-ln-origin", "id": ALL}, "value"),
-          Input({"type": "ce-ln-own", "id": ALL}, "value"),
-          Input({"type": "ce-ln-ovr", "id": ALL}, "value"),
-          Input({"type": "ce-ref-qty", "id": ALL}, "value"),
-          State("ce-q", "data"), State("ce-rev", "data"), State("ce-selected", "data"),
-          prevent_initial_call=True)
-def _edit_values(_q1, _q2, _q3, _q4, _q5, _q6, _q7, _q8, q, rev_no, selected):
-    trig = ctx.triggered_id
-    if not isinstance(trig, dict):
-        raise PreventUpdate
-    cx = _mutate_guard(q, rev_no)
-    rev_id, user = cx["rev"]["id"], cx["user"]["email"]
-    val = ctx.triggered[0]["value"]
-    t, oid = trig["type"], trig["id"]
-    field = {"ce-ln-qty": "qty", "ce-ln-dur": "duration", "ce-ln-el": "element",
-             "ce-ln-basis": "rate_basis", "ce-ln-origin": "origin",
-             "ce-ln-own": "ownership", "ce-ln-ovr": "unit_rate_override"}.get(t)
-    if field:
-        if field in ("qty", "duration") and val in (None, ""):
-            raise PreventUpdate
-        repo.update_line(rev_id, oid, {field: val}, user)
-    elif t == "ce-ref-qty":
-        if val in (None, ""):
-            raise PreventUpdate
-        repo.update_ref(rev_id, oid, float(val), user)
-    return _block_panel(cx, selected), _totals_panel(cx)
-
-
-@callback(Output("ce-block", "children", allow_duplicate=True),
-          Output("ce-totals", "children", allow_duplicate=True),
-          Input({"type": "ce-ln-del", "id": ALL}, "n_clicks"),
-          Input({"type": "ce-ref-del", "id": ALL}, "n_clicks"),
-          State("ce-q", "data"), State("ce-rev", "data"), State("ce-selected", "data"),
-          prevent_initial_call=True)
-def _deletes(n_lines, n_refs, q, rev_no, selected):
+def _collapse(_n, q, rev_no, collapsed):
     trig = ctx.triggered_id
     if not isinstance(trig, dict) or not ctx.triggered[0]["value"]:
         raise PreventUpdate
-    cx = _mutate_guard(q, rev_no)
-    rev_id, user = cx["rev"]["id"], cx["user"]["email"]
-    if trig["type"] == "ce-ln-del":
-        repo.delete_line(rev_id, trig["id"], user)
+    cx = _ctx(q, rev_no)
+    if not cx:
+        raise PreventUpdate
+    collapsed = set(collapsed or [])
+    if trig["b"] in collapsed:
+        collapsed.discard(trig["b"])
     else:
-        repo.delete_ref(rev_id, trig["id"], user)
-    return _block_panel(cx, selected), _totals_panel(cx)
+        collapsed.add(trig["b"])
+    return list(collapsed), _grid(cx, collapsed)
+
+
+# --------------------------------------------------------------------------- #
+# structure actions (+item, +lvl, +BB menu, deletes, L1, new BB)
+# --------------------------------------------------------------------------- #
+@callback(Output("ce-grid", "children", allow_duplicate=True),
+          Output("ce-delarm", "data"),
+          Output("ce-refmenu", "data"),
+          Input({"t": "ga", "a": ALL, "b": ALL}, "n_clicks"),
+          Input("ce-add-l1", "n_clicks"), Input("ce-bb-add", "n_clicks"),
+          State("ce-bb-name", "value"),
+          State("ce-q", "data"), State("ce-rev", "data"),
+          State("ce-collapsed", "data"), State("ce-delarm", "data"),
+          prevent_initial_call=True)
+def _structure(_n, _n1, _nb, bb_name, q, rev_no, collapsed, armed):
+    trig = ctx.triggered_id
+    if not ctx.triggered[0]["value"]:
+        raise PreventUpdate
+    cx = _guard(q, rev_no)
+    rev_id, user = cx["rev"]["id"], cx["user"]["email"]
+    tree = repo.get_tree(rev_id)
+    master = next((b["id"] for b in tree["blocks"] if b["kind"] == "master"), None)
+    new_arm, new_menu = None, None
+    if trig == "ce-add-l1":
+        repo.add_block(rev_id, master, "package", "New chapter", "day", user)
+    elif trig == "ce-bb-add":
+        repo.add_block(rev_id, None, "block", (bb_name or "").strip()
+                       or "New building block", "day", user)
+    elif isinstance(trig, dict):
+        a, b = trig["a"], trig["b"]
+        if a == "item":
+            repo.add_line(rev_id, b, "labor", user, description="New line", qty=1)
+        elif a == "sub":
+            repo.add_block(rev_id, b, "package", "New sub-level", "day", user)
+        elif a == "refmenu":
+            new_menu = b
+        elif a == "delline":
+            repo.delete_line(rev_id, b, user)
+        elif a == "delref":
+            repo.delete_ref(rev_id, b, user)
+        elif a == "delblk":
+            new_arm = b                                     # arm two-step
+        elif a == "delblk2":
+            repo.delete_block(rev_id, b, user)
+        elif a == "delcancel":
+            new_arm = None
+    return _grid(cx, collapsed, armed=new_arm, refmenu=new_menu), new_arm, new_menu
+
+
+# --------------------------------------------------------------------------- #
+# cell edits (one dispatcher for every {"t":"ge"} field)
+# --------------------------------------------------------------------------- #
+@callback(Output("ce-grid", "children", allow_duplicate=True),
+          Output("ce-header-status", "children", allow_duplicate=True),
+          Input({"t": "ge", "f": ALL, "id": ALL}, "value"),
+          State("ce-q", "data"), State("ce-rev", "data"),
+          State("ce-collapsed", "data"),
+          prevent_initial_call=True)
+def _edit(_vals, q, rev_no, collapsed):
+    trig = ctx.triggered_id
+    if not isinstance(trig, dict):
+        raise PreventUpdate
+    val = ctx.triggered[0]["value"]
+    cx = _guard(q, rev_no)
+    rev_id, user = cx["rev"]["id"], cx["user"]["email"]
+    f, i = trig["f"], trig["id"]
+    msg = ""
+    if f == "bname":
+        if not (val or "").strip():
+            raise PreventUpdate
+        repo.update_block(rev_id, i, {"name": val.strip()}, user)
+    elif f == "bqty":
+        repo.update_block(rev_id, i, {"qty": _num(val, 1)}, user)
+    elif f == "bnotes":
+        repo.update_block(rev_id, i, {"notes": (val or "").strip() or None}, user)
+    elif f == "qty":
+        repo.update_line(rev_id, i, {"qty": _num(val, 1)}, user)
+    elif f == "remarks":
+        repo.update_line(rev_id, i, {"remarks": (val or "").strip() or None}, user)
+    elif f == "origin":
+        repo.update_line(rev_id, i, {"origin": val or "local"}, user)
+    elif f == "basis":
+        repo.update_line(rev_id, i, {"rate_basis": val or "offshore"}, user)
+    elif f == "unitf":
+        repo.update_line(rev_id, i, {"unit": val}, user)
+    elif f == "uprice":
+        repo.update_line(rev_id, i, {"unit_rate_override": _num(val)}, user)
+    elif f == "markup":
+        v = _num(val)
+        repo.update_line(rev_id, i,
+                         {"markup_override": None if v is None else v / 100.0}, user)
+    elif f == "cat":
+        el, _, sub = (val or "labor|").partition("|")
+        repo.update_line(rev_id, i, {"element": el, "subcat": sub or None}, user)
+    elif f == "refqty":
+        repo.update_ref(rev_id, i, _num(val, 1), user)
+    elif f == "addref":
+        if val is None:
+            raise PreventUpdate
+        if repo.would_create_cycle(rev_id, i, val):
+            msg = "That reference would create a cycle - refused."
+        else:
+            repo.add_ref(rev_id, i, val, 1, user)
+    elif f == "desc":
+        txt = (val or "").strip()
+        match = next((o for o in _lib_options(cx["calc"])
+                      if o["label"] == txt or o["item"]["code"] == txt), None)
+        if match:
+            sid = repo.snapshot_item(rev_id, match["lib"], match["uuid"], user)
+            it = match["item"]
+            element = {"personnel": "labor", "equipment": "equipment"}.get(
+                match["lib"]) or repo.base_lib(match["lib"])[1] or "materials"
+            fields = {"snap_item_id": sid, "description": match["desc"],
+                      "element": element,
+                      "subcat": it.get("category"),
+                      "unit": it.get("unit"),
+                      "unit_rate_override": None}
+            if match["lib"] == "personnel":
+                fields["rate_basis"] = "offshore"
+            repo.update_line(rev_id, i, fields, user)
+            msg = (f"Linked to library item {it['code']} "
+                   f"({repo.code_label(it['code'])}).")
+        else:
+            repo.update_line(rev_id, i, {"description": txt or None}, user)
+    else:
+        raise PreventUpdate
+    return _grid(cx, collapsed), msg

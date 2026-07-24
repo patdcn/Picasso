@@ -532,13 +532,18 @@ def get_markups(rate_set_id, division, region):
         c.close()
 
 
+MARKUP_KEYS = ("levy_local_pct", "levy_expat_pct", "profit_pct", "risk_pct",
+               "overhead_pct", "margin_pct",
+               "labor_pct", "equipment_pct", "materials_pct", "subcon_pct")
+
+
 def set_markups(rate_set_id, division, region, **pcts):
-    keys = ("levy_local_pct", "levy_expat_pct", "profit_pct", "risk_pct",
-            "overhead_pct", "margin_pct")
+    keys = MARKUP_KEYS
     c = conn()
     try:
+        ph = ",".join("?" * (3 + len(keys)))
         c.execute("INSERT INTO markup_sets (rate_set_id, division, region, "
-                  + ", ".join(keys) + ") VALUES (?,?,?,?,?,?,?,?,?) "
+                  + ", ".join(keys) + f") VALUES ({ph}) "
                   "ON CONFLICT(rate_set_id, division, region) DO UPDATE SET "
                   + ", ".join(f"{k}=excluded.{k}" for k in keys),
                   [rate_set_id, division, region] + [float(pcts.get(k) or 0) for k in keys])
@@ -743,11 +748,10 @@ def _snapshot_fx_markups(c, rev_id, rate_set_id, division, region):
                   "VALUES (?,?,?)", (rev_id, cur, r))
     m = c.execute("SELECT * FROM markup_sets WHERE rate_set_id=? AND division=? AND region=?",
                   (rate_set_id, division, region)).fetchone()
-    vals = (m["levy_local_pct"], m["levy_expat_pct"], m["profit_pct"], m["risk_pct"],
-            m["overhead_pct"], m["margin_pct"]) if m else (0, 0, 0, 0, 0, 0)
-    c.execute("INSERT OR REPLACE INTO snap_markups (revision_id, levy_local_pct, levy_expat_pct, "
-              "profit_pct, risk_pct, overhead_pct, margin_pct) VALUES (?,?,?,?,?,?,?)",
-              (rev_id,) + vals)
+    vals = tuple(m[k] for k in MARKUP_KEYS) if m else tuple(0 for _ in MARKUP_KEYS)
+    ph = ",".join("?" * (1 + len(MARKUP_KEYS)))
+    c.execute("INSERT OR REPLACE INTO snap_markups (revision_id, "
+              + ", ".join(MARKUP_KEYS) + f") VALUES ({ph})", (rev_id,) + vals)
 
 
 def _copy_revision_content(c, src_rev_id, dst_rev_id):
@@ -973,6 +977,35 @@ _BLOCK_COLS = ("revision_id", "parent_id", "kind", "name", "unit_label", "sort_o
                "start_date", "end_date", "notes")
 
 
+def apply_admin_markups(rev_id, qnumber, user):
+    """Mass update: copy the CURRENT active markup set (incl. the element
+    markups) into this revision's snapshot. Explicit action - the snapshot
+    principle stays intact. FX is NOT touched; lines with a markup_override
+    keep it."""
+    calc = get_calc(qnumber)
+    rs = active_rate_set()
+    if not (calc and rs):
+        return "No active rate set."
+    c = conn()
+    try:
+        before = _row(c, "SELECT * FROM snap_markups WHERE revision_id=?", (rev_id,))
+        m = _row(c, "SELECT * FROM markup_sets WHERE rate_set_id=? AND division=? "
+                    "AND region=?", (rs["id"], calc["division"], calc["region"]))
+        vals = tuple(m[k] for k in MARKUP_KEYS) if m else tuple(0 for _ in MARKUP_KEYS)
+        ph = ",".join("?" * (1 + len(MARKUP_KEYS)))
+        c.execute("INSERT OR REPLACE INTO snap_markups (revision_id, "
+                  + ", ".join(MARKUP_KEYS) + f") VALUES ({ph})", (rev_id,) + vals)
+        after = _row(c, "SELECT * FROM snap_markups WHERE revision_id=?", (rev_id,))
+        _journal(c, rev_id, user, "markups.apply",
+                 {"table": "snap_markups", "pk": rev_id,
+                  "before": dict(before) if before else None,
+                  "after": dict(after) if after else None})
+        c.commit()
+        return None
+    finally:
+        c.close()
+
+
 def _journal(c, rev_id, user, action, delta):
     c.execute("INSERT INTO edit_journal (revision_id, user, action, delta_json) VALUES (?,?,?,?)",
               (rev_id, user, action, json.dumps(delta)))
@@ -1018,7 +1051,8 @@ def add_block(rev_id, parent_id, kind, name, unit_label, user):
 
 
 def update_block(rev_id, block_id, fields, user):
-    allowed = {"name", "unit_label", "sort_order", "start_date", "end_date", "notes", "parent_id"}
+    allowed = {"name", "unit_label", "qty", "sort_order", "start_date", "end_date",
+               "notes", "parent_id"}
     fields = {k: v for k, v in fields.items() if k in allowed}
     if not fields:
         return
@@ -1116,7 +1150,8 @@ def add_line(rev_id, block_id, element, user, snap_item_id=None, description=Non
 
 def update_line(rev_id, line_id, fields, user):
     allowed = {"element", "description", "qty", "duration", "rate_basis",
-               "unit_rate_override", "origin", "ownership", "sort_order"}
+               "unit_rate_override", "origin", "ownership", "sort_order",
+               "subcat", "unit", "remarks", "markup_override", "snap_item_id"}
     fields = {k: v for k, v in fields.items() if k in allowed}
     if not fields:
         return

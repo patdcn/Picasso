@@ -136,6 +136,18 @@ def _rs_panel():
             dcc.Input(id="ca-mk-rk", type="number", placeholder="Risk", style=NUM),
             dcc.Input(id="ca-mk-pf", type="number", placeholder="Profit", style=NUM),
             dcc.Input(id="ca-mk-mg", type="number", placeholder="Margin", style=NUM),
+            html.Div([
+                html.H5("Element markups for the editor grid (fractions)",
+                        style={"margin": "10px 0 4px"}),
+                dcc.Input(id="ca-mk-lab", type="number", placeholder="Labour",
+                          style=NUM),
+                dcc.Input(id="ca-mk-eqp", type="number", placeholder="Equipment",
+                          style=NUM),
+                dcc.Input(id="ca-mk-mat", type="number", placeholder="Materials",
+                          style=NUM),
+                dcc.Input(id="ca-mk-sub", type="number", placeholder="Sub-con",
+                          style=NUM),
+            ]),
             html.Button("Save markups", id="ca-mk-set", n_clicks=0,
                         style={**BTN_GHOST, "marginTop": "6px"}),
         ]),
@@ -241,9 +253,11 @@ def _cats(n_save, _n_tgl, name, element):
           State("ca-mk-ll", "value"), State("ca-mk-le", "value"),
           State("ca-mk-oh", "value"), State("ca-mk-rk", "value"),
           State("ca-mk-pf", "value"), State("ca-mk-mg", "value"),
+          State("ca-mk-lab", "value"), State("ca-mk-eqp", "value"),
+          State("ca-mk-mat", "value"), State("ca-mk-sub", "value"),
           prevent_initial_call=True)
 def _rates(n_cr, n_act, n_mk, label, copy_from, sel, mk_div, mk_reg,
-           ll, le, oh, rk, pf, mg):
+           ll, le, oh, rk, pf, mg, lab, eqp, mat, sub):
     if not _may():
         raise PreventUpdate
     user = auth.current_user()
@@ -266,8 +280,10 @@ def _rates(n_cr, n_act, n_mk, label, copy_from, sel, mk_div, mk_reg,
         if not (sel and mk_div and mk_reg):
             return "Select a rate set, division and region."
         repo.set_markups(sel, mk_div, mk_reg, levy_local_pct=ll, levy_expat_pct=le,
-                         overhead_pct=oh, risk_pct=rk, profit_pct=pf, margin_pct=mg)
-        return f"Markups saved for {mk_div} \u00b7 {mk_reg}."
+                         overhead_pct=oh, risk_pct=rk, profit_pct=pf, margin_pct=mg,
+                         labor_pct=lab, equipment_pct=eqp, materials_pct=mat,
+                         subcon_pct=sub)
+        return f"Markups saved for {mk_div} \u00b7 {mk_reg} (incl. element markups)."
     raise PreventUpdate
 
 

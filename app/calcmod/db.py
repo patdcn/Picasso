@@ -16,7 +16,7 @@ import uuid as _uuid
 
 CALC_DB = os.getenv("CALC_DB", "/data/calc.db")
 
-SCHEMA_REV = 6
+SCHEMA_REV = 7
 _SCHEMA_FILE = os.path.join(os.path.dirname(__file__), "schema.sql")
 
 SEED_DIVISIONS = [("CIV", "Civil"), ("OFF", "Offshore"), ("HYD", "Hydropower")]
@@ -106,7 +106,32 @@ def init_db():
             c.execute("PRAGMA foreign_keys = ON")
             c.execute("PRAGMA user_version = 6")
             c.commit()
-        elif has_tables and cur < SCHEMA_REV:
+            cur = 6
+        if has_tables and cur == 6:
+            # Targeted migration 6 -> 7: grid format columns, purely additive.
+            for stmt in (
+                "ALTER TABLE blocks ADD COLUMN qty REAL NOT NULL DEFAULT 1",
+                "ALTER TABLE block_lines ADD COLUMN subcat TEXT",
+                "ALTER TABLE block_lines ADD COLUMN unit TEXT",
+                "ALTER TABLE block_lines ADD COLUMN remarks TEXT",
+                "ALTER TABLE block_lines ADD COLUMN markup_override REAL",
+                "ALTER TABLE markup_sets ADD COLUMN labor_pct REAL NOT NULL DEFAULT 0",
+                "ALTER TABLE markup_sets ADD COLUMN equipment_pct REAL NOT NULL DEFAULT 0",
+                "ALTER TABLE markup_sets ADD COLUMN materials_pct REAL NOT NULL DEFAULT 0",
+                "ALTER TABLE markup_sets ADD COLUMN subcon_pct REAL NOT NULL DEFAULT 0",
+                "ALTER TABLE snap_markups ADD COLUMN labor_pct REAL NOT NULL DEFAULT 0",
+                "ALTER TABLE snap_markups ADD COLUMN equipment_pct REAL NOT NULL DEFAULT 0",
+                "ALTER TABLE snap_markups ADD COLUMN materials_pct REAL NOT NULL DEFAULT 0",
+                "ALTER TABLE snap_markups ADD COLUMN subcon_pct REAL NOT NULL DEFAULT 0",
+            ):
+                try:
+                    c.execute(stmt)
+                except Exception:
+                    pass                      # idempotent re-runs
+            c.execute("PRAGMA user_version = 7")
+            c.commit()
+            cur = 7
+        if has_tables and cur < SCHEMA_REV:
             for t in _MODULE_TABLES:
                 c.execute(f"DROP TABLE IF EXISTS {t}")
             c.execute("DROP TRIGGER IF EXISTS trg_revision_issued_lock")

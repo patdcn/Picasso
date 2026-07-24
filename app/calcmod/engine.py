@@ -107,12 +107,13 @@ def compute(tree, snap):
                 sp[ln["element"]][own] += cost
         for kid in pkg_children.get(bid, []):
             kel, klev, ksp = unit(kid)
+            kq = float(blocks[kid].get("qty") or 1)   # level multiplier (col I)
             for e in ELEMENTS:
-                el[e] += kel[e]
+                el[e] += kel[e] * kq
             for e in SPLIT_ELEMENTS:
                 for o in ("internal", "external"):
-                    sp[e][o] += ksp[e][o]
-            levies += klev
+                    sp[e][o] += ksp[e][o] * kq
+            levies += klev * kq
         for rf in refs_by_host.get(bid, []):
             rel, rlev, rsp = unit(rf["ref_block_id"])
             q = float(rf["qty"])
@@ -150,3 +151,105 @@ def element_report(tree, snap):
     if res["master_id"] is None:
         return _zero()
     return res["blocks"][res["master_id"]]["elements"]
+
+
+ELEMENT_MARKUP_KEY = {"labor": "labor_pct", "equipment": "equipment_pct",
+                      "materials": "materials_pct", "subcontracting": "subcon_pct"}
+
+
+def line_unit_price_usd(line, snap):
+    """USD unit price for one line: override, else snapshot rate (per the
+    line's O/Y/Offs basis for personnel) x fx. Returns (price, currency)."""
+    item = snap["items"].get(line["snap_item_id"]) if line.get("snap_item_id") else None
+    if line.get("unit_rate_override") is not None:
+        return float(line["unit_rate_override"]), "USD"
+    if not item:
+        return 0.0, "USD"
+    if item["lib"] == "personnel":
+        basis = line.get("rate_basis") or "offshore"
+        rate = item.get(f"{basis}_rate") if basis in ("office", "yard", "offshore") \
+            else item.get("offshore_rate")
+    else:
+        rate = item.get("rate")
+    currency = item.get("currency") or "USD"
+    fx = 1.0 if currency == "USD" else float(snap["fx"].get(currency) or 0.0)
+    return float(rate or 0.0) * fx, currency
+
+
+def line_markup_pct(line, snap):
+    """Effective markup fraction: line override, else the element default
+    from the revision's markups snapshot."""
+    if line.get("markup_override") is not None:
+        return float(line["markup_override"])
+    mk = snap.get("markups") or {}
+    return float(mk.get(ELEMENT_MARKUP_KEY.get(line["element"], ""), 0) or 0)
+
+
+def grid(tree, snap):
+    """Grid figures per the agreed Excel format.
+
+    Per line : unit_price, item_price (= unit price x qty x duration),
+               markup_pct, sell (= item_price x (1+markup)).
+    Per block: items (sum of own line item prices), refs_total, net
+               (= (items + refs + sum child nets) x block qty  - the level
+               Net Total column), net_sell (same recursion on sell prices),
+               and unit_net (net before the block's own qty - what a ref to
+               this block multiplies).
+    """
+    blocks = {b["id"]: b for b in tree["blocks"]}
+    lines_by_block, refs_by_host, pkg_children = {}, {}, {}
+    for ln in tree["lines"]:
+        lines_by_block.setdefault(ln["block_id"], []).append(ln)
+    for r in tree["refs"]:
+        refs_by_host.setdefault(r["host_block_id"], []).append(r)
+    for b in tree["blocks"]:
+        if b["parent_id"] and b["kind"] == "package":
+            pkg_children.setdefault(b["parent_id"], []).append(b["id"])
+
+    lines_out = {}
+    for ln in tree["lines"]:
+        up, cur = line_unit_price_usd(ln, snap)
+        item_price = up * float(ln["qty"]) * float(ln.get("duration") or 1)
+        pct = line_markup_pct(ln, snap)
+        lines_out[ln["id"]] = {"unit_price": up, "currency": cur,
+                               "item_price": item_price, "markup_pct": pct,
+                               "sell": item_price * (1.0 + pct)}
+
+    memo, visiting = {}, set()
+
+    def unit_net(bid):
+        """(net, sell) of one block BEFORE its own qty multiplier."""
+        if bid in memo:
+            return memo[bid]
+        if bid in visiting:
+            return 0.0, 0.0
+        visiting.add(bid)
+        items = sum(lines_out[l["id"]]["item_price"]
+                    for l in lines_by_block.get(bid, []))
+        items_sell = sum(lines_out[l["id"]]["sell"]
+                         for l in lines_by_block.get(bid, []))
+        net, sell = items, items_sell
+        for kid in pkg_children.get(bid, []):
+            kn, ks = unit_net(kid)
+            kq = float(blocks[kid].get("qty") or 1)
+            net += kn * kq
+            sell += ks * kq
+        for rf in refs_by_host.get(bid, []):
+            rn, rs_ = unit_net(rf["ref_block_id"])
+            rq = float(rf["qty"]) * float(blocks[rf["ref_block_id"]].get("qty") or 1)
+            net += rn * rq
+            sell += rs_ * rq
+        visiting.discard(bid)
+        memo[bid] = (net, sell)
+        return memo[bid]
+
+    blocks_out = {}
+    for bid, b in blocks.items():
+        items = sum(lines_out[l["id"]]["item_price"]
+                    for l in lines_by_block.get(bid, []))
+        n, sl = unit_net(bid)
+        q = float(b.get("qty") or 1)
+        # a ref row's displayed unit price = the referenced block's unit net
+        blocks_out[bid] = {"items": items, "unit_net": n, "unit_sell": sl,
+                           "net": n * q, "net_sell": sl * q}
+    return {"lines": lines_out, "blocks": blocks_out}
