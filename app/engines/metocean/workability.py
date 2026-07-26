@@ -110,8 +110,20 @@ def historical_windows(df: pd.DataFrame, start, end, cfg: ClimatologyConfig,
 # campaign placement on one realisation
 # ---------------------------------------------------------------------------
 def _feasible(arr, t: TaskType):
-    return ((arr["hs"] <= t.hs_max) & (arr["wind"] <= t.wind_max) &
-            (arr["cur_surf"] <= t.cur_surf_max) & (arr["cur_bottom"] <= t.cur_bottom_max))
+    """
+    Boolean workable mask. A constraint whose data column is entirely missing
+    (all-NaN, e.g. bottom current unavailable at a site) is DROPPED rather than
+    silently failing every hour — a missing input must never force a false 0%.
+    """
+    n = len(arr["hs"])
+    cond = np.ones(n, dtype=bool)
+    for key, lim in (("hs", t.hs_max), ("wind", t.wind_max),
+                     ("cur_surf", t.cur_surf_max), ("cur_bottom", t.cur_bottom_max)):
+        v = arr[key]
+        if not np.any(np.isfinite(v)):     # column unavailable -> constraint inactive
+            continue
+        cond &= (v <= lim)                 # NaN <= lim is False (occasional gaps stay no-go)
+    return cond
 
 
 def run_campaign_once(arr: dict, tasks: List[TaskType], horizon: int):
@@ -193,6 +205,7 @@ class WorkabilityResult:
     wait_p50: float = float("nan")
     wait_p80: float = float("nan")
     exists_pct: float = float("nan")     # % realisations with a valid window
+    dropped_limits: list = field(default_factory=list)  # constraints with no data
 
     def report(self) -> str:
         d = 24.0
@@ -217,6 +230,11 @@ def assess(df: pd.DataFrame, start, end,
     windows, L = historical_windows(df, start, end, cfg)
     if not windows:
         raise ValueError("No historical windows available for this coordinate/period.")
+    # constraints with no usable data anywhere (e.g. bottom current unavailable)
+    _LBL = {"hs": "Hs", "wind": "wind", "cur_surf": "surface current",
+            "cur_bottom": "bottom current"}
+    dropped = [_LBL[c] for c in ("hs", "wind", "cur_surf", "cur_bottom")
+               if c in df.columns and not np.any(np.isfinite(df[c].to_numpy()))]
     years = [w[0] for w in windows]
     weights = np.array([w[1] for w in windows])
     horizon_full = len(windows[0][2]["hs"])   # window + overrun buffer
@@ -236,7 +254,7 @@ def assess(df: pd.DataFrame, start, end,
             productive_hours=t.duration_h,
             wait_p50=float(np.percentile(waits, 50)),
             wait_p80=float(np.percentile(waits, 80)),
-            exists_pct=100.0 * found / n_runs)
+            exists_pct=100.0 * found / n_runs, dropped_limits=dropped)
 
     tasks = tasks or DEFAULT_CAMPAIGN
     productive = sum(t.duration_h * t.off for t in tasks)
@@ -257,4 +275,4 @@ def assess(df: pd.DataFrame, start, end,
         dur_p80=float(np.percentile(elapsed, 80)),
         dur_p90=float(np.percentile(elapsed, 90)),
         fit_pct=100.0 * fits / n_runs,
-        wait_by_task=wait_by, bottleneck=bn)
+        wait_by_task=wait_by, bottleneck=bn, dropped_limits=dropped)

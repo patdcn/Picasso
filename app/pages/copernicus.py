@@ -433,7 +433,13 @@ def _render(res, clim, source, pctile, start, end, strip, mode, meta=None):
     ], style=_CARD)
 
     return html.Div([
-        banner, head, cards,
+        banner,
+        (html.Div(f"Note: {', '.join(res.dropped_limits)} unavailable at this site/depth — "
+                  f"assessed on the remaining limits only.",
+                  style={"font": "12px 'IBM Plex Mono'", "color": MARG, "background": MARG_BG,
+                         "border": f"1px solid {MARG}", "borderRadius": "8px", "padding": "8px 10px",
+                         "marginBottom": "12px"}) if getattr(res, "dropped_limits", None) else None),
+        head, cards,
         html.Div([html.Div("Metocean strip · representative recent-year window", style=_H),
                   dcc.Graph(figure=strip, config={"displayModeBar": False})], style=_CARD),
         clim_panel,

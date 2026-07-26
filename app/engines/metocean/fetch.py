@@ -33,7 +33,7 @@ def _creds(username, password):
 
 
 def _point_frame(dataset, lat, lon, start, end, username, password,
-                 depth=None):
+                 depth=None, depth_range=None):
     """Thin wrapper over copernicusmarine.read_dataframe for one grid cell."""
     import copernicusmarine as cm
     kw = dict(
@@ -47,6 +47,8 @@ def _point_frame(dataset, lat, lon, start, end, username, password,
     )
     if depth is not None:
         kw.update(minimum_depth=depth, maximum_depth=depth)
+    elif depth_range is not None:
+        kw.update(minimum_depth=depth_range[0], maximum_depth=depth_range[1])
     u, p = _creds(username, password)
     if u and p:
         kw.update(username=u, password=p)
@@ -54,6 +56,29 @@ def _point_frame(dataset, lat, lon, start, end, username, password,
     # read_dataframe returns a (multi-)indexed frame; flatten to a time index
     df = df.reset_index()
     return df
+
+
+def _pick_levels(cds, lat, lon, start, working_depth, username, password):
+    """
+    Probe the water column at the point (1-day sample) and return
+    (surface_depth, bottom_depth) using only WET (non-NaN) model levels:
+      surface = shallowest wet level
+      bottom  = wet level nearest the working depth (so if the seabed is
+                shallower than the requested depth, the deepest wet level is
+                used instead of a below-seabed NaN).
+    Returns (None, None) if the column has no wet level.
+    """
+    probe = _point_frame(cds, lat, lon, start,
+                         pd.Timestamp(start) + pd.Timedelta(days=1),
+                         username, password, depth_range=(0, working_depth + 12))
+    spd = np.hypot(probe["uo"], probe["vo"])
+    wet = probe.loc[np.isfinite(spd), "depth"]
+    if wet.empty:
+        return None, None
+    depths = np.sort(wet.unique())
+    surf_d = float(depths.min())
+    bott_d = float(depths[np.argmin(np.abs(depths - working_depth))])
+    return surf_d, bott_d
 
 
 def fetch_point(lat: float, lon: float, start, end,
@@ -91,13 +116,21 @@ def fetch_point(lat: float, lon: float, start, end,
     cur_source, cur_note = "none", ""
     for cds in candidates:
         try:
+            surf_d, bott_d = _pick_levels(cds, lat, lon, start, working_depth_m,
+                                          username, password)
+            if surf_d is None:
+                raise ValueError("no wet model level in the water column")
             cs = _point_frame(cds, lat, lon, start, end, username, password,
-                              depth=0.5).set_index("time")
+                              depth=surf_d).set_index("time")
             cb = _point_frame(cds, lat, lon, start, end, username, password,
-                              depth=working_depth_m).set_index("time")
+                              depth=bott_d).set_index("time")
             cur_surf = (np.hypot(cs["uo"], cs["vo"]) * MS_TO_KN).to_frame("cur_surf")
             cur_bot = (np.hypot(cb["uo"], cb["vo"]) * MS_TO_KN).to_frame("cur_bottom")
             cur_source = cds.product_id.split("_")[0]     # 'IBI' or 'GLOBAL'
+            cur_note = f"surface {surf_d:.1f} m, bottom {bott_d:.1f} m"
+            if bott_d < working_depth_m - 3:
+                cur_note += (f"; model seabed ~{bott_d:.0f} m is shallower than the "
+                             f"{working_depth_m:.0f} m working depth, deepest wet level used")
             break
         except Exception as e:
             cur_note = f"{cds.dataset_id}: {e}"
