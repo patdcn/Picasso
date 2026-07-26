@@ -263,7 +263,7 @@ def _run(_, lat, lon, sd, ed, depth, pctile, lookback, halflife, recency, mode,
         return _error(f"Check inputs: {e}")
 
     try:
-        df, source = get_series(lat, lon, depth)
+        df, source, meta = get_series(lat, lon, depth)
     except Exception as e:
         return _error(f"Data unavailable: {e}")
 
@@ -281,7 +281,7 @@ def _run(_, lat, lon, sd, ed, depth, pctile, lookback, halflife, recency, mode,
         res = assess(df, start, end, tasks=tasks, mode="campaign", cfg=cfg, n_runs=500)
 
     strip = _strip(df, start, end, cfg, _strip_limits(mode, s_hs, s_wind, s_sc, s_bc, task_rows))
-    return _render(res, clim, source, int(pctile or 80), start, end, strip, mode)
+    return _render(res, clim, source, int(pctile or 80), start, end, strip, mode, meta)
 
 
 # ---------- helpers ----------
@@ -349,13 +349,32 @@ def _strip(df, start, end, cfg, lim):
         a.font.update(size=11, color=INK)
     return fig
 
-def _render(res, clim, source, pctile, start, end, strip, mode):
+def _render(res, clim, source, pctile, start, end, strip, mode, meta=None):
     L_days = (end - start).days or 1
+    meta = meta or {}
     banner = None
     if source == "demo":
-        banner = html.Div("Showing DEMO data — configure CMEMS credentials for live reanalysis.",
+        err = meta.get("error", "")
+        msg = ("Showing DEMO data — configure CMEMS credentials for live reanalysis."
+               if not err else
+               f"Live fetch failed, showing DEMO data. Reason: {err}")
+        banner = html.Div(msg,
             style={"font": "12px 'IBM Plex Mono'", "color": MARG, "background": MARG_BG,
                    "border": f"1px solid {MARG}", "borderRadius": "8px", "padding": "8px 10px",
+                   "marginBottom": "12px"})
+    elif meta.get("current_source") in ("", "none"):
+        # live waves/wind but currents unavailable — say so rather than showing zeros silently
+        note = meta.get("current_note", "")
+        banner = html.Div("Live waves & wind. Currents unavailable for this point"
+                          + (f" ({note})" if note else "") + " — current traces are blank.",
+            style={"font": "12px 'IBM Plex Mono'", "color": MARG, "background": MARG_BG,
+                   "border": f"1px solid {MARG}", "borderRadius": "8px", "padding": "8px 10px",
+                   "marginBottom": "12px"})
+    elif source == "live" and meta.get("current_source") == "GLOBAL":
+        banner = html.Div("Live reanalysis. Currents from global GLORYS (regional IBI "
+                          "unavailable here) — coarser, daily-mean, no tidal cycle.",
+            style={"font": "12px 'IBM Plex Mono'", "color": MUTED, "background": SOFT,
+                   "border": f"1px solid {GRID}", "borderRadius": "8px", "padding": "8px 10px",
                    "marginBottom": "12px"})
 
     if mode == "campaign":

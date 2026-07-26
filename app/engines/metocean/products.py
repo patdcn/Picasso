@@ -67,9 +67,9 @@ CURRENT_REANALYSIS = Dataset(
 # IBI reanalysis ~1/36 deg, tide-resolving. Preferred where the point falls in box.
 CURRENT_REANALYSIS_IBI = Dataset(
     product_id="IBI_MULTIYEAR_PHY_005_002",
-    dataset_id="cmems_mod_ibi_phy_my_0.083deg-3D_P1D-m",
+    dataset_id="cmems_mod_ibi_phy-cur_my_0.027deg_P1D-m",
     variables=["uo", "vo"],
-    note="IBI reanalysis, higher resolution for Iberia-Biscay-Ireland / N. Sea.",
+    note="IBI reanalysis currents (~2.5 km), daily-mean, Iberia-Biscay-Ireland / N. Sea.",
 )
 
 

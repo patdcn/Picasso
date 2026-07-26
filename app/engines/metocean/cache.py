@@ -47,14 +47,18 @@ def _key(lat: float, lon: float, depth: float) -> Path:
 def get_series(lat: float, lon: float, working_depth_m: float = 34.0,
                force: bool = False):
     """
-    Return (dataframe, source) where source is 'live' | 'cache' | 'demo'.
+    Return (dataframe, source, meta) where source is 'live' | 'cache' | 'demo'
+    and meta is a dict: {current_source, current_note, error}.
     Columns: hs, wind, cur_surf, cur_bottom (hourly, UTC index).
     """
     path = _key(lat, lon, working_depth_m)
 
     if path.exists() and not force:
         try:
-            return pd.read_pickle(path), "cache"
+            df = pd.read_pickle(path)
+            return df, "cache", {"current_source": df.attrs.get("current_source", ""),
+                                 "current_note": df.attrs.get("current_note", ""),
+                                 "error": ""}
         except Exception:
             pass  # corrupt cache -> refetch
 
@@ -66,10 +70,18 @@ def get_series(lat: float, lon: float, working_depth_m: float = 34.0,
                 df.to_pickle(path)
             except Exception:
                 pass
-            return df, "live"
+            return df, "live", {"current_source": df.attrs.get("current_source", ""),
+                                "current_note": df.attrs.get("current_note", ""),
+                                "error": ""}
         except Exception as e:
-            print(f"[weather_stats] CMEMS fetch failed ({e}); using demo data.")
+            # waves/wind (the essentials) failed — fall back to demo, but keep the
+            # real error so the page can show it instead of a silent banner.
+            err = f"{type(e).__name__}: {e}"
+            print(f"[weather_stats] CMEMS fetch failed ({err}); using demo data.")
+            df = synth_point(lat, lon, DemoConfig(years=30, end_year=2025,
+                                                  hs_trend_per_decade=0.06))
+            return df, "demo", {"current_source": "", "current_note": "", "error": err}
 
     df = synth_point(lat, lon, DemoConfig(years=30, end_year=2025,
                                           hs_trend_per_decade=0.06))
-    return df, "demo"
+    return df, "demo", {"current_source": "", "current_note": "", "error": ""}

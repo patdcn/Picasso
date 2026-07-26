@@ -77,19 +77,42 @@ def fetch_point(lat: float, lon: float, start, end,
     spd = np.hypot(wind["eastward_wind"], wind["northward_wind"]) * MS_TO_KN
     wind = spd.to_frame("wind")
 
-    # -- currents at surface (~0.5 m) and working depth
-    cds = products.current_dataset_for(lat, lon)
-    cs = _point_frame(cds, lat, lon, start, end, username, password, depth=0.5)
-    cs = cs.set_index("time")
-    cb = _point_frame(cds, lat, lon, start, end, username, password,
-                      depth=working_depth_m).set_index("time")
-    cur_surf = (np.hypot(cs["uo"], cs["vo"]) * MS_TO_KN).to_frame("cur_surf")
-    cur_bot = (np.hypot(cb["uo"], cb["vo"]) * MS_TO_KN).to_frame("cur_bottom")
+    # -- currents at surface (~0.5 m) and working depth, FAIL-SOFT.
+    # Try the preferred (regional, e.g. IBI) product first; on any error fall
+    # back to global GLORYS; if that also fails, continue with empty currents so
+    # the assessment still runs on real waves and wind. Record what happened in
+    # df.attrs so the page can tell the user (surfaced instead of silent).
+    preferred = products.current_dataset_for(lat, lon)
+    candidates = [preferred]
+    if preferred.dataset_id != products.CURRENT_REANALYSIS.dataset_id:
+        candidates.append(products.CURRENT_REANALYSIS)   # GLORYS global fallback
 
-    # -- align onto common hourly grid
-    out = (w.join(wind, how="outer")
-             .join(cur_surf, how="outer")
-             .join(cur_bottom := cur_bot, how="outer"))
+    cur_surf = cur_bot = None
+    cur_source, cur_note = "none", ""
+    for cds in candidates:
+        try:
+            cs = _point_frame(cds, lat, lon, start, end, username, password,
+                              depth=0.5).set_index("time")
+            cb = _point_frame(cds, lat, lon, start, end, username, password,
+                              depth=working_depth_m).set_index("time")
+            cur_surf = (np.hypot(cs["uo"], cs["vo"]) * MS_TO_KN).to_frame("cur_surf")
+            cur_bot = (np.hypot(cb["uo"], cb["vo"]) * MS_TO_KN).to_frame("cur_bottom")
+            cur_source = cds.product_id.split("_")[0]     # 'IBI' or 'GLOBAL'
+            break
+        except Exception as e:
+            cur_note = f"{cds.dataset_id}: {e}"
+            continue
+
+    # -- assemble & align onto common hourly grid
+    out = w.join(wind, how="outer")
+    if cur_surf is not None:
+        out = out.join(cur_surf, how="outer").join(cur_bot, how="outer")
+    else:
+        out["cur_surf"] = np.nan
+        out["cur_bottom"] = np.nan
     out.index = pd.to_datetime(out.index, utc=True)
     out = out.sort_index().resample(resample).mean().interpolate("time")
-    return out[["hs", "wind", "cur_surf", "cur_bottom"]]
+    out = out[["hs", "wind", "cur_surf", "cur_bottom"]]
+    out.attrs["current_source"] = cur_source
+    out.attrs["current_note"] = cur_note
+    return out
