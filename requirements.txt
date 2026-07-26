@@ -3,3 +3,6 @@ gunicorn==23.0.0
 numpy==2.1.3
 plotly==5.24.1
 openpyxl==3.1.5
+pandas==2.2.3
+dash-leaflet==1.0.15
+copernicusmarine>=2.0,<3.0
