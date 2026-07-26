@@ -1,60 +1,41 @@
 """
-Workability engine.
+Workability engine (depth-resolved, task-free).
 
-Consumes a multi-year point series (from fetch_point or synth_point) and a
-scope definition, and returns a duration/feasibility distribution tested
-against the client's fixed execution window.
+Consumes a multi-year point series (from fetch_point or synth_point) and reports
+workability at three levels in the water column — Surface, Mid-water, Bottom —
+against Hs, wind, and a per-depth current limit.
 
-Key method: each Monte-Carlo realisation is a REAL historical year's version of
-the same calendar window (block resampling), so storm persistence is inherited
-from the data rather than modelled. Years are drawn with recency weights, so a
-non-stationary climate tilts the sample toward recent conditions.
+Two modes, chosen by a toggle in the UI:
 
-Two scope modes:
-  single   — one continuous D-hour window (atomic lift). Reports the probability
-             such a window exists inside the client period and the wait to it.
-  campaign — an ordered list of task TYPES {duration, off, limits, resetup},
-             executed in sequence. A weather break is standby-nearby waiting
-             (no remob). An interrupted unit restarts and pays its re-setup
-             cost on the retry. Reports elapsed-duration P50/P80/P90 and whether
-             it fits the client window.
+  single    A weather-sensitive operation needing `duration_h` CONTINUOUS hours
+            under limits (a lift, a tie-in). Reports, per depth, the % of
+            historical years in which such a window exists in the client period
+            and the wait to the first one.
+
+  campaign  A programme whose NOMINAL (good-weather) working time is
+            `nominal_days`. Weather adds delay on top: the tool accumulates
+            workable hours through the real weather until it reaches the nominal
+            total, and the elapsed calendar time is the answer. Reports, per
+            depth, elapsed P50/P80/P90 and whether it fits the client window.
+
+Each Monte-Carlo realisation is a real historical year's version of the same
+calendar window (block resampling), drawn with recency weights, so storm
+persistence comes from the data.
 """
-
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from .climatology import ClimatologyConfig, recency_weights, execution_months
+from .climatology import ClimatologyConfig, recency_weights
+
+# the three reported levels and their current column
+DEPTHS = [("Surface", "cur_surf"), ("Mid-water", "cur_mid"), ("Bottom", "cur_bottom")]
 
 
 # ---------------------------------------------------------------------------
-# scope definition
-# ---------------------------------------------------------------------------
-@dataclass
-class TaskType:
-    name: str
-    duration_h: int          # hours per unit
-    off: int                 # number of units of this type
-    hs_max: float            # m
-    wind_max: float          # kn
-    cur_surf_max: float      # kn  (vessel / DP limit)
-    cur_bottom_max: float    # kn  (diver limit)
-    resetup_h: float = 0.0   # hours added to a unit that gets interrupted
-
-
-DEFAULT_CAMPAIGN = [
-    TaskType("As-found survey", 2, 4, 2.0, 25, 1.2, 0.9, resetup_h=0.1),
-    TaskType("Dredge / expose", 1, 20, 1.5, 20, 1.0, 0.8, resetup_h=0.1),
-    TaskType("Cut / flange",    1, 10, 1.2, 18, 0.6, 0.5, resetup_h=0.5),
-    TaskType("Rig & recover",   2, 5, 1.5, 20, 0.8, 0.7, resetup_h=2.0),
-    TaskType("Backfill",        1, 8, 1.8, 22, 1.1, 0.9, resetup_h=0.1),
-]
-
-
-# ---------------------------------------------------------------------------
-# historical window sampling
+# historical window sampling (block resampling, recency-weighted)
 # ---------------------------------------------------------------------------
 def _window_length_hours(start, end) -> int:
     return int((pd.Timestamp(end) - pd.Timestamp(start)) / pd.Timedelta(hours=1))
@@ -62,11 +43,6 @@ def _window_length_hours(start, end) -> int:
 
 def historical_windows(df: pd.DataFrame, start, end, cfg: ClimatologyConfig,
                        overrun_buffer_days: int = 60):
-    """
-    Return a list of (year, weight, arrays) for each historical year that has
-    the execution calendar-window. arrays is a dict of numpy arrays for the
-    window plus an overrun buffer (so overruns get a measurable duration).
-    """
     start, end = pd.Timestamp(start), pd.Timestamp(end)
     tz = df.index.tz
     years = sorted(pd.unique(df.index.year))
@@ -83,10 +59,10 @@ def historical_windows(df: pd.DataFrame, start, end, cfg: ClimatologyConfig,
             w_start = pd.Timestamp(year=y, month=start.month, day=start.day,
                                    hour=start.hour, tz=tz)
         except ValueError:
-            continue  # e.g. Feb 29 in a non-leap year
+            continue
         w_end = w_start + span
         sl = df.loc[(df.index >= w_start) & (df.index < w_end)]
-        if len(sl) < L:               # not enough data for this year
+        if len(sl) < L:
             continue
         out.append((y, sl))
 
@@ -101,178 +77,157 @@ def historical_windows(df: pd.DataFrame, start, end, cfg: ClimatologyConfig,
             "hs": sl["hs"].to_numpy(float),
             "wind": sl["wind"].to_numpy(float),
             "cur_surf": sl["cur_surf"].to_numpy(float),
+            "cur_mid": sl["cur_mid"].to_numpy(float) if "cur_mid" in sl else np.full(len(sl), np.nan),
             "cur_bottom": sl["cur_bottom"].to_numpy(float),
         }))
     return packed, L
 
 
 # ---------------------------------------------------------------------------
-# campaign placement on one realisation
+# feasibility mask (NaN-safe: a missing column drops that constraint)
 # ---------------------------------------------------------------------------
-def _feasible(arr, t: TaskType):
-    """
-    Boolean workable mask. A constraint whose data column is entirely missing
-    (all-NaN, e.g. bottom current unavailable at a site) is DROPPED rather than
-    silently failing every hour — a missing input must never force a false 0%.
-    """
+def _feas(arr, hs_max, wind_max, cur_key, cur_max):
     n = len(arr["hs"])
     cond = np.ones(n, dtype=bool)
-    for key, lim in (("hs", t.hs_max), ("wind", t.wind_max),
-                     ("cur_surf", t.cur_surf_max), ("cur_bottom", t.cur_bottom_max)):
+    for key, lim in (("hs", hs_max), ("wind", wind_max), (cur_key, cur_max)):
         v = arr[key]
-        if not np.any(np.isfinite(v)):     # column unavailable -> constraint inactive
+        if not np.any(np.isfinite(v)):
             continue
-        cond &= (v <= lim)                 # NaN <= lim is False (occasional gaps stay no-go)
+        cond &= (v <= lim)
     return cond
 
 
-def run_campaign_once(arr: dict, tasks: List[TaskType], horizon: int):
-    """
-    Walk the hourly window and place every unit in sequence.
-    Returns (elapsed_hours, completed_bool, wait_by_task[np]).
-    Interrupted unit restarts and pays resetup on the retry.
-    """
-    n = len(arr["hs"])
-    horizon = min(horizon, n)
-    clock = 0
-    wait_by = np.zeros(len(tasks))
-    productive_by = np.zeros(len(tasks))
-
-    for ti, t in enumerate(tasks):
-        feas = _feasible(arr, t)
-        for _u in range(t.off):
-            need = t.duration_h
-            unit_start_clock = clock
-            placed = False
-            while clock < horizon:
-                # seek next feasible hour
-                while clock < horizon and not feas[clock]:
-                    clock += 1
-                if clock >= horizon:
-                    break
-                # attempt a continuous run of `need` feasible hours
-                run = 0
-                while clock < horizon and feas[clock] and run < need:
-                    run += 1
-                    clock += 1
-                if run >= need:
-                    placed = True
-                    break
-                else:
-                    # interrupted mid-unit: restart, pay resetup on retry
-                    need = t.duration_h + t.resetup_h
-            if not placed:
-                elapsed = horizon
-                return elapsed, False, wait_by
-            productive_by[ti] += t.duration_h
-            wait_by[ti] += (clock - unit_start_clock) - t.duration_h
-    return clock, True, wait_by
-
-
-def run_single_once(arr: dict, t: TaskType, horizon: int):
-    """First continuous D-hour feasible window: (wait_hours, found_bool)."""
-    n = min(len(arr["hs"]), horizon)
-    feas = _feasible(arr, t)
+def _first_continuous(mask, need):
+    """Index of the start of the first run of >= `need` True hours, else -1."""
     run = 0
-    for h in range(n):
-        if feas[h]:
+    for h in range(len(mask)):
+        if mask[h]:
             run += 1
-            if run >= t.duration_h:
-                return h - t.duration_h + 1, True
+            if run >= need:
+                return h - need + 1
         else:
             run = 0
-    return n, False
+    return -1
+
+
+def _elapsed_to_accumulate(mask, need_hours):
+    """Calendar hour by which `need_hours` workable hours have accumulated, else -1."""
+    c = np.cumsum(mask)
+    idx = np.searchsorted(c, need_hours)   # first index where cumsum >= need
+    if idx >= len(mask) or c[-1] < need_hours:
+        return -1
+    return int(idx) + 1                    # +1: hours elapsed = index+1
+
+
+# ---------------------------------------------------------------------------
+# results
+# ---------------------------------------------------------------------------
+@dataclass
+class DepthOutcome:
+    label: str
+    cur_key: str
+    depth_m: Optional[float]
+    available: bool
+    # single
+    exists_pct: float = float("nan")
+    wait_p50: float = float("nan")
+    wait_p80: float = float("nan")
+    # campaign
+    elapsed_p50: float = float("nan")
+    elapsed_p80: float = float("nan")
+    elapsed_p90: float = float("nan")
+    fit_pct: float = float("nan")
+
+
+@dataclass
+class AssessResult:
+    mode: str
+    window_hours: int
+    n_years: int
+    duration_h: int = 0          # single
+    nominal_hours: int = 0       # campaign
+    depths: List[DepthOutcome] = field(default_factory=list)
+
+    def report(self) -> str:
+        lines = [f"{self.mode} · {self.n_years} historical windows"]
+        for d in self.depths:
+            dm = f"{d.depth_m:.0f} m" if d.depth_m is not None else "n/a"
+            if self.mode == "single":
+                lines.append(f"  {d.label:<10} ({dm}): exists {d.exists_pct:.0f}% · "
+                             f"wait P50 {d.wait_p50/24:.1f} d / P80 {d.wait_p80/24:.1f} d")
+            else:
+                lines.append(f"  {d.label:<10} ({dm}): elapsed P50 {d.elapsed_p50/24:.1f} / "
+                             f"P80 {d.elapsed_p80/24:.1f} / P90 {d.elapsed_p90/24:.1f} d · "
+                             f"fits {d.fit_pct:.0f}%")
+        return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
 # top-level assessment
 # ---------------------------------------------------------------------------
-@dataclass
-class WorkabilityResult:
-    mode: str
-    window_hours: int
-    n_runs: int
-    n_years: int
-    productive_hours: int
-    # campaign
-    dur_p50: float = float("nan")
-    dur_p80: float = float("nan")
-    dur_p90: float = float("nan")
-    fit_pct: float = float("nan")        # % realisations completing within window
-    wait_by_task: Dict[str, float] = field(default_factory=dict)
-    bottleneck: str = ""
-    # single
-    wait_p50: float = float("nan")
-    wait_p80: float = float("nan")
-    exists_pct: float = float("nan")     # % realisations with a valid window
-    dropped_limits: list = field(default_factory=list)  # constraints with no data
-
-    def report(self) -> str:
-        d = 24.0
-        if self.mode == "campaign":
-            return (f"Campaign · {self.n_years} historical windows, {self.n_runs} runs\n"
-                    f"  productive {self.productive_hours}h ({self.productive_hours/d:.1f}d)\n"
-                    f"  elapsed  P50 {self.dur_p50/d:.1f}d  P80 {self.dur_p80/d:.1f}d  "
-                    f"P90 {self.dur_p90/d:.1f}d\n"
-                    f"  fits client window: {self.fit_pct:.0f}% of realisations\n"
-                    f"  bottleneck: {self.bottleneck}")
-        return (f"Single window · {self.n_years} historical windows, {self.n_runs} runs\n"
-                f"  window exists in period: {self.exists_pct:.0f}% of realisations\n"
-                f"  wait to first window  P50 {self.wait_p50/d:.1f}d  P80 {self.wait_p80/d:.1f}d")
-
-
-def assess(df: pd.DataFrame, start, end,
-           tasks: Optional[List[TaskType]] = None,
-           mode: str = "campaign",
+def assess(df: pd.DataFrame, start, end, mode: str,
+           hs_max: float, wind_max: float, cur_limits: Dict[str, float],
+           duration_h: int = 6, nominal_days: float = 30.0,
            cfg: ClimatologyConfig = ClimatologyConfig(),
-           n_runs: int = 500,
-           seed: int = 1) -> WorkabilityResult:
-    windows, L = historical_windows(df, start, end, cfg)
+           n_runs: int = 500, seed: int = 1) -> AssessResult:
+    """
+    cur_limits: {'cur_surf': .., 'cur_mid': .., 'cur_bottom': ..} in knots.
+    mode: 'single' (uses duration_h) or 'campaign' (uses nominal_days).
+    """
+    buffer_days = 60 if mode == "single" else max(60, int(nominal_days * 2))
+    windows, L = historical_windows(df, start, end, cfg, overrun_buffer_days=buffer_days)
     if not windows:
         raise ValueError("No historical windows available for this coordinate/period.")
-    # constraints with no usable data anywhere (e.g. bottom current unavailable)
-    _LBL = {"hs": "Hs", "wind": "wind", "cur_surf": "surface current",
-            "cur_bottom": "bottom current"}
-    dropped = [_LBL[c] for c in ("hs", "wind", "cur_surf", "cur_bottom")
-               if c in df.columns and not np.any(np.isfinite(df[c].to_numpy()))]
-    years = [w[0] for w in windows]
     weights = np.array([w[1] for w in windows])
-    horizon_full = len(windows[0][2]["hs"])   # window + overrun buffer
+    horizon = len(windows[0][2]["hs"])
     rng = np.random.default_rng(seed)
     draw = rng.choice(len(windows), size=n_runs, p=weights)
 
-    if mode == "single":
-        t = (tasks or [DEFAULT_CAMPAIGN[2]])[0]
-        waits, found = [], 0
-        for i in draw:
-            w, ok = run_single_once(windows[i][2], t, L)
-            waits.append(w)
-            found += int(ok)
-        waits = np.array(waits, float)
-        return WorkabilityResult(
-            mode="single", window_hours=L, n_runs=n_runs, n_years=len(windows),
-            productive_hours=t.duration_h,
-            wait_p50=float(np.percentile(waits, 50)),
-            wait_p80=float(np.percentile(waits, 80)),
-            exists_pct=100.0 * found / n_runs, dropped_limits=dropped)
+    depth_m = {"cur_surf": df.attrs.get("depth_surf"),
+               "cur_mid": df.attrs.get("depth_mid"),
+               "cur_bottom": df.attrs.get("depth_bott")}
 
-    tasks = tasks or DEFAULT_CAMPAIGN
-    productive = sum(t.duration_h * t.off for t in tasks)
-    elapsed, fits, waitmat = [], 0, np.zeros(len(tasks))
-    for i in draw:
-        e, ok, wby = run_campaign_once(windows[i][2], tasks, horizon_full)
-        elapsed.append(e)
-        fits += int(ok and e <= L)
-        waitmat += wby
-    elapsed = np.array(elapsed, float)
-    waitmat /= n_runs
-    wait_by = {t.name: float(waitmat[k]) for k, t in enumerate(tasks)}
-    bn = tasks[int(np.argmax(waitmat))].name if len(tasks) else ""
-    return WorkabilityResult(
-        mode="campaign", window_hours=L, n_runs=n_runs, n_years=len(windows),
-        productive_hours=productive,
-        dur_p50=float(np.percentile(elapsed, 50)),
-        dur_p80=float(np.percentile(elapsed, 80)),
-        dur_p90=float(np.percentile(elapsed, 90)),
-        fit_pct=100.0 * fits / n_runs,
-        wait_by_task=wait_by, bottleneck=bn, dropped_limits=dropped)
+    res = AssessResult(mode=mode, window_hours=L, n_years=len(windows),
+                       duration_h=int(duration_h),
+                       nominal_hours=int(round(nominal_days * 24)))
+
+    for label, ckey in DEPTHS:
+        available = np.any(np.isfinite(df[ckey].to_numpy())) if ckey in df.columns else False
+        cur_max = cur_limits.get(ckey, 9e9)
+        out = DepthOutcome(label=label, cur_key=ckey, depth_m=depth_m.get(ckey),
+                           available=available)
+
+        if mode == "single":
+            need = max(1, int(round(duration_h)))
+            waits, found = [], 0
+            for i in draw:
+                mask = _feas(windows[i][2], hs_max, wind_max, ckey, cur_max)[:L]
+                s = _first_continuous(mask, need)
+                if s >= 0:
+                    found += 1
+                    waits.append(s)
+                else:
+                    waits.append(L)
+            waits = np.array(waits, float)
+            out.exists_pct = 100.0 * found / n_runs
+            out.wait_p50 = float(np.percentile(waits, 50))
+            out.wait_p80 = float(np.percentile(waits, 80))
+        else:
+            need_h = max(1, int(round(nominal_days * 24)))
+            elapsed, fits = [], 0
+            for i in draw:
+                mask = _feas(windows[i][2], hs_max, wind_max, ckey, cur_max)
+                e = _elapsed_to_accumulate(mask, need_h)
+                if e < 0:
+                    e = horizon
+                elapsed.append(e)
+                fits += int(e <= L)
+            elapsed = np.array(elapsed, float)
+            out.elapsed_p50 = float(np.percentile(elapsed, 50))
+            out.elapsed_p80 = float(np.percentile(elapsed, 80))
+            out.elapsed_p90 = float(np.percentile(elapsed, 90))
+            out.fit_pct = 100.0 * fits / n_runs
+
+        res.depths.append(out)
+
+    return res

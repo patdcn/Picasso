@@ -326,6 +326,7 @@ DEFAULT_THRESHOLDS = {
     "hs":         [1.0, 1.5, 2.0, 2.5],   # m
     "wind":       [15, 20, 25],           # kn
     "cur_surf":   [0.5, 0.8, 1.0],        # kn
+    "cur_mid":    [0.4, 0.6, 0.8],        # kn
     "cur_bottom": [0.3, 0.5, 0.7],        # kn
 }
 

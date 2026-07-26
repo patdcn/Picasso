@@ -3,27 +3,32 @@ Weather Stats — Copernicus.
 
 Metocean workability for a tender. Pick a work location and the client's fixed
 execution window; the tool pulls Copernicus Marine reanalysis (WAVERYS waves,
-L4 wind, GLORYS/IBI currents at surface + working depth), builds recency-weighted
-seasonal statistics with a trend diagnostic, and returns single-window or
-sequenced-campaign workability tested against the window.
+L4 wind, GLORYS/IBI currents), builds recency-weighted seasonal statistics with
+a trend diagnostic, and reports workability at three levels of the water column
+— Surface, Mid-water, Bottom — against Hs, wind and per-depth current limits.
 
-Live data requires Copernicus Marine credentials in the environment
-(CMEMS_USERNAME / CMEMS_PASSWORD, set in Dokploy). Without them the page runs on
-synthetic demo data behind an amber banner. The numeric reanalysis is cached to
-the /data volume; the first assessment per location is slow, the rest instant.
+Two modes:
+  Single task — a weather-sensitive operation needing N continuous hours.
+  Campaign    — a programme whose NOMINAL (good-weather) duration is D days;
+                weather stretches the calendar around it.
+
+Live data needs Copernicus Marine credentials in the environment
+(CMEMS_USERNAME / CMEMS_PASSWORD); without them the page runs on synthetic demo
+data behind an amber banner. Reanalysis is cached to the /data volume.
 """
 import dash
-from dash import html, dcc, dash_table, Input, Output, State, callback, no_update
+from dash import html, dcc, Input, Output, State, callback, no_update
 import dash_leaflet as dl
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import numpy as np
 import pandas as pd
 
 from app.engines import metocean as mo
 from app.engines.metocean import (
-    build_climatology, ClimatologyConfig, assess, TaskType,
+    build_climatology, ClimatologyConfig, assess,
     classify_region, current_dataset_for, get_series, credentials_present,
-    historical_windows,
+    historical_windows, DEPTHS,
 )
 
 dash.register_page(__name__, path="/weather/copernicus", name="Copernicus",
@@ -34,7 +39,8 @@ INK = "#0f172a"; MUTED = "#64748b"; DIM = "#94a3b8"; GRID = "#e2e8f0"
 ACCENT = "#0f766e"; PANEL = "#ffffff"; SOFT = "#f8fafc"
 GO = "#16a34a"; MARG = "#d97706"; NOGO = "#dc2626"
 GO_BG = "#dcfce7"; MARG_BG = "#fef9c3"; NOGO_BG = "#fee2e2"
-CUR_S = "#0891b2"; CUR_B = "#7c3aed"; WAVE = "#2563eb"; WIND = "#ca8a04"
+CUR_S = "#0891b2"; CUR_M = "#0d9488"; CUR_B = "#7c3aed"; WAVE = "#2563eb"; WIND = "#ca8a04"
+DEPTH_COL = {"cur_surf": CUR_S, "cur_mid": CUR_M, "cur_bottom": CUR_B}
 
 DEFAULT_LAT, DEFAULT_LON = 53.02, 3.24
 
@@ -42,24 +48,6 @@ _CARD = {"background": PANEL, "border": f"1px solid {GRID}", "borderRadius": "10
          "padding": "14px 16px", "marginBottom": "14px"}
 _H = {"font": "600 13px system-ui", "textTransform": "uppercase", "letterSpacing": ".05em",
       "color": MUTED, "margin": "0 0 10px"}
-
-TASK_COLUMNS = [
-    {"name": "Task", "id": "name", "type": "text"},
-    {"name": "h", "id": "duration_h", "type": "numeric"},
-    {"name": "off", "id": "off", "type": "numeric"},
-    {"name": "Hs", "id": "hs_max", "type": "numeric"},
-    {"name": "Wind", "id": "wind_max", "type": "numeric"},
-    {"name": "Surf", "id": "cur_surf_max", "type": "numeric"},
-    {"name": "Bot", "id": "cur_bottom_max", "type": "numeric"},
-    {"name": "Reset", "id": "resetup_h", "type": "numeric"},
-]
-DEFAULT_TASK_ROWS = [
-    dict(name="As-found survey", duration_h=2, off=4, hs_max=2.0, wind_max=25, cur_surf_max=1.2, cur_bottom_max=0.9, resetup_h=0.1),
-    dict(name="Dredge / expose", duration_h=1, off=20, hs_max=1.5, wind_max=20, cur_surf_max=1.0, cur_bottom_max=0.8, resetup_h=0.1),
-    dict(name="Cut / flange", duration_h=1, off=10, hs_max=1.2, wind_max=18, cur_surf_max=0.6, cur_bottom_max=0.5, resetup_h=0.5),
-    dict(name="Rig & recover", duration_h=2, off=5, hs_max=1.5, wind_max=20, cur_surf_max=0.8, cur_bottom_max=0.7, resetup_h=2.0),
-    dict(name="Backfill", duration_h=1, off=8, hs_max=1.8, wind_max=22, cur_surf_max=1.1, cur_bottom_max=0.9, resetup_h=0.1),
-]
 
 
 def _lbl(t):
@@ -76,9 +64,9 @@ def _num(id_, val, step=0.1, **kw):
 def layout():
     return html.Div(style={"maxWidth": "1160px"}, children=[
         html.H3("Weather Stats — Copernicus", style={"marginBottom": "2px"}),
-        html.P("Metocean workability for a work location and the client's execution window, "
-               "from Copernicus Marine reanalysis.",
-               style={"color": MUTED, "marginTop": "0", "maxWidth": "720px"}),
+        html.P("Metocean workability at Surface / Mid-water / Bottom for a work location "
+               "and the client's execution window, from Copernicus Marine reanalysis.",
+               style={"color": MUTED, "marginTop": "0", "maxWidth": "760px"}),
         html.Div(id="ws-src-banner", style={"marginBottom": "12px"}),
 
         html.Div(style={"display": "grid", "gridTemplateColumns": "360px 1fr", "gap": "16px",
@@ -106,40 +94,29 @@ def layout():
                     html.Div("Execution window (client-fixed)", style=_H),
                     dcc.DatePickerRange(id="ws-dates", start_date="2026-09-01", end_date="2026-09-30",
                         display_format="DD MMM YYYY"),
-                    html.Div([
-                        html.Div([_lbl("Working depth (m)"), _num("ws-depth", 34, 1)]),
-                        html.Div([_lbl("Budget percentile"), dcc.Dropdown(id="ws-pctile",
-                            options=[{"label": "P50 (median)", "value": 50},
-                                     {"label": "P80 (recommended)", "value": 80},
-                                     {"label": "P90 (conservative)", "value": 90}],
-                            value=80, clearable=False)]),
-                    ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "10px", "marginTop": "10px"}),
+                    html.Div([_lbl("Budget percentile"), dcc.Dropdown(id="ws-pctile",
+                        options=[{"label": "P50 (median)", "value": 50},
+                                 {"label": "P80 (recommended)", "value": 80},
+                                 {"label": "P90 (conservative)", "value": 90}],
+                        value=80, clearable=False)], style={"marginTop": "10px"}),
                 ], style=_CARD),
 
                 html.Div([
                     html.Div("Climatology", style=_H),
                     html.Div([
-                        html.P(["How the wave & wind statistics are built from history. "
-                                "The execution period is usually too far ahead to forecast, so "
-                                "workability comes from the ", html.B("statistics of past years"),
-                                " for the same calendar months — not a forecast of the actual days."],
-                               style={"margin": "0 0 6px"}),
-                        html.P([html.B("Look-back"), " — how many years of reanalysis to use. "
-                                "~30 is the usual choice: long enough to sample the storm tail and "
-                                "average out year-to-year swings, short enough to limit climate drift. "
-                                "Fewer years is noisier; the actual span used is shown in the results "
-                                "(a dataset may not reach the full look-back)."],
-                               style={"margin": "0 0 6px"}),
-                        html.P([html.B("Recency weighting"), " — whether recent years count for more, "
-                                "so a shifting climate doesn't bias the result toward stale years. ",
-                                html.B("Exponential"), " (recommended) fades older years smoothly; ",
-                                html.B("Linear"), " tapers them evenly; ", html.B("None"),
-                                " treats every year equally."],
-                               style={"margin": "0 0 6px"}),
-                        html.P([html.B("Half-life"), " — for exponential weighting, the number of years "
-                                "at which a year counts half as much as the most recent one "
-                                "(10 y ≈ centre on the last decade). Ignored for Linear / None."],
-                               style={"margin": "0"}),
+                        html.P(["How the wave & wind statistics are built from history. The execution "
+                                "period is usually too far ahead to forecast, so workability comes from "
+                                "the ", html.B("statistics of past years"), " for the same calendar "
+                                "months — not a forecast of the actual days."], style={"margin": "0 0 6px"}),
+                        html.P([html.B("Look-back"), " — how many years of reanalysis to use. ~30 balances "
+                                "sampling the storm tail against climate drift; the actual span used is "
+                                "shown in the results."], style={"margin": "0 0 6px"}),
+                        html.P([html.B("Recency weighting"), " — whether recent years count for more, so a "
+                                "shifting climate doesn't bias the result. ", html.B("Exponential"),
+                                " fades older years smoothly; ", html.B("Linear"), " evenly; ",
+                                html.B("None"), " treats all years equally."], style={"margin": "0 0 6px"}),
+                        html.P([html.B("Half-life"), " — years at which a year counts half as much as the "
+                                "most recent (exponential only)."], style={"margin": "0"}),
                     ], style={"font": "11.5px system-ui", "color": MUTED, "lineHeight": "1.5",
                               "background": SOFT, "border": f"1px solid {GRID}", "borderRadius": "8px",
                               "padding": "10px 11px", "marginBottom": "12px"}),
@@ -155,54 +132,52 @@ def layout():
                 ], style=_CARD),
 
                 html.Div([
-                    html.Div("Scope", style=_H),
+                    html.Div("Operation", style=_H),
                     dcc.RadioItems(id="ws-mode",
-                        options=[{"label": " Single window", "value": "single"},
+                        options=[{"label": " Single task", "value": "single"},
                                  {"label": " Campaign", "value": "campaign"}],
-                        value="campaign", inline=True,
+                        value="single", inline=True,
                         inputStyle={"marginRight": "5px"}, labelStyle={"marginRight": "16px"},
                         style={"marginBottom": "10px", "font": "13px system-ui"}),
 
                     html.Div(id="ws-single-pane", children=[
-                        html.Div([
-                            html.Div([_lbl("Task length (h)"), _num("ws-s-dur", 6, 0.5)]),
-                            html.Div([_lbl("Max Hs (m)"), _num("ws-s-hs", 1.5, 0.1)]),
-                        ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "10px"}),
-                        html.Div([
-                            html.Div([_lbl("Max wind (kn)"), _num("ws-s-wind", 20, 1)]),
-                            html.Div([_lbl("Surf cur (kn)"), _num("ws-s-sc", 0.8, 0.1)]),
-                        ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "10px", "marginTop": "10px"}),
-                        html.Div([_lbl("Bottom cur — diver (kn)"), _num("ws-s-bc", 0.6, 0.1)],
-                                 style={"marginTop": "10px"}),
+                        html.Div([_lbl("Continuous window needed (h)"), _num("ws-dur", 6, 0.5)]),
+                        html.Div("A weather-sensitive operation that must run in one unbroken window "
+                                 "(a lift, a tie-in).", style={"font": "11px system-ui", "color": DIM,
+                                 "marginTop": "6px"}),
                     ]),
-
                     html.Div(id="ws-campaign-pane", children=[
-                        html.Div("Each row is a task type: h/unit × off, run top-to-bottom. "
-                                 "Reset = hours added if a unit is interrupted.",
-                                 style={"font": "11px system-ui", "color": DIM, "marginBottom": "8px"}),
-                        dash_table.DataTable(id="ws-tasks", columns=TASK_COLUMNS, data=DEFAULT_TASK_ROWS,
-                            editable=True, row_deletable=True, style_table={"overflowX": "auto"},
-                            style_cell={"border": f"1px solid {GRID}", "font": "11px 'IBM Plex Mono'",
-                                        "padding": "4px", "textAlign": "center", "color": INK},
-                            style_header={"background": SOFT, "color": MUTED, "border": f"1px solid {GRID}",
-                                          "font": "600 10px system-ui", "textTransform": "uppercase"},
-                            style_cell_conditional=[{"if": {"column_id": "name"}, "textAlign": "left", "minWidth": "92px"}]),
-                        html.Button("+ Add task type", id="ws-addrow", n_clicks=0,
-                            style={"width": "100%", "marginTop": "8px", "background": SOFT,
-                                   "border": f"1px dashed {GRID}", "color": MUTED, "padding": "7px",
-                                   "borderRadius": "6px", "cursor": "pointer", "font": "600 11px system-ui"}),
-                    ]),
-
-                    html.Button("Assess workability", id="ws-run", n_clicks=0,
-                        style={"width": "100%", "marginTop": "14px", "background": ACCENT, "color": "#fff",
-                               "border": "0", "padding": "11px", "borderRadius": "8px", "cursor": "pointer",
-                               "font": "600 14px system-ui"}),
+                        html.Div([_lbl("Nominal duration — good weather (days)"), _num("ws-nom", 20, 1)]),
+                        html.Div("The planned working time assuming perfect weather. Weather delay is "
+                                 "added on top to give the elapsed calendar time.",
+                                 style={"font": "11px system-ui", "color": DIM, "marginTop": "6px"}),
+                    ], style={"display": "none"}),
                 ], style=_CARD),
+
+                html.Div([
+                    html.Div("Operating limits", style=_H),
+                    html.Div([
+                        html.Div([_lbl("Max Hs (m)"), _num("ws-hs", 1.5, 0.1)]),
+                        html.Div([_lbl("Max wind (kn)"), _num("ws-wind", 20, 1)]),
+                    ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "10px"}),
+                    html.Div("Current limit per depth (kn):", style={"font": "11px system-ui",
+                             "color": MUTED, "margin": "10px 0 6px"}),
+                    html.Div([
+                        html.Div([_lbl("Surface"), _num("ws-cs", 1.0, 0.1)]),
+                        html.Div([_lbl("Mid-water"), _num("ws-cm", 0.8, 0.1)]),
+                        html.Div([_lbl("Bottom"), _num("ws-cb", 0.6, 0.1)]),
+                    ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr 1fr", "gap": "8px"}),
+                ], style=_CARD),
+
+                html.Button("Assess workability", id="ws-run", n_clicks=0,
+                    style={"width": "100%", "background": ACCENT, "color": "#fff",
+                           "border": "0", "padding": "11px", "borderRadius": "8px", "cursor": "pointer",
+                           "font": "600 14px system-ui"}),
             ]),
 
             # ---------- results ----------
             dcc.Loading(type="default", color=ACCENT, children=html.Div(id="ws-results", children=[
-                html.Div("Set location, window and scope, then run.",
+                html.Div("Set location, window, operation and limits, then run.",
                          style={"padding": "56px 20px", "textAlign": "center", "color": DIM,
                                 "border": f"1px dashed {GRID}", "borderRadius": "10px",
                                 "font": "15px system-ui"})])),
@@ -256,94 +231,48 @@ def _panes(mode):
     return (show, hide) if mode == "single" else (hide, show)
 
 
-@callback(Output("ws-tasks", "data"), Input("ws-addrow", "n_clicks"),
-          State("ws-tasks", "data"), prevent_initial_call=True)
-def _addrow(_, rows):
-    rows = rows or []
-    rows.append(dict(name="Task", duration_h=1, off=1, hs_max=1.5, wind_max=20,
-                     cur_surf_max=0.8, cur_bottom_max=0.6, resetup_h=0.1))
-    return rows
-
-
 @callback(Output("ws-results", "children"),
           Input("ws-run", "n_clicks"),
           State("ws-lat", "value"), State("ws-lon", "value"),
           State("ws-dates", "start_date"), State("ws-dates", "end_date"),
-          State("ws-depth", "value"), State("ws-pctile", "value"),
+          State("ws-pctile", "value"),
           State("ws-lookback", "value"), State("ws-halflife", "value"),
           State("ws-recency", "value"), State("ws-mode", "value"),
-          State("ws-s-dur", "value"), State("ws-s-hs", "value"),
-          State("ws-s-wind", "value"), State("ws-s-sc", "value"), State("ws-s-bc", "value"),
-          State("ws-tasks", "data"), prevent_initial_call=True)
-def _run(_, lat, lon, sd, ed, depth, pctile, lookback, halflife, recency, mode,
-         s_dur, s_hs, s_wind, s_sc, s_bc, task_rows):
+          State("ws-dur", "value"), State("ws-nom", "value"),
+          State("ws-hs", "value"), State("ws-wind", "value"),
+          State("ws-cs", "value"), State("ws-cm", "value"), State("ws-cb", "value"),
+          prevent_initial_call=True)
+def _run(_, lat, lon, sd, ed, pctile, lookback, halflife, recency, mode,
+         dur, nom, hs, wind, cs, cm, cb):
     try:
         lat, lon = float(lat), float(lon)
         start, end = pd.Timestamp(sd), pd.Timestamp(ed)
-        depth = float(depth or 34)
         cfg = ClimatologyConfig(lookback_years=int(lookback or 30),
                                 recency=recency or "exponential",
                                 half_life_years=float(halflife or 10), trend_stat="p95")
+        cur_limits = {"cur_surf": float(cs or 1.0), "cur_mid": float(cm or 0.8),
+                      "cur_bottom": float(cb or 0.6)}
+        hs = float(hs or 1.5); wind = float(wind or 20)
     except Exception as e:
         return _error(f"Check inputs: {e}")
 
     try:
-        df, source, meta = get_series(lat, lon, depth)
+        df, source, meta = get_series(lat, lon)   # depth model is internal now
     except Exception as e:
         return _error(f"Data unavailable: {e}")
 
     clim = build_climatology(df, lat, lon, start, end, cfg)
-
-    if mode == "single":
-        task = TaskType("Operation", int(round(float(s_dur or 6))), 1,
-                        float(s_hs or 1.5), float(s_wind or 20),
-                        float(s_sc or 0.8), float(s_bc or 0.6))
-        res = assess(df, start, end, tasks=[task], mode="single", cfg=cfg, n_runs=500)
-    else:
-        tasks = _parse_tasks(task_rows)
-        if not tasks:
-            return _error("Add at least one task row.")
-        res = assess(df, start, end, tasks=tasks, mode="campaign", cfg=cfg, n_runs=500)
-
-    strip = _strip(df, start, end, cfg, _strip_limits(mode, s_hs, s_wind, s_sc, s_bc, task_rows))
-    return _render(res, clim, source, int(pctile or 80), start, end, strip, mode, meta)
+    res = assess(df, start, end, mode, hs_max=hs, wind_max=wind, cur_limits=cur_limits,
+                 duration_h=float(dur or 6), nominal_days=float(nom or 20), cfg=cfg, n_runs=500)
+    strip = _strip(df, start, end, cfg, dict(hs=hs, wind=wind, **cur_limits))
+    return _render(res, clim, source, int(pctile or 80), start, end, strip, meta)
 
 
 # ---------- helpers ----------
-def _parse_tasks(rows):
-    out = []
-    for r in rows or []:
-        try:
-            out.append(TaskType(str(r.get("name") or "Task"),
-                int(round(float(r["duration_h"]))), int(round(float(r["off"]))),
-                float(r["hs_max"]), float(r["wind_max"]),
-                float(r["cur_surf_max"]), float(r["cur_bottom_max"]),
-                float(r.get("resetup_h") or 0)))
-        except (KeyError, TypeError, ValueError):
-            continue
-    return out
-
-def _strip_limits(mode, s_hs, s_wind, s_sc, s_bc, rows):
-    if mode == "single":
-        return dict(hs=float(s_hs or 1.5), wind=float(s_wind or 20),
-                    sc=float(s_sc or 0.8), bc=float(s_bc or 0.6))
-    ts = _parse_tasks(rows)
-    if not ts:
-        return dict(hs=1.5, wind=20, sc=0.8, bc=0.6)
-    return dict(hs=min(t.hs_max for t in ts), wind=min(t.wind_max for t in ts),
-                sc=min(t.cur_surf_max for t in ts), bc=min(t.cur_bottom_max for t in ts))
-
 def _error(msg):
     return html.Div(msg, style={"padding": "18px", "color": NOGO, "background": NOGO_BG,
         "border": f"1px solid {NOGO}", "borderRadius": "10px", "font": "13px 'IBM Plex Mono'"})
 
-def _card(k, v, u="", color=INK):
-    return html.Div([html.Div(k, style={"font": "600 10.5px system-ui", "textTransform": "uppercase",
-        "letterSpacing": ".04em", "color": MUTED}),
-        html.Div([str(v), html.Span(u, style={"fontSize": "12px", "color": DIM})],
-            style={"font": "22px 'IBM Plex Mono'", "marginTop": "5px", "color": color})],
-        style={"background": PANEL, "border": f"1px solid {GRID}", "padding": "12px 14px",
-               "borderRadius": "10px"})
 
 def _strip(df, start, end, cfg, lim):
     wins, L = historical_windows(df, start, end, cfg, overrun_buffer_days=0)
@@ -351,14 +280,14 @@ def _strip(df, start, end, cfg, lim):
         return go.Figure()
     arr = wins[-1][2]
     n = min(L, len(arr["hs"]))
-    import numpy as np
     t = np.arange(n) / 24.0
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.07,
                         subplot_titles=("Current (kn)", "Wave Hs (m)", "Wind (kn)"))
-    fig.add_trace(go.Scatter(x=t, y=arr["cur_surf"][:n], name="Surface", line=dict(color=CUR_S, width=1.3)), 1, 1)
-    fig.add_trace(go.Scatter(x=t, y=arr["cur_bottom"][:n], name="Bottom", line=dict(color=CUR_B, width=1.3)), 1, 1)
-    fig.add_hline(y=lim["sc"], line=dict(color=NOGO, dash="dot", width=1), row=1, col=1)
-    fig.add_hline(y=lim["bc"], line=dict(color=CUR_B, dash="dot", width=1), row=1, col=1)
+    fig.add_trace(go.Scatter(x=t, y=arr["cur_surf"][:n], name="Surface", line=dict(color=CUR_S, width=1.2)), 1, 1)
+    fig.add_trace(go.Scatter(x=t, y=arr["cur_mid"][:n], name="Mid", line=dict(color=CUR_M, width=1.2)), 1, 1)
+    fig.add_trace(go.Scatter(x=t, y=arr["cur_bottom"][:n], name="Bottom", line=dict(color=CUR_B, width=1.2)), 1, 1)
+    for key in ("cur_surf", "cur_mid", "cur_bottom"):
+        fig.add_hline(y=lim[key], line=dict(color=DEPTH_COL[key], dash="dot", width=1), row=1, col=1)
     fig.add_trace(go.Scatter(x=t, y=arr["hs"][:n], line=dict(color=WAVE, width=1.3), showlegend=False), 2, 1)
     fig.add_hline(y=lim["hs"], line=dict(color=NOGO, dash="dot", width=1), row=2, col=1)
     fig.add_trace(go.Scatter(x=t, y=arr["wind"][:n], line=dict(color=WIND, width=1.3), showlegend=False), 3, 1)
@@ -374,65 +303,76 @@ def _strip(df, start, end, cfg, lim):
         a.font.update(size=11, color=INK)
     return fig
 
-def _render(res, clim, source, pctile, start, end, strip, mode, meta=None):
+
+def _depth_card_single(d):
+    col = GO if d.exists_pct >= 80 else (MARG if d.exists_pct >= 50 else NOGO)
+    bg = GO_BG if d.exists_pct >= 80 else (MARG_BG if d.exists_pct >= 50 else NOGO_BG)
+    dm = f"{d.depth_m:.0f} m" if d.depth_m is not None else "n/a"
+    avail = "" if d.available else " · current n/a, on Hs+wind"
+    return html.Div([
+        html.Div([html.Span("● ", style={"color": DEPTH_COL[d.cur_key]}),
+                  html.B(d.label), html.Span(f"  {dm}{avail}", style={"color": DIM, "fontSize": "11px"})],
+                 style={"font": "13px system-ui", "marginBottom": "4px"}),
+        html.Div([f"{d.exists_pct:.0f}", html.Span(" %", style={"fontSize": "14px", "color": MUTED})],
+                 style={"font": "700 30px system-ui", "color": col, "lineHeight": "1"}),
+        html.Div(f"of years had the window · wait P50 {d.wait_p50/24:.1f} d / P80 {d.wait_p80/24:.1f} d",
+                 style={"font": "11px system-ui", "color": MUTED, "marginTop": "3px"}),
+    ], style={"background": bg, "border": f"1px solid {col}", "borderRadius": "10px", "padding": "12px 14px"})
+
+
+def _depth_card_campaign(d, pctile, L_days):
+    pick = {50: d.elapsed_p50, 80: d.elapsed_p80, 90: d.elapsed_p90}[pctile] / 24
+    fits = pick <= L_days
+    col = GO if fits else NOGO
+    bg = GO_BG if fits else NOGO_BG
+    dm = f"{d.depth_m:.0f} m" if d.depth_m is not None else "n/a"
+    avail = "" if d.available else " · current n/a, on Hs+wind"
+    return html.Div([
+        html.Div([html.Span("● ", style={"color": DEPTH_COL[d.cur_key]}),
+                  html.B(d.label), html.Span(f"  {dm}{avail}", style={"color": DIM, "fontSize": "11px"})],
+                 style={"font": "13px system-ui", "marginBottom": "4px"}),
+        html.Div([f"{pick:.0f}", html.Span(" d elapsed", style={"fontSize": "14px", "color": MUTED})],
+                 style={"font": "700 30px system-ui", "color": col, "lineHeight": "1"}),
+        html.Div(f"P50 {d.elapsed_p50/24:.0f} · P80 {d.elapsed_p80/24:.0f} · P90 {d.elapsed_p90/24:.0f} d · "
+                 + ("fits" if fits else "OVERRUNS"),
+                 style={"font": "11px system-ui", "color": MUTED, "marginTop": "3px"}),
+    ], style={"background": bg, "border": f"1px solid {col}", "borderRadius": "10px", "padding": "12px 14px"})
+
+
+def _render(res, clim, source, pctile, start, end, strip, meta=None):
     L_days = (end - start).days or 1
     meta = meta or {}
     banner = None
     if source == "demo":
         err = meta.get("error", "")
         msg = ("Showing DEMO data — configure CMEMS credentials for live reanalysis."
-               if not err else
-               f"Live fetch failed, showing DEMO data. Reason: {err}")
-        banner = html.Div(msg,
-            style={"font": "12px 'IBM Plex Mono'", "color": MARG, "background": MARG_BG,
-                   "border": f"1px solid {MARG}", "borderRadius": "8px", "padding": "8px 10px",
-                   "marginBottom": "12px"})
-    elif meta.get("current_source") in ("", "none"):
-        # live waves/wind but currents unavailable — say so rather than showing zeros silently
-        note = meta.get("current_note", "")
-        banner = html.Div("Live waves & wind. Currents unavailable for this point"
-                          + (f" ({note})" if note else "") + " — current traces are blank.",
-            style={"font": "12px 'IBM Plex Mono'", "color": MARG, "background": MARG_BG,
-                   "border": f"1px solid {MARG}", "borderRadius": "8px", "padding": "8px 10px",
-                   "marginBottom": "12px"})
+               if not err else f"Live fetch failed, showing DEMO data. Reason: {err}")
+        banner = html.Div(msg, style={"font": "12px 'IBM Plex Mono'", "color": MARG,
+            "background": MARG_BG, "border": f"1px solid {MARG}", "borderRadius": "8px",
+            "padding": "8px 10px", "marginBottom": "12px"})
     elif source == "live" and meta.get("current_source") == "GLOBAL":
-        banner = html.Div("Live reanalysis. Currents from global GLORYS (regional IBI "
-                          "unavailable here) — coarser, daily-mean, no tidal cycle.",
+        banner = html.Div("Live reanalysis. Currents from global GLORYS (regional IBI unavailable "
+                          "here) — coarser, daily-mean, no tidal cycle. " + meta.get("current_note", ""),
+            style={"font": "12px 'IBM Plex Mono'", "color": MUTED, "background": SOFT,
+                   "border": f"1px solid {GRID}", "borderRadius": "8px", "padding": "8px 10px",
+                   "marginBottom": "12px"})
+    elif source == "live":
+        banner = html.Div("Live reanalysis. " + meta.get("current_note", ""),
             style={"font": "12px 'IBM Plex Mono'", "color": MUTED, "background": SOFT,
                    "border": f"1px solid {GRID}", "borderRadius": "8px", "padding": "8px 10px",
                    "marginBottom": "12px"})
 
-    if mode == "campaign":
-        pick = {50: res.dur_p50, 80: res.dur_p80, 90: res.dur_p90}[pctile] / 24
-        fits = pick <= L_days
-        col, bg = (GO, GO_BG) if fits else (NOGO, NOGO_BG)
-        head = html.Div([
-            html.Div(f"Campaign duration · P{pctile}", style=_H),
-            html.Div([f"{pick:.1f}", html.Span(" days elapsed", style={"fontSize": "20px", "color": MUTED})],
-                style={"font": "700 42px system-ui", "color": col, "lineHeight": ".95", "margin": "2px 0 6px"}),
-            html.Div([f"P50 {res.dur_p50/24:.1f} d · P80 {res.dur_p80/24:.1f} d · P90 {res.dur_p90/24:.1f} d",
-                      html.Br(), f"Client window {L_days} d → ",
-                      html.B("FITS" if fits else "OVERRUNS", style={"color": col})],
-                style={"font": "13px system-ui", "color": MUTED}),
-        ], style={**_CARD, "background": bg, "borderColor": col})
-        cards = html.Div([
-            _card("Productive work", f"{res.productive_hours/24:.1f}", " d"),
-            _card("Weather waiting", f"{(pick - res.productive_hours/24):.1f}", " d", MARG),
-            _card("Fits window", f"{res.fit_pct:.0f}", " %", GO if res.fit_pct >= 80 else MARG),
-            _card("Bottleneck", res.bottleneck or "—"),
-        ], style={"display": "grid", "gridTemplateColumns": "repeat(4,1fr)", "gap": "10px", "marginBottom": "14px"})
+    if res.mode == "single":
+        title = f"Single task · {res.duration_h} h continuous window · {res.n_years} historical years"
+        cards = [_depth_card_single(d) for d in res.depths]
     else:
-        col = GO if res.exists_pct >= 80 else (MARG if res.exists_pct >= 50 else NOGO)
-        bg = GO_BG if res.exists_pct >= 80 else (MARG_BG if res.exists_pct >= 50 else NOGO_BG)
-        head = html.Div([
-            html.Div("Single window feasibility", style=_H),
-            html.Div([f"{res.exists_pct:.0f}", html.Span(" % of years", style={"fontSize": "20px", "color": MUTED})],
-                style={"font": "700 42px system-ui", "color": col, "lineHeight": ".95", "margin": "2px 0 6px"}),
-            html.Div(f"had a workable {res.productive_hours} h window in the period. "
-                     f"Wait to first window: P50 {res.wait_p50/24:.1f} d · P80 {res.wait_p80/24:.1f} d.",
-                     style={"font": "13px system-ui", "color": MUTED}),
-        ], style={**_CARD, "background": bg, "borderColor": col})
-        cards = None
+        title = (f"Campaign · {res.nominal_hours/24:.0f} d nominal work · client window {L_days} d · "
+                 f"P{pctile} · {res.n_years} historical years")
+        cards = [_depth_card_campaign(d, pctile, L_days) for d in res.depths]
+
+    head = html.Div([html.Div(title, style=_H),
+        html.Div(cards, style={"display": "grid", "gridTemplateColumns": "repeat(3,1fr)", "gap": "10px"})],
+        style=_CARD)
 
     def trend_line(k):
         tr = clim.trends.get(k)
@@ -458,18 +398,13 @@ def _render(res, clim, source, pctile, start, end, strip, mode, meta=None):
     ], style=_CARD)
 
     return html.Div([
-        banner,
-        (html.Div(f"Note: {', '.join(res.dropped_limits)} unavailable at this site/depth — "
-                  f"assessed on the remaining limits only.",
-                  style={"font": "12px 'IBM Plex Mono'", "color": MARG, "background": MARG_BG,
-                         "border": f"1px solid {MARG}", "borderRadius": "8px", "padding": "8px 10px",
-                         "marginBottom": "12px"}) if getattr(res, "dropped_limits", None) else None),
-        head, cards,
+        banner, head,
         html.Div([html.Div("Metocean strip · representative recent-year window", style=_H),
                   dcc.Graph(figure=strip, config={"displayModeBar": False})], style=_CARD),
         clim_panel,
-        html.Div("Currents from daily-mean reanalysis do not resolve the tidal cycle at tide-dominated "
-                 "sites; confirm slack against tide tables. Wave/wind statistics are recency-weighted over "
-                 "the look-back window. Duration is a distribution across historical years — price against P80.",
+        html.Div("Currents from daily-mean reanalysis don't resolve the tidal cycle at tide-dominated "
+                 "sites; confirm slack against tide tables. Bottom is the deepest wet model level (the "
+                 "seabed at this cell); mid-water is half that depth. Wave/wind statistics are "
+                 "recency-weighted over the look-back window.",
                  style={"font": "11px system-ui", "color": DIM, "lineHeight": "1.5"}),
     ])

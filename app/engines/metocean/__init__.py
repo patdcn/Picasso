@@ -11,7 +11,7 @@ from .climatology import (
     summarise_variable, trend_diagnostic, DEFAULT_THRESHOLDS,
 )
 from .workability import (
-    TaskType, DEFAULT_CAMPAIGN, assess, WorkabilityResult, historical_windows,
+    assess, AssessResult, DepthOutcome, historical_windows, DEPTHS,
 )
 from .demo_source import synth_point, DemoConfig
 from .cache import get_series, credentials_present
@@ -25,6 +25,6 @@ __all__ = [
     "get_series", "credentials_present", "fetch_point", "synth_point", "DemoConfig",
     "build_climatology", "ClimatologyConfig", "execution_months",
     "summarise_variable", "trend_diagnostic", "DEFAULT_THRESHOLDS",
-    "assess", "TaskType", "DEFAULT_CAMPAIGN", "WorkabilityResult", "historical_windows",
+    "assess", "AssessResult", "DepthOutcome", "historical_windows", "DEPTHS",
     "classify_region", "current_dataset_for",
 ]

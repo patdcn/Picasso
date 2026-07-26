@@ -78,13 +78,22 @@ def synth_point(lat: float, lon: float, cfg: DemoConfig = DemoConfig()
         hs[i] = max(0.05, hs_base[i] + phi * (hs[i-1] - hs_base[i-1]) + 0.45 * hs_base[i] * 0.4 * ihs[i])
         wd[i] = max(0.5, wd_base[i] + phi * (wd[i-1] - wd_base[i-1]) + 0.30 * wd_base[i] * 0.4 * iwd[i])
 
-    # deterministic tidal current
+    # deterministic tidal current; surface strongest, mid ~0.8x, bottom scaled
     u = np.zeros(n)
     for A, T, p in _TIDE:
         u += tide_amp * A * np.cos(2 * np.pi * hours / T - p)
     cur_surf = np.abs(u)
+    cur_mid = cur_surf * (0.5 + 0.5 * bot_factor)   # between surface and bottom
     cur_bottom = cur_surf * bot_factor
 
-    return pd.DataFrame(
-        {"hs": hs, "wind": wd, "cur_surf": cur_surf, "cur_bottom": cur_bottom},
+    df = pd.DataFrame(
+        {"hs": hs, "wind": wd, "cur_surf": cur_surf, "cur_mid": cur_mid,
+         "cur_bottom": cur_bottom},
         index=idx)
+    # nominal model depths for demo (shallow-shelf-like)
+    df.attrs["depth_surf"] = 0.5
+    df.attrs["depth_mid"] = 15.0
+    df.attrs["depth_bott"] = 30.0
+    df.attrs["current_source"] = "DEMO"
+    df.attrs["current_note"] = "surface 0.5 m · mid 15.0 m · bottom 30.0 m (demo)"
+    return df
