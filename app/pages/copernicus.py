@@ -17,7 +17,7 @@ Live data needs Copernicus Marine credentials in the environment
 data behind an amber banner. Reanalysis is cached to the /data volume.
 """
 import dash
-from dash import html, dcc, Input, Output, State, callback, no_update
+from dash import html, dcc, Input, Output, State, callback, clientside_callback, no_update
 import dash_leaflet as dl
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from app.engines import metocean as mo
+from app import reports
 from app.engines.metocean import (
     build_climatology, ClimatologyConfig, assess,
     classify_region, current_dataset_for, get_series, credentials_present,
@@ -63,17 +64,20 @@ def _num(id_, val, step=0.1, **kw):
 
 def layout():
     return html.Div(style={"maxWidth": "1160px"}, children=[
-        html.H3("Weather Stats — Copernicus", style={"marginBottom": "2px"}),
-        html.P("Metocean workability at Surface / Mid-water / Bottom for a work location "
-               "and the client's execution window, from Copernicus Marine reanalysis.",
-               style={"color": MUTED, "marginTop": "0", "maxWidth": "760px"}),
-        html.Div(id="ws-src-banner", style={"marginBottom": "12px"}),
+        reports.print_header(),
+        html.Div([
+            html.H3("Weather Stats — Copernicus", style={"marginBottom": "2px"}),
+            html.P("Metocean workability at Surface / Mid-water / Bottom for a work location "
+                   "and the client's execution window, from Copernicus Marine reanalysis.",
+                   style={"color": MUTED, "marginTop": "0", "maxWidth": "760px"}),
+            html.Div(id="ws-src-banner", style={"marginBottom": "12px"}),
+        ], className="no-print"),
 
-        html.Div(style={"display": "grid", "gridTemplateColumns": "360px 1fr", "gap": "16px",
-                        "alignItems": "start"}, children=[
+        html.Div(id="ws-grid", style={"display": "grid", "gridTemplateColumns": "360px 1fr",
+                        "gap": "16px", "alignItems": "start"}, children=[
 
             # ---------- controls ----------
-            html.Div([
+            html.Div(className="no-print", children=[
                 html.Div([
                     html.Div("Work location", style=_H),
                     dl.Map(id="ws-map", center=[DEFAULT_LAT, DEFAULT_LON], zoom=6,
@@ -176,16 +180,34 @@ def layout():
             ]),
 
             # ---------- results ----------
-            dcc.Loading(type="default", color=ACCENT, children=html.Div(id="ws-results", children=[
-                html.Div("Set location, window, operation and limits, then run.",
-                         style={"padding": "56px 20px", "textAlign": "center", "color": DIM,
-                                "border": f"1px dashed {GRID}", "borderRadius": "10px",
-                                "font": "15px system-ui"})])),
+            html.Div([
+                html.Div(html.Button([html.Span("\u2913\u2002"), "Print result"],
+                    id="ws-print-btn", n_clicks=0,
+                    style={"background": PANEL, "border": f"1px solid {GRID}", "color": INK,
+                           "padding": "7px 12px", "borderRadius": "6px", "cursor": "pointer",
+                           "font": "600 12px system-ui"}),
+                    className="no-print", style={"display": "flex", "justifyContent": "flex-end",
+                                                 "marginBottom": "10px"}),
+                html.Div(id="ws-print-sink", style={"display": "none"}),
+                dcc.Loading(type="default", color=ACCENT, children=html.Div(id="ws-results", children=[
+                    html.Div("Set location, window, operation and limits, then run.",
+                             style={"padding": "56px 20px", "textAlign": "center", "color": DIM,
+                                    "border": f"1px dashed {GRID}", "borderRadius": "10px",
+                                    "font": "15px system-ui"})])),
+            ]),
         ]),
+        reports.print_footer(),
     ])
 
 
 # ============================ callbacks ============================
+dash.clientside_callback(
+    "function(n){ if(n){ setTimeout(function(){ window.print(); }, 60); } return ''; }",
+    Output("ws-print-sink", "children"), Input("ws-print-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
 @callback(Output("ws-src-banner", "children"), Input("ws-run", "n_clicks"))
 def _banner(_):
     if credentials_present():
@@ -339,6 +361,26 @@ def _depth_card_campaign(d, pctile, L_days):
     ], style={"background": bg, "border": f"1px solid {col}", "borderRadius": "10px", "padding": "12px 14px"})
 
 
+def _progress_chart(res, L_days):
+    fig = go.Figure()
+    for d in res.depths:
+        if not d.progress_days:
+            continue
+        fig.add_trace(go.Scatter(x=d.progress_days, y=d.progress_pct, name=d.label,
+            line=dict(color=DEPTH_COL[d.cur_key], width=1.6)))
+    fig.add_hline(y=100, line=dict(color=MUTED, dash="dot", width=1))
+    fig.add_vline(x=L_days, line=dict(color=NOGO, dash="dash", width=1),
+                  annotation_text="client window", annotation_position="top")
+    fig.update_layout(height=240, margin=dict(l=48, r=14, t=14, b=36),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#ffffff",
+        font=dict(color=MUTED, size=10, family="IBM Plex Mono"),
+        legend=dict(orientation="h", y=1.16, x=0, font=dict(size=10)),
+        xaxis_title="elapsed days", yaxis_title="work complete (%)")
+    fig.update_xaxes(gridcolor=GRID, zeroline=False)
+    fig.update_yaxes(gridcolor=GRID, zeroline=False, range=[0, 105])
+    return fig
+
+
 def _render(res, clim, source, pctile, start, end, strip, meta=None):
     L_days = (end - start).days or 1
     meta = meta or {}
@@ -374,6 +416,17 @@ def _render(res, clim, source, pctile, start, end, strip, meta=None):
         html.Div(cards, style={"display": "grid", "gridTemplateColumns": "repeat(3,1fr)", "gap": "10px"})],
         style=_CARD)
 
+    progress_panel = None
+    if res.mode == "campaign":
+        progress_panel = html.Div([
+            html.Div("Cumulative progress · nominal work vs elapsed calendar (weather delay)", style=_H),
+            dcc.Graph(figure=_progress_chart(res, L_days), config={"displayModeBar": False}),
+            html.Div("Each curve is the mean fraction of the nominal work completed as calendar days "
+                     "elapse; the gap between the client-window line and where a curve reaches 100% is "
+                     "the weather delay. A curve that flattens is a stretch of unworkable weather.",
+                     style={"font": "11px system-ui", "color": DIM, "marginTop": "4px"}),
+        ], style=_CARD)
+
     def trend_line(k):
         tr = clim.trends.get(k)
         if not tr:
@@ -398,7 +451,7 @@ def _render(res, clim, source, pctile, start, end, strip, meta=None):
     ], style=_CARD)
 
     return html.Div([
-        banner, head,
+        banner, head, progress_panel,
         html.Div([html.Div("Metocean strip · representative recent-year window", style=_H),
                   dcc.Graph(figure=strip, config={"displayModeBar": False})], style=_CARD),
         clim_panel,

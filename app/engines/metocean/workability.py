@@ -137,6 +137,9 @@ class DepthOutcome:
     elapsed_p80: float = float("nan")
     elapsed_p90: float = float("nan")
     fit_pct: float = float("nan")
+    # campaign progress trajectory (mean cumulative work vs elapsed), daily
+    progress_days: list = field(default_factory=list)
+    progress_pct: list = field(default_factory=list)
 
 
 @dataclass
@@ -214,6 +217,9 @@ def assess(df: pd.DataFrame, start, end, mode: str,
             out.wait_p80 = float(np.percentile(waits, 80))
         else:
             need_h = max(1, int(round(nominal_days * 24)))
+            # progress trajectory: mean cumulative work fraction vs elapsed hours
+            maxH = min(horizon, int(need_h * 4) + 24)
+            prog_sum = np.zeros(maxH)
             elapsed, fits = [], 0
             for i in draw:
                 mask = _feas(windows[i][2], hs_max, wind_max, ckey, cur_max)
@@ -222,11 +228,16 @@ def assess(df: pd.DataFrame, start, end, mode: str,
                     e = horizon
                 elapsed.append(e)
                 fits += int(e <= L)
+                cum = np.minimum(np.cumsum(mask[:maxH]), need_h) / need_h
+                prog_sum += cum
             elapsed = np.array(elapsed, float)
             out.elapsed_p50 = float(np.percentile(elapsed, 50))
             out.elapsed_p80 = float(np.percentile(elapsed, 80))
             out.elapsed_p90 = float(np.percentile(elapsed, 90))
             out.fit_pct = 100.0 * fits / n_runs
+            mean_prog = prog_sum / n_runs
+            out.progress_days = (np.arange(0, maxH, 24) / 24.0).tolist()
+            out.progress_pct = (mean_prog[::24] * 100.0).tolist()
 
         res.depths.append(out)
 
