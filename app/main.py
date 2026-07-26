@@ -34,12 +34,39 @@ if not _secret_key:
         "Set a long random SECRET_KEY in the deployment environment (Dokploy)."
     )
 server.secret_key = _secret_key
+import datetime  # noqa: E402
+
 server.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     # Flip COOKIE_SECURE=true once HTTPS (the Let's Encrypt cert) is live.
     SESSION_COOKIE_SECURE=(os.getenv("COOKIE_SECURE", "false").lower() == "true"),
+    # Signed-in sessions expire after this period of cookie age (Flask refreshes
+    # the cookie on each request while active). Default 12h; override via env.
+    PERMANENT_SESSION_LIFETIME=datetime.timedelta(
+        hours=int(os.getenv("SESSION_LIFETIME_HOURS", "12"))),
 )
+
+
+# ---- security headers (Mozilla Observatory fixes) ----
+# Served from the app (not Traefik) on purpose: this Compose service has no
+# middleware UI in Dokploy, and app-level headers survive every redeploy.
+# HSTS max-age starts LOW (300 s) so a redirect/cert mistake can't lock
+# browsers out for a year. Once the portal has run cleanly on HTTPS for a few
+# days, set HSTS_MAX_AGE=31536000 in the Dokploy environment (or change the
+# default below) to get the full HSTS score.
+_HSTS_MAX_AGE = int(os.getenv("HSTS_MAX_AGE", "300"))
+
+
+@server.after_request
+def _security_headers(resp):
+    resp.headers.setdefault(
+        "Strict-Transport-Security",
+        f"max-age={_HSTS_MAX_AGE}; includeSubDomains")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return resp
 
 # ---- auth: create DB + bootstrap admin, then install guard + login/logout ----
 from app import auth  # noqa: E402

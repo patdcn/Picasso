@@ -420,6 +420,20 @@ def _render_login(error=None, nxt=None):
     return render_template_string(_LOGIN_HTML, error=error, nextq=nextq)
 
 
+def _safe_next(nxt):
+    """Only allow same-site relative paths as post-login destination.
+
+    'startswith("/")' alone is NOT enough: '//evil.com' and '/\\evil.com' are
+    protocol-relative URLs that browsers resolve to an EXTERNAL host — a
+    classic open-redirect used to make phishing links look like they point at
+    this portal. Require exactly one leading slash and no backslash."""
+    if not nxt:
+        return "/"
+    if nxt.startswith("/") and not nxt.startswith("//") and "\\" not in nxt:
+        return nxt
+    return "/"
+
+
 def register_auth(server):
     @server.before_request
     def _guard():
@@ -438,7 +452,9 @@ def register_auth(server):
 
     @server.route("/login", methods=["GET", "POST"])
     def login():
-        nxt = request.args.get("next") or "/"
+        # sanitize immediately so an unsafe value never reaches the form action
+        # (rendered into the page) nor the post-login redirect.
+        nxt = _safe_next(request.args.get("next"))
         if request.method == "POST":
             email = request.form.get("email", "")
             locked, wait = login_locked(email)
@@ -450,13 +466,16 @@ def register_auth(server):
             user = verify_login(email, request.form.get("password", ""))
             if user:
                 clear_login_failures(email)
+                # start from a fresh session on every successful login (session
+                # fixation hygiene): drop anything set pre-authentication.
+                session.clear()
                 session["user_email"] = user["email"]
                 session.permanent = True
                 try:
                     activity.on_login(user["email"])
                 except Exception:
                     pass
-                return redirect(nxt if nxt.startswith("/") else "/")
+                return redirect(_safe_next(nxt))
             record_login_failure(email)
             return _render_login(error="Invalid email or password.", nxt=nxt if nxt != "/" else None)
         if current_user():
