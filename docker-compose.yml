@@ -32,6 +32,12 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       - TRUST_PROXY=${TRUST_PROXY:-false}
+      # Copernicus Marine credentials for the Weather Stats (Copernicus) page.
+      # Set the two values on the Dokploy Environment page (no spaces around =).
+      - CMEMS_USERNAME=${CMEMS_USERNAME:-}
+      - CMEMS_PASSWORD=${CMEMS_PASSWORD:-}
+      # Reanalysis cache lives on the persistent volume (survives redeploys).
+      - METOCEAN_CACHE=${METOCEAN_CACHE:-/data/metocean_cache}
       # Optional SMTP for access-request notifications (safe to leave blank):
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
