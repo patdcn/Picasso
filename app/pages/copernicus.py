@@ -119,6 +119,31 @@ def layout():
                 html.Div([
                     html.Div("Climatology", style=_H),
                     html.Div([
+                        html.P(["How the wave & wind statistics are built from history. "
+                                "The execution period is usually too far ahead to forecast, so "
+                                "workability comes from the ", html.B("statistics of past years"),
+                                " for the same calendar months — not a forecast of the actual days."],
+                               style={"margin": "0 0 6px"}),
+                        html.P([html.B("Look-back"), " — how many years of reanalysis to use. "
+                                "~30 is the usual choice: long enough to sample the storm tail and "
+                                "average out year-to-year swings, short enough to limit climate drift. "
+                                "Fewer years is noisier; the actual span used is shown in the results "
+                                "(a dataset may not reach the full look-back)."],
+                               style={"margin": "0 0 6px"}),
+                        html.P([html.B("Recency weighting"), " — whether recent years count for more, "
+                                "so a shifting climate doesn't bias the result toward stale years. ",
+                                html.B("Exponential"), " (recommended) fades older years smoothly; ",
+                                html.B("Linear"), " tapers them evenly; ", html.B("None"),
+                                " treats every year equally."],
+                               style={"margin": "0 0 6px"}),
+                        html.P([html.B("Half-life"), " — for exponential weighting, the number of years "
+                                "at which a year counts half as much as the most recent one "
+                                "(10 y ≈ centre on the last decade). Ignored for Linear / None."],
+                               style={"margin": "0"}),
+                    ], style={"font": "11.5px system-ui", "color": MUTED, "lineHeight": "1.5",
+                              "background": SOFT, "border": f"1px solid {GRID}", "borderRadius": "8px",
+                              "padding": "10px 11px", "marginBottom": "12px"}),
+                    html.Div([
                         html.Div([_lbl("Look-back (yr)"), _num("ws-lookback", 30, 1)]),
                         html.Div([_lbl("Recency half-life"), _num("ws-halflife", 10, 1)]),
                     ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "10px"}),
