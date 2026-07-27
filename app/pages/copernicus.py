@@ -29,6 +29,7 @@ from app import reports
 from app.engines.metocean import (
     build_climatology, ClimatologyConfig, assess,
     classify_region, current_dataset_for, get_series, credentials_present,
+    get_series_era5, era5_credentials_present,
     historical_windows, window_bands, DEPTHS,
 )
 
