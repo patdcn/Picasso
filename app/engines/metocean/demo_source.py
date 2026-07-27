@@ -52,8 +52,13 @@ class DemoConfig:
 
 def synth_point(lat: float, lon: float, cfg: DemoConfig = DemoConfig()
                 ) -> pd.DataFrame:
-    reg = classify_region(lat, lon).key
-    hs_m, wd_m, tide_amp, bot_factor = _CLIM.get(reg, _CLIM["open"])
+    key = classify_region(lat, lon).key
+    # map region keys to a climate bucket for the demo climatology
+    bucket = ("gulf" if key in ("gulf", "red_sea")
+              else "med" if key in ("med", "caspian", "baltic")
+              else "nsea" if key.startswith("nsea")
+              else "open")
+    hs_m, wd_m, tide_amp, bot_factor = _CLIM[bucket]
     rng = np.random.default_rng(cfg.seed + int(abs(lat * 1000 + lon)))
 
     start = pd.Timestamp(f"{cfg.end_year - cfg.years + 1}-01-01", tz="UTC")

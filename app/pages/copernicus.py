@@ -239,9 +239,9 @@ def _marker(lat, lon):
         return no_update, no_update, "Regime: —"
     reg = classify_region(lat, lon)
     cds = current_dataset_for(lat, lon)
+    is_ibi = cds.product_id.startswith("IBI")
     label = html.Span(["Regime: ", html.B(reg.label, style={"color": ACCENT}),
-        html.Span(f"  ·  currents {cds.product_id.split('_')[0]} "
-                  f"{'(tide-resolving)' if reg.prefer_ibi else '(daily-mean)'}",
+        html.Span(f"  ·  currents {'IBI (tide-resolving)' if is_ibi else 'GLORYS (global, daily-mean)'}",
                   style={"color": DIM})])
     return [dl.Marker(position=[lat, lon])], [lat, lon], label
 

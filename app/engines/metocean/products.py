@@ -81,27 +81,46 @@ class Region:
     lat_max: float
     lon_min: float
     lon_max: float
-    prefer_ibi: bool = False
 
 
-# Ordered; first containing box wins. Purely to pick the best regional current
-# product and to label the site — the wave/wind reanalysis is global.
+# Cosmetic label boxes (first containing box wins). These name the site for the
+# sidebar/print only — they do NOT decide the current product (see IBI_DOMAIN).
+# Ordered specific-sea-first so small seas win over the large Mediterranean box.
 REGIONS = [
-    Region("gulf", "Persian Gulf", 23, 31, 47, 57),
-    Region("nsea", "Southern North Sea", 50, 61, -5, 10, prefer_ibi=True),
-    Region("ibi",  "Iberia-Biscay-Ireland", 26, 56, -19, 5, prefer_ibi=True),
-    Region("med",  "Mediterranean", 30, 46, -6, 37),
+    Region("gulf",        "Persian / Arabian Gulf", 23, 31, 47, 57),
+    Region("red_sea",     "Red Sea",                12, 30, 32, 44),
+    Region("caspian",     "Caspian Sea",            36, 47, 47, 54),
+    Region("baltic",      "Baltic Sea",             54, 66, 12, 30),
+    Region("norwegian",   "Norwegian Sea",          62, 72, -5, 15),
+    Region("nsea_n",      "Northern North Sea",     57, 62, -4, 10),
+    Region("nsea_c",      "Central North Sea",      55, 57, -4, 10),
+    Region("nsea_s",      "Southern North Sea",     50, 55, -3, 10),
+    Region("med",         "Mediterranean Sea",      30, 47, -6, 37),
+    Region("w_africa",    "West Africa (Guinea)",   -6, 6, -8, 12),
+    Region("gulf_mexico", "Gulf of Mexico",         18, 31, -98, -80),
+    Region("se_asia",     "SE Asia",               -12, 25, 95, 130),
+    Region("nw_australia","NW Australia",          -28, -10, 108, 132),
+    Region("brazil",      "Brazil (Santos)",       -30, 2, -52, -34),
 ]
+
+# Functional: the IBI reanalysis domain (tide-resolving currents). A point is
+# served by IBI only if it genuinely sits here; everywhere else uses global
+# GLORYS. This is independent of the cosmetic label above, so the sidebar only
+# claims "tide-resolving" where it's actually true.
+IBI_DOMAIN = Region("ibi", "IBI", 26, 56, -19, 5)
+
+
+def _in(r: Region, lat: float, lon: float) -> bool:
+    return r.lat_min <= lat <= r.lat_max and r.lon_min <= lon <= r.lon_max
 
 
 def classify_region(lat: float, lon: float) -> Region:
     for r in REGIONS:
-        if r.lat_min <= lat <= r.lat_max and r.lon_min <= lon <= r.lon_max:
+        if _in(r, lat, lon):
             return r
-    return Region("open", "Open / temperate shelf", -90, 90, -180, 180)
+    return Region("open", "Open ocean", -90, 90, -180, 180)
 
 
 def current_dataset_for(lat: float, lon: float) -> Dataset:
-    """Pick the tide-resolving regional product where available, else GLORYS."""
-    r = classify_region(lat, lon)
-    return CURRENT_REANALYSIS_IBI if r.prefer_ibi else CURRENT_REANALYSIS
+    """Tide-resolving IBI only inside its true domain; else global GLORYS."""
+    return CURRENT_REANALYSIS_IBI if _in(IBI_DOMAIN, lat, lon) else CURRENT_REANALYSIS
