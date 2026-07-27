@@ -1,0 +1,82 @@
+# DSV Picasso Engineering Portal - AIS Vessel Tracker infrastructure
+# Deploy as a SEPARATE Dokploy Compose project ("ais-db"), pointing at
+# ais/docker-compose.yml in the picasso repo. A portal redeploy must never
+# restart the database or interrupt the collector.
+#
+# Required Dokploy environment variables for this project:
+#   POSTGRES_PASSWORD   database password (generate a strong one)
+#   AISSTREAM_KEY       aisstream.io API key
+#
+# The portal (picasso project) later reaches the DB over dokploy-network at
+# host "ais-db", DSN: postgresql://ais:<password>@ais-db:5432/ais
+
+services:
+  ais-db:
+    image: timescale/timescaledb:latest-pg17
+    container_name: ais-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ais
+      POSTGRES_USER: ais
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ais_pgdata:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    # No ports exposed to the host: internal docker network only.
+    networks:
+      - dokploy-network
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ais -d ais"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ais-collector:
+    build:
+      context: .
+      dockerfile: collector/Dockerfile
+    container_name: ais-collector
+    restart: unless-stopped
+    environment:
+      AIS_DSN: postgresql://ais:${POSTGRES_PASSWORD}@ais-db:5432/ais
+      AISSTREAM_KEY: ${AISSTREAM_KEY}
+      SAMPLE_SECONDS: "1800"   # 30 min downsample window
+      ROTATE_SECONDS: "300"    # MMSI chunk rotation (aisstream 50-MMSI cap)
+      FLEET_REFRESH: "300"
+      LATEST_THROTTLE: "60"
+      SPEED_GATE_KN: "50"
+    depends_on:
+      ais-db:
+        condition: service_healthy
+    networks:
+      - dokploy-network
+
+  ais-backup:
+    image: timescale/timescaledb:latest-pg17
+    container_name: ais-backup
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/backup/backup.sh"]
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_RETENTION_DAYS: "14"
+    volumes:
+      - ./backup:/backup:ro
+      - picasso_data:/data
+    depends_on:
+      ais-db:
+        condition: service_healthy
+    networks:
+      - dokploy-network
+
+volumes:
+  ais_pgdata:
+  picasso_data:
+    external: true
+
+networks:
+  dokploy-network:
+    external: true

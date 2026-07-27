@@ -1,0 +1,59 @@
+imo,mmsi,name,owner,operator,built,flag,region,tier,notes,active
+9808613,657990850,African Pioneer,Marine Platforms,,2023-12,Nigeria,Africa,T1,"ex-Matisse; Aghami field; ex-China Merchants Pioneer; ex-Ultra Deep Matisse; ex-Ultra Deep Installer. Delayed ~3 years after UDS default. Built: CMHI, Shenzhen, China.",1
+8521048,423098100,Ak. Tofik Ismayilov,AZCON/ACS,,1989-09,Azerbaijan,Caspian,T3,"Never leaves Caspian. Built: Valmet Shipbuilding, Turku, Finland. SPHL 16 persons.",1
+9799604,413579650,Andy Warhol,UDS / CSSC Wuchang,,2019,Bahamas,Asia,T2,"aka Wu Chuan Shi 21. For sale. GISIS shows build 2026-04 (hull/delivery discrepancy). Built: Wuchang Shipbuilding (WSIG), Wuhan, China.",1
+9624988,241784000,Athena,Asso,,2013-09,Greece,Europe,T1,"ex-SBM Installer. Built: Keppel Singmarine, Singapore.",1
+9395800,538003296,Aureus,Dulam International,,2009-01,Marshall Islands,AG,T3,"ex-Ullswater (Hallin Marine). Built: Pan-United Marine, Singapore.",1
+9441221,538003646,Boka Atlantis,Boskalis,,2011-03,Marshall Islands,Europe,T2,"ex-Harkand Atlantis; ex-Iremis Atlantis; ex-Gulmar Atlantis. Built: Hanjin Heavy Industries, Busan, South Korea.",1
+9441233,538003647,Boka Da Vinci,Boskalis,,2011-09,Marshall Islands,Europe,T2,"ex-Harkand Da Vinci; ex-Nor Da Vinci; ex-Iremis Da Vinci; ex-Gulmar Da Vinci. Built: Hanjin Heavy Industries, Busan, South Korea.",1
+9187526,232585000,Boka Polaris,Boskalis,,1999-05,UK,Europe,T1,"ex-Rever Polaris; ex-Bibby Polaris; ex-Toisa Polaris. Built: IHC Offshore & Marine, Krimpen aan den IJssel, Netherlands.",1
+9382815,257058640,Boka Topaz,Boskalis,,2007-11,NIS Norway,Europe,T2,"ex-Rever Topaz; ex-Bibby Topaz. Built: Fosen Mekaniske Verksteder, Rissa, Norway.",1
+9309112,352554000,CCC Pioneer,CCC,,2005-02,Panama,AG,T3,"Built: ABG Shipyard, Surat/Dahej, Gujarat, India.",1
+9781190,563025100,Challenger,K Subsea,,2017-11,Singapore,Asia,T2,"ex-Kreuz Challenger. Built: VARD Tulcea / VARD Ulstein, Romania / Norway.",1
+9524932,248606000,Constructor,Boskalis,,2010-01,Malta,AG,T3,"Malta flag; ex-Noordhoek Constructor. Built: Niigata Shipbuilding, Niigata, Japan.",1
+9413822,311023800,Deep Arctic,TechnipFMC,,2009-03,Bahamas,Europe,T1,"ex-Skandi Arctic. Built: VARD Søviknes, Søvik, Norway.",1
+9727833,311000849,Deep Discoverer,TechnipFMC,,2019-01,Bahamas,Europe,T1,"Built: VARD Tulcea / VARD Søviknes, Tulcea, Romania / Søvik, Norway.",1
+9729726,311000411,Deep Explorer,TechnipFMC,,2016-12,Bahamas,Europe,T1,"Built: VARD Tulcea / VARD Langsten, Tulcea, Romania / Tomrefjord, Norway.",1
+9554597,667002423,Emerald,Micoperi,,2010-11,Sierra Leone,Europe,T3,"ex-Trapiche Emerald; ex-Crest Odyssey 2. Built: Wison Nantong Heavy Industry, Nantong, China.",1
+9769130,311000615,Everest,Mundus Prime,,2017-10,Bahamas,Africa,T1,"Built: Keppel Singmarine, Singapore.",1
+8324579,374338000,GSP Falcon,GSP Offshore,,1989-01,Belize,Europe,T1,"ex-Wellservicer. STACKED - Tuzla. Built: NE Shipbuilders, Sunderland, UK.",1
+9122796,657939000,HD Contender,Hydrodive,,1996-03,Nigeria,Africa,T4,"ex-Komandor Subsea 2000. Built: Nordsøværftet, Ringkøbing, Denmark.",1
+9252462,657106000,HD Enterprise,Hydrodive,,2002-12,Nigeria,Africa,T3,"ex-Viking Forcados; ex-Arcos. Built: Viktor Lenac Shipyard, Rijeka, Croatia.",1
+9739044,413493740,HYSY 285,CNOOC OES,,2016-06,China,Asia,T1,"DNV 1A1 DSV(SAT) DPS(3). Hai Yang Shi You 285. 125.7 m x 25 m. 300 m SAT system, 12 divers, 3-man bell, SPHL. 250 t AHC crane + 25 t AHC. 2 x 200 HP WROV. Moonpool. Ice(E). Built: Guangzhou Huangpu Shipyard (H3075), Guangzhou, China.",1
+1118414,,Jana 201,Jana Marine,,2026,,AG,T2,"Newbuild, delivery Q3 2026. Built: Guangzhou Salvage Bureau, Guangzhou, China. Screenshot showed IMO TBC; current public registry listing gives IMO 1118414.",0
+9562427,367431830,Kelly Ann Candies,Aqueos,,2010-07,US,Americas,T3,"Built: Candies Shipbuilders, Houma, Louisiana, USA.",1
+9757369,423009100,Khankendi,BP,,2017-09,Azerbaijan,Caspian,T1,"Shah Deniz SCV. Built: Keppel Singmarine / Baku Shipyard, Singapore / Baku, Azerbaijan.",1
+9758296,311000638,Lichtenstein,China Merchants,,2017-07,Bahamas,AG,T1,"Built: CMHI, China.",1
+9481817,373887000,Mermaid Asiana,Mermaid,,2010-01,Panama,AG,T2,"Built: ASL Marine, Singapore.",1
+8601513,352474000,Mermaid Commander,Mermaid,,1987-12,,Asia,T3,"ex-CSO Marianos; ex-Stena Marianos. REACTIVATING - Dry dock CUEL Laem Chabang (CIDCO USA collaboration). Built: Dannebrog Værft, Århus, Denmark.",1
+9484778,356019000,Mermaid Endurer,Mermaid,,2010-05,Panama,AG,T2,"ex-Endurer. Delivered May 2010. Built: Bergen Group BMV, Laksevaag, Norway.",1
+9693915,533130492,OLV Venture 1,Legasea/Subsea Worldwide,,2014-09,Malaysia,Asia,T3,"Built: Hangtong Shipbuilding, Guangzhou, China.",1
+9802645,636017439,Oriental Dragon,DeepOcean,Safeen Subsea,2017-09,Liberia,AG,T1,"ex-Hai Long Ming. Built: CSSC Huangpu Wenchong, Guangzhou, China.",1
+9698783,255916072,Picasso,DCN Diving,,2018-01,Germany,AG,T1,"German flag (Dec 2025); ex-China Merchants (Ultra Deep). Acquired by DCN Diving BV (Netherlands) Dec 2024. Built: CMHI, Shenzhen, China.",1
+8600818,622122450,PMS Mayo,Petroleum Marine Services,,1987-06,Egypt,ME,T3,"Egypt flag; ex-DSND Mayo; ex-Subsea Mayo; ex-Mayo; ex-Stena Mayo. Built: Euroflex Marine, Århus, Denmark.",1
+9812822,563026900,POSH Mallard,POSH,,2017-09,Singapore,AG,T2,"Built: PaxOcean Engineering, Zhoushan, China.",1
+9264518,657288100,PSL Eagle,Prime Sources Ltd,,2002-07,Nigeria,Africa,T3,"Built: Bender Shipbuilding, Mobile, Alabama, USA.",1
+9774965,352999000,Said Aletheia,CCC,,2018-03,Panama,AG,T2,"Built: ZPMC, Shanghai, China.",1
+9268150,210488000,Sapphire,Fedelio,,2005-07,Cyprus,Africa,T2,"Cyprus flag; ex-Rever Sapphire; ex-Bibby Sapphire; ex-Volstad Surveyor. Built: Celiktekne Shipyard, Tuzla, Turkey.",1
+9483061,538011888,Seamec Agastya,Seamec,,2010-05,Marshall Islands,Asia,T3,"ex-NPP Nusantara; ex-Windermere (Hallin Marine). Built: Drydocks World, Singapore.",1
+9412206,419001911,Seamec Anant,HAL Offshore,Seamec,2023,India,Asia,T3,ex-Nordic Amprak. DSV upgrade 2023-2025 by HAL Offshore. 15 t West Marine main crane + 9 t Heila auxiliary crane.,1
+8109292,419227000,Seamec II,Seamec,,1982-08,India,Asia,T3,"ex-Peerless Stena II; ex-Nand Shamik; ex-Shearwater Sapphire. Built: Scheepswerf De Hoop, Lobith-Tolkamer, Netherlands.",1
+8128339,419228000,Seamec III,Seamec,,1983-04,India,Asia,T3,"ex-Peerless Stena III; ex-Shearwater Topaz. Built: Scheepswerf De Hoop, Lobith-Tolkamer, Netherlands.",1
+9388091,352978118,Seamec Paladin,Seamec,,2008-03,Panama,Asia,T2,"ex-Toisa Paladin. Built: Kleven Verft, Ulsteinvik, Norway.",1
+8302959,419603000,Seamec Princess,Seamec,,1984-09,India,Asia,T2,"ex-Oceanic Princess; ex-Finnpine; ex-Solano. Built: Rauma Repola, Rauma, Finland.",1
+9385300,538005198,Seamec Swordfish,Seamec,Safeen Subsea,2007-09,Marshall Islands,AG,T1,"ex-Siem Swordfish; ex-Subtech Swordfish. Built: Kleven Verft, Ulsteinvik, Norway.",1
+8324567,232159000,Seawell,Helix,,1987-03,UK,Europe,T3,"ex-CSO Seawell; ex-Stena Seawell. Built: NE Shipbuilders, Sunderland, UK.",1
+9419125,235071342,Seven Atlantic,Subsea 7,,2010-01,Isle of Man,Europe,T1,"Built: IHC Merwede, Hardinxveld-Giessendam, Netherlands.",1
+9455167,235084424,Seven Falcon,Subsea 7,,2011-02,Isle of Man,Europe,T1,"ex-Seven Havila; ex-Acergy Havila. Built: Cemre Shipyard, Altinova, Turkey.",1
+9679921,235103286,Seven Kestrel,Subsea 7,,2017-01,Isle of Man,Europe,T1,"Built: Hyundai Heavy Industries, Ulsan, South Korea.",1
+9392509,636014212,Seven Pegasus,Subsea 7,,2009-04,Liberia,Americas,T1,"ex-Toisa Pegasus. Built: IHC Merwede, Hardinxveld-Giessendam, Netherlands.",1
+9399143,466083000,Shaddad,Milaha/Haul Offshore,,2014-02,Qatar,AG,T3,"QatarEnergy long-term contract. Built: ABG Shipyard, Surat, Gujarat, India. Cranes: 100 t main + 15 t auxiliary.",1
+9648570,413046110,Shen Qian Hao,Shanghai Salvage,,2012-06,China,Asia,T2,"Built: Wuchang Shipbuilding, Wuhan, China.",1
+9413810,710033130,Skandi Achiever,DOF,,2007-08,Brazil,Americas,T2,"Brazil flag. Built: VARD Tulcea, Tulcea, Romania.",1
+9429857,259003000,Skandi Singapore,DOF,,2011-09,NIS Norway,Asia,T2,"Built: ST Marine, Singapore.",1
+9554585,636025234,Southern Nova,Harren Group,DeepOcean,2010-09,Liberia,Asia,T3,"ex-Fire Opal; ex-Crest Odyssey 1. Built: Wison Nantong Heavy Industry, Nantong, China.",1
+9754484,538006229,Southern Star,Tasik Subsea,DeepOcean,2017-06,Marshall Islands,AG,T1,"Built: Fujian Mawei Shipbuilding, Fuzhou, China.",1
+9777553,311000591,Van Gogh,China Merchants,,2019-04,Bahamas,Asia,T1,"Built: CMHI, Shenzhen, China.",1
+9749439,311000821,Wadad Aletheia,CCC,,2024-09,Bahamas,AG,T1,"ex-ZPMC Pelagic. Delivered Sep 2024. Built: ZPMC, Shanghai, China.",1
+9421996,235062421,Well Enhancer,Helix,,2009-08,UK,Europe,T1,"Built: IHC Merwede, Krimpen aan den IJssel, Netherlands.",1
+8304799,419001201,Wilchief 1,Dolphin Offshore,,1984-03,India,Asia,T4,"ex-CSO Alliance; ex-Red 7 Alliance; ex-DSV Alliance. Built: Trosvik Verksted, Brevik, Norway.",1
