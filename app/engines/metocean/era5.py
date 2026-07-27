@@ -82,50 +82,62 @@ def _read_nc(path, months_only=None):
     return df
 
 
-def fetch_point_era5(lat: float, lon: float, start, end,
-                     progress: Optional[callable] = None) -> pd.DataFrame:
-    """
-    Return hourly ERA5 hs + wind for the cell containing (lat, lon), one CDS
-    request per year over [start, end]. Raises on hard failure (caller fails soft).
-    Adds NaN current columns so the frame is shape-compatible with the engine.
-    """
+def _retrieve_years(c, lat, lon, years, months, times):
     import tempfile
-    c = _client()
-    y0, y1 = pd.Timestamp(start).year, pd.Timestamp(end).year
-    # a small box around the point (>= one 0.25deg cell each side)
     n, s = lat + 0.13, lat - 0.13
     w, e = lon - 0.13, lon + 0.13
-    frames = []
-    for yr in range(y0, y1 + 1):
-        target = tempfile.mktemp(suffix=f"_era5_{yr}.nc")
-        req = {
-            "product_type": "reanalysis",
-            "variable": VARS,
-            "year": str(yr),
-            "month": _ALL_MONTHS,
-            "day": _ALL_DAYS,
-            "time": _ALL_TIMES,
-            "area": [round(n, 3), round(w, 3), round(s, 3), round(e, 3)],  # N,W,S,E
-            "data_format": "netcdf",
-        }
+    req = {
+        "product_type": "reanalysis",
+        "variable": VARS,
+        "year": [str(y) for y in years],
+        "month": [f"{int(m):02d}" for m in months],
+        "day": _ALL_DAYS,
+        "time": times,
+        "area": [round(n, 3), round(w, 3), round(s, 3), round(e, 3)],  # N,W,S,E
+        "data_format": "netcdf",
+    }
+    target = tempfile.mktemp(suffix="_era5.nc")
+    try:
+        c.retrieve(DATASET, req, target)
+        return _read_nc(target)
+    finally:
         try:
-            c.retrieve(DATASET, req, target)
-            frames.append(_read_nc(target))
-        finally:
-            try:
-                os.remove(target)
-            except OSError:
-                pass
-        if progress:
-            progress(yr, y0, y1)
+            os.remove(target)
+        except OSError:
+            pass
+
+
+def fetch_point_era5(lat: float, lon: float, years, months,
+                     time_step_h: int = 6) -> pd.DataFrame:
+    """
+    Return hourly ERA5 hs + wind for the cell containing (lat, lon), covering the
+    execution `months` across `years`. Only execution months are fetched (the
+    climatology filters to them), and the years are chunked so each CDS request
+    stays well under the per-request cost limit and inside the 120 s worker
+    timeout. Sub-daily sampling is interpolated up to the hourly engine grid.
+    Raises on hard failure (caller fails soft).
+    """
+    c = _client()
+    years = list(years)
+    times = [f"{h:02d}:00" for h in range(0, 24, max(1, time_step_h))]
+    # keep each request under ~9000 fields (vars x years x ~31 days x months x times/day)
+    per_year = 3 * 31 * len(months) * len(times)
+    chunk = max(1, min(len(years), 9000 // max(1, per_year)))
+    frames, errors = [], []
+    for i in range(0, len(years), chunk):
+        yrs = years[i:i + chunk]
+        try:
+            frames.append(_retrieve_years(c, lat, lon, yrs, months, times))
+        except Exception as ex:
+            errors.append(str(ex))
     if not frames:
-        raise RuntimeError("ERA5 returned no data")
+        raise RuntimeError("ERA5 request failed" + (f": {errors[0]}" if errors else ""))
     df = pd.concat(frames).sort_index()
     df = df[~df.index.duplicated(keep="first")]
-    # engine expects current columns; ERA5 has none -> NaN (dropped as constraints)
+    df = df.resample("1h").mean().interpolate("time")
     df["cur_surf"] = np.nan
     df["cur_mid"] = np.nan
     df["cur_bottom"] = np.nan
     df.attrs["source_name"] = "ERA5"
-    df.attrs["current_note"] = "ERA5 waves & wind (no currents)"
+    df.attrs["current_note"] = "ERA5 waves & wind, execution months (no currents)"
     return df

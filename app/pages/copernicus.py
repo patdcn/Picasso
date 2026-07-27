@@ -310,7 +310,7 @@ def _run(_, lat, lon, sd, ed, pctile, lookback, halflife, recency, mode,
 
     era5_bands, era5_note = None, ""
     if era5_on and "on" in era5_on:
-        e5df, e5status, e5msg = get_series_era5(lat, lon, start, end)
+        e5df, e5status, e5msg = get_series_era5(lat, lon, start, end, cfg)
         if e5df is not None:
             try:
                 era5_bands, _ = window_bands(e5df, start, end, cfg)

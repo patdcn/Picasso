@@ -92,17 +92,25 @@ def era5_credentials_present() -> bool:
     return _era5.cds_credentials_present()
 
 
-def _key_era5(lat: float, lon: float) -> Path:
-    return CACHE_DIR / f"era5_{lat:.2f}_{lon:.2f}.pkl"
+def _key_era5(lat: float, lon: float, tag: str) -> Path:
+    return CACHE_DIR / f"era5_{lat:.2f}_{lon:.2f}_{tag}.pkl"
 
 
-def get_series_era5(lat: float, lon: float, start, end, force: bool = False):
+def get_series_era5(lat: float, lon: float, start, end, cfg=None, force: bool = False):
     """
-    ERA5 second-source series (hs, wind) for cross-checking CMEMS.
+    ERA5 second-source series (hs, wind) for cross-checking CMEMS, covering only
+    the execution months across the look-back years (a single small CDS request).
     Returns (df_or_None, status, note). status in 'live'|'cache'|'unavailable'.
     Never raises — a comparison failure must not break the main assessment.
     """
-    path = _key_era5(lat, lon)
+    from .climatology import execution_months, ClimatologyConfig
+    cfg = cfg or ClimatologyConfig()
+    months = execution_months(start, end)
+    end_year = pd.Timestamp(HISTORY_END).year
+    years = list(range(end_year - int(cfg.lookback_years) + 1, end_year + 1))
+    tag = f"m{'-'.join(f'{m:02d}' for m in months)}_lb{cfg.lookback_years}"
+    path = _key_era5(lat, lon, tag)
+
     if path.exists() and not force:
         try:
             return pd.read_pickle(path), "cache", ""
@@ -111,7 +119,7 @@ def get_series_era5(lat: float, lon: float, start, end, force: bool = False):
     if not era5_credentials_present():
         return None, "unavailable", "ERA5 needs a CDS Personal Access Token (CDS_KEY)."
     try:
-        df = _era5.fetch_point_era5(lat, lon, start=HISTORY_START, end=HISTORY_END)
+        df = _era5.fetch_point_era5(lat, lon, years, months)
         try:
             df.to_pickle(path)
         except Exception:
