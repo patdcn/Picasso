@@ -64,44 +64,90 @@ def _cache_valid(df) -> bool:
         return False
 
 
+_CM_LOCK_STALE_S = 900   # a lock older than 15 min means the fetching worker died
+_CM_WAIT_S = 90          # how long a second caller waits for the first pull's cache
+
+
+def _meta(df):
+    return {"current_source": df.attrs.get("current_source", ""),
+            "current_note": df.attrs.get("current_note", ""),
+            "error": ""}
+
+
+def _read_valid(path):
+    if path.exists():
+        try:
+            df = pd.read_pickle(path)
+            if _cache_valid(df):
+                return df
+        except Exception:
+            pass  # corrupt/stale cache -> treat as miss
+    return None
+
+
 def get_series(lat: float, lon: float, working_depth_m: float = 34.0,
                force: bool = False):
     """
     Return (dataframe, source, meta) where source is 'live' | 'cache' | 'demo'
     and meta is a dict: {current_source, current_note, error}.
     Columns: hs, wind, cur_surf, cur_mid, cur_bottom (hourly, UTC index).
-    """
-    path = _key(lat, lon)
 
-    if path.exists() and not force:
-        try:
-            df = pd.read_pickle(path)
-            if _cache_valid(df):
-                return df, "cache", {"current_source": df.attrs.get("current_source", ""),
-                                     "current_note": df.attrs.get("current_note", ""),
-                                     "error": ""}
-        except Exception:
-            pass  # corrupt/stale cache -> refetch
+    A lock file on the shared cache volume coordinates the gunicorn workers on a
+    cold cache: the first caller pulls CMEMS and writes the pickle; any caller
+    arriving meanwhile waits for that pickle instead of starting a duplicate
+    ~1-minute pull. If the lock goes stale (fetching worker died) the waiter
+    takes over the fetch itself.
+    """
+    import time as _t
+    path = _key(lat, lon)
+    lock = Path(str(path) + ".lock")
+
+    df = _read_valid(path)
+    if df is not None and not force:
+        return df, "cache", _meta(df)
 
     if credentials_present() and _fetch.fetch_point is not None:
-        try:
-            df = _fetch.fetch_point(lat, lon, start=HISTORY_START, end=HISTORY_END,
-                                    working_depth_m=working_depth_m)
+        # someone else already pulling this point? wait for their cache.
+        t0 = _t.time()
+        while lock.exists() and not force:
             try:
-                df.to_pickle(path)
-            except Exception:
+                if _t.time() - lock.stat().st_mtime > _CM_LOCK_STALE_S:
+                    break                      # stale — take over below
+            except OSError:
+                break
+            if _t.time() - t0 > _CM_WAIT_S:
+                break                          # waited long enough — take over
+            _t.sleep(2.0)
+            df = _read_valid(path)
+            if df is not None:
+                return df, "cache", _meta(df)
+
+        try:
+            lock.write_text(str(_t.time()))
+        except Exception:
+            pass
+        try:
+            try:
+                df = _fetch.fetch_point(lat, lon, start=HISTORY_START, end=HISTORY_END,
+                                        working_depth_m=working_depth_m)
+                try:
+                    df.to_pickle(path)
+                except Exception:
+                    pass
+                return df, "live", _meta(df)
+            except Exception as e:
+                # waves/wind (the essentials) failed — fall back to demo, but keep
+                # the real error so the page can show it instead of a silent banner.
+                err = f"{type(e).__name__}: {e}"
+                print(f"[weather_stats] CMEMS fetch failed ({err}); using demo data.")
+                df = synth_point(lat, lon, DemoConfig(years=30, end_year=2025,
+                                                      hs_trend_per_decade=0.06))
+                return df, "demo", {"current_source": "", "current_note": "", "error": err}
+        finally:
+            try:
+                lock.unlink()
+            except OSError:
                 pass
-            return df, "live", {"current_source": df.attrs.get("current_source", ""),
-                                "current_note": df.attrs.get("current_note", ""),
-                                "error": ""}
-        except Exception as e:
-            # waves/wind (the essentials) failed — fall back to demo, but keep the
-            # real error so the page can show it instead of a silent banner.
-            err = f"{type(e).__name__}: {e}"
-            print(f"[weather_stats] CMEMS fetch failed ({err}); using demo data.")
-            df = synth_point(lat, lon, DemoConfig(years=30, end_year=2025,
-                                                  hs_trend_per_decade=0.06))
-            return df, "demo", {"current_source": "", "current_note": "", "error": err}
 
     df = synth_point(lat, lon, DemoConfig(years=30, end_year=2025,
                                           hs_trend_per_decade=0.06))
