@@ -68,6 +68,20 @@ def historical_windows(df: pd.DataFrame, start, end, cfg: ClimatologyConfig,
 
     if not out:
         return [], L
+    # We need every window uniform AND long enough to include the overrun buffer.
+    # A window near the data end is data-limited (too short); DROP those rather
+    # than truncating every window down to the shortest (which would remove the
+    # buffer the campaign accumulation needs). Fall back to the common minimum
+    # only if too few full-length windows remain.
+    target = L + int(overrun_buffer_days * 24)
+    full = [(y, sl) for (y, sl) in out if len(sl) >= target]
+    if len(full) >= 5:
+        out = [(y, sl.iloc[:target]) for (y, sl) in full]
+        common = target
+    else:
+        common = min(len(sl) for _, sl in out)
+        out = [(y, sl.iloc[:common]) for (y, sl) in out]
+
     yrs = np.array([o[0] for o in out], dtype=float)
     wts = recency_weights(yrs, cfg.recency, cfg.half_life_years)
     wts = wts / wts.sum()
@@ -137,6 +151,8 @@ class DepthOutcome:
     elapsed_p80: float = float("nan")
     elapsed_p90: float = float("nan")
     fit_pct: float = float("nan")
+    horizon_h: int = 0
+    censored: bool = False       # campaign didn't complete within the sim horizon
     # campaign progress trajectory (mean cumulative work vs elapsed), daily
     progress_days: list = field(default_factory=list)
     progress_pct: list = field(default_factory=list)
@@ -229,12 +245,17 @@ def assess(df: pd.DataFrame, start, end, mode: str,
                 elapsed.append(e)
                 fits += int(e <= L)
                 cum = np.minimum(np.cumsum(mask[:maxH]), need_h) / need_h
+                if len(cum) < maxH:                     # short window: hold last value
+                    pad = cum[-1] if len(cum) else 0.0
+                    cum = np.concatenate([cum, np.full(maxH - len(cum), pad)])
                 prog_sum += cum
             elapsed = np.array(elapsed, float)
             out.elapsed_p50 = float(np.percentile(elapsed, 50))
             out.elapsed_p80 = float(np.percentile(elapsed, 80))
             out.elapsed_p90 = float(np.percentile(elapsed, 90))
             out.fit_pct = 100.0 * fits / n_runs
+            out.horizon_h = horizon
+            out.censored = out.elapsed_p50 >= horizon - 1
             mean_prog = prog_sum / n_runs
             out.progress_days = (np.arange(0, maxH, 24) / 24.0).tolist()
             out.progress_pct = (mean_prog[::24] * 100.0).tolist()

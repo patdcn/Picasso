@@ -283,9 +283,12 @@ def _run(_, lat, lon, sd, ed, pctile, lookback, halflife, recency, mode,
     except Exception as e:
         return _error(f"Data unavailable: {e}")
 
-    clim = build_climatology(df, lat, lon, start, end, cfg)
-    res = assess(df, start, end, mode, hs_max=hs, wind_max=wind, cur_limits=cur_limits,
-                 duration_h=float(dur or 6), nominal_days=float(nom or 20), cfg=cfg, n_runs=500)
+    try:
+        clim = build_climatology(df, lat, lon, start, end, cfg)
+        res = assess(df, start, end, mode, hs_max=hs, wind_max=wind, cur_limits=cur_limits,
+                     duration_h=float(dur or 6), nominal_days=float(nom or 20), cfg=cfg, n_runs=500)
+    except Exception as e:
+        return _error(f"Assessment failed for this window: {e}")
     strip = _strip(df, start, end, cfg, dict(hs=hs, wind=wind, **cur_limits))
     return _render(res, clim, source, int(pctile or 80), start, end, strip, meta)
 
@@ -344,20 +347,24 @@ def _depth_card_single(d):
 
 def _depth_card_campaign(d, pctile, L_days):
     pick = {50: d.elapsed_p50, 80: d.elapsed_p80, 90: d.elapsed_p90}[pctile] / 24
-    fits = pick <= L_days
+    fits = pick <= L_days and not d.censored
     col = GO if fits else NOGO
     bg = GO_BG if fits else NOGO_BG
     dm = f"{d.depth_m:.0f} m" if d.depth_m is not None else "n/a"
     avail = "" if d.available else " · current n/a, on Hs+wind"
+    if d.censored:
+        big = [f"≥{d.horizon_h/24:.0f}", html.Span(" d", style={"fontSize": "14px", "color": MUTED})]
+        sub = f"does not complete in {d.horizon_h/24:.0f} d at these limits · INFEASIBLE"
+    else:
+        big = [f"{pick:.0f}", html.Span(" d elapsed", style={"fontSize": "14px", "color": MUTED})]
+        sub = (f"P50 {d.elapsed_p50/24:.0f} · P80 {d.elapsed_p80/24:.0f} · P90 {d.elapsed_p90/24:.0f} d · "
+               + ("fits" if fits else "OVERRUNS"))
     return html.Div([
         html.Div([html.Span("● ", style={"color": DEPTH_COL[d.cur_key]}),
                   html.B(d.label), html.Span(f"  {dm}{avail}", style={"color": DIM, "fontSize": "11px"})],
                  style={"font": "13px system-ui", "marginBottom": "4px"}),
-        html.Div([f"{pick:.0f}", html.Span(" d elapsed", style={"fontSize": "14px", "color": MUTED})],
-                 style={"font": "700 30px system-ui", "color": col, "lineHeight": "1"}),
-        html.Div(f"P50 {d.elapsed_p50/24:.0f} · P80 {d.elapsed_p80/24:.0f} · P90 {d.elapsed_p90/24:.0f} d · "
-                 + ("fits" if fits else "OVERRUNS"),
-                 style={"font": "11px system-ui", "color": MUTED, "marginTop": "3px"}),
+        html.Div(big, style={"font": "700 30px system-ui", "color": col, "lineHeight": "1"}),
+        html.Div(sub, style={"font": "11px system-ui", "color": MUTED, "marginTop": "3px"}),
     ], style={"background": bg, "border": f"1px solid {col}", "borderRadius": "10px", "padding": "12px 14px"})
 
 
