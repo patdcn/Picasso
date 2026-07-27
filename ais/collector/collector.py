@@ -11,7 +11,10 @@ Long-running process that:
      speed gate against teleports).
   4. Downsamples: a point is stored when >= SAMPLE_SECONDS since the last
      stored point for that vessel, OR when nav_status changes.
-  5. Upserts the `latest` table (throttled) so the map always has a fresh
+  5. Handles ShipStaticData (AIS type 5): callsign, destination, ETA and
+     max draught are stored in the `voyage` table only when they CHANGE,
+     and mirrored onto `latest` for the map popup.
+  6. Upserts the `latest` table (throttled) so the map always has a fresh
      "where is everyone now" without touching the hypertable.
 
 Environment:
@@ -131,6 +134,67 @@ def parse_position_report(msg):
     }
 
 
+def parse_ship_static(msg):
+    """
+    Extract voyage fields from a ShipStaticData (AIS type 5) envelope,
+    or None if not usable. ETA in AIS has no year; kept as 'MM-DD HH:MM'.
+    AIS not-available conventions: ETA month 0 / day 0, hour 24, minute 60;
+    draught 0 = not available.
+    """
+    if msg.get("MessageType") != "ShipStaticData":
+        return None
+    body = msg.get("Message", {}).get("ShipStaticData", {})
+    meta = msg.get("MetaData", {})
+    mmsi = meta.get("MMSI") or body.get("UserID")
+    if mmsi is None:
+        return None
+
+    def clean_text(v):
+        v = (v or "").replace("@", "").strip()
+        return v or None
+
+    eta = None
+    e = body.get("Eta") or {}
+    month, day = e.get("Month", 0), e.get("Day", 0)
+    hour, minute = e.get("Hour", 24), e.get("Minute", 60)
+    if month and day:
+        hh = hour if hour < 24 else 0
+        mm = minute if minute < 60 else 0
+        eta = f"{month:02d}-{day:02d} {hh:02d}:{mm:02d}"
+
+    draught = body.get("MaximumStaticDraught")
+    if draught is not None and draught <= 0:
+        draught = None
+
+    ts = None
+    raw_ts = meta.get("time_utc", "")
+    if raw_ts:
+        try:
+            ts = datetime.strptime(raw_ts.replace(" UTC", "").strip(),
+                                   "%Y-%m-%d %H:%M:%S.%f %z")
+        except ValueError:
+            ts = None
+    if ts is None:
+        ts = datetime.now(timezone.utc)
+
+    return {
+        "mmsi": int(mmsi),
+        "ts": ts,
+        "callsign": clean_text(body.get("CallSign")),
+        "destination": clean_text(body.get("Destination")),
+        "eta": eta,
+        "draught": float(draught) if draught is not None else None,
+        "ship_name": clean_text(body.get("Name") or meta.get("ShipName")),
+    }
+
+
+def voyage_key(v):
+    """Normalized comparison tuple: store only when one of these changes."""
+    dest = (v["destination"] or "").upper().strip()
+    return (v["callsign"] or "", dest, v["eta"] or "",
+            round(v["draught"], 1) if v["draught"] is not None else None)
+
+
 class DownsampleState:
     """
     Per-vessel decision logic. store() returns (accept, reason):
@@ -237,6 +301,46 @@ class Db:
              p["sog"], p["cog"], p["heading"], p["nav_status"]),
         )
 
+    def load_last_voyages(self):
+        """Last stored voyage row per vessel, so a collector restart does not
+        re-store unchanged voyage data."""
+        for attempt in (1, 2):
+            try:
+                with self._cur() as cur:
+                    cur.execute(
+                        """SELECT DISTINCT ON (mmsi)
+                                  mmsi, callsign, destination, eta, draught
+                           FROM voyage ORDER BY mmsi, ts DESC, ctid DESC"""
+                    )
+                    out = {}
+                    for mmsi, callsign, dest, eta, draught in cur.fetchall():
+                        out[mmsi] = (callsign or "", (dest or "").upper().strip(),
+                                     eta or "",
+                                     round(draught, 1) if draught is not None else None)
+                    return out
+            except psycopg2.OperationalError:
+                if attempt == 2:
+                    raise
+                self.conn = None
+        return {}
+
+    def insert_voyage(self, v):
+        self.execute(
+            """INSERT INTO voyage (ts, mmsi, callsign, destination, eta, draught, ship_name, source)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,'aisstream')""",
+            (v["ts"], v["mmsi"], v["callsign"], v["destination"],
+             v["eta"], v["draught"], v["ship_name"]),
+        )
+
+    def update_latest_static(self, v):
+        self.execute(
+            """UPDATE latest SET callsign=%s, destination=%s, eta=%s, draught=%s,
+                                 ship_name=COALESCE(%s, ship_name)
+               WHERE mmsi=%s""",
+            (v["callsign"], v["destination"], v["eta"], v["draught"],
+             v["ship_name"], v["mmsi"]),
+        )
+
     def upsert_latest(self, p):
         self.execute(
             """INSERT INTO latest (mmsi, ts, lat, lon, sog, cog, heading, nav_status, ship_name)
@@ -262,7 +366,8 @@ class Collector:
         self.chunks = [[]]
         self.chunk_idx = 0
         self.latest_sent = {}   # mmsi -> epoch of last `latest` upsert
-        self.stats = {"rx": 0, "stored": 0, "latest": 0, "rejected": 0}
+        self.voyage_last = None  # mmsi -> voyage_key tuple; lazy-loaded from DB
+        self.stats = {"rx": 0, "stored": 0, "latest": 0, "rejected": 0, "voyage": 0}
         self._stop = asyncio.Event()
 
     def refresh_fleet(self):
@@ -280,7 +385,7 @@ class Collector:
         sub = {
             "APIKey": AISSTREAM_KEY,
             "BoundingBoxes": [[[-90.0, -180.0], [90.0, 180.0]]],
-            "FilterMessageTypes": ["PositionReport"],
+            "FilterMessageTypes": ["PositionReport", "ShipStaticData"],
         }
         chunk = self.chunks[self.chunk_idx]
         if chunk:
@@ -291,6 +396,9 @@ class Collector:
         try:
             msg = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
+            return
+        if msg.get("MessageType") == "ShipStaticData":
+            self.handle_static(msg)
             return
         p = parse_position_report(msg)
         if p is None:
@@ -317,6 +425,25 @@ class Collector:
             self.db.upsert_latest(p)
             self.latest_sent[p["mmsi"]] = now
             self.stats["latest"] += 1
+
+
+    def handle_static(self, msg):
+        v = parse_ship_static(msg)
+        if v is None or str(v["mmsi"]) not in self.mmsis:
+            return
+        if self.voyage_last is None:
+            self.voyage_last = self.db.load_last_voyages()
+        key = voyage_key(v)
+        if self.voyage_last.get(v["mmsi"]) == key:
+            self.db.update_latest_static(v)  # keep latest fresh, no new history row
+            return
+        self.voyage_last[v["mmsi"]] = key
+        self.db.insert_voyage(v)
+        self.db.update_latest_static(v)
+        self.stats["voyage"] += 1
+        log.info("voyage %s (%s) dest=%s eta=%s draught=%s",
+                 v["ship_name"] or v["mmsi"], v["mmsi"],
+                 v["destination"], v["eta"], v["draught"])
 
     async def run_socket(self):
         async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=20) as ws:

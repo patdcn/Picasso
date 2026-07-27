@@ -76,7 +76,6 @@ volumes:
   ais_pgdata:
   picasso_data:
     external: true
-    name: picasso-dcn-30hhzo_picasso_data
 
 networks:
   dokploy-network:
