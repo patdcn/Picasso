@@ -9,18 +9,26 @@
   .no-print { display: none !important; }
   .ws-printonly { display: block !important; }
 
-  /* A4 portrait for THESE sheets only (named page), so the portal-wide A3 rule
-     used by the diving comparison pages is not affected. */
+  /* portal.css applies a portal-wide A3 print treatment for the diving pages:
+     @page A3, #app-shell flex-centring and .content zoom 0.80. This page prints
+     its own per-depth A4 sheets, so when it is the page being printed (detected
+     via :has), undo those transforms. Diving pages are unaffected. */
+  #app-shell:has(.ws-printonly) {
+    display: block !important; height: auto !important; min-height: 0 !important;
+  }
+  #app-shell:has(.ws-printonly) .content {
+    zoom: 1 !important; max-width: none !important; width: auto !important;
+    flex: none !important; height: auto !important; min-height: 0 !important;
+  }
+
+  /* A4 portrait for THESE sheets (named page) — the global A3 rule stays for
+     the diving pages. */
   @page wscop { size: A4 portrait; margin: 10mm 12mm; }
   .ws-sheet {
     page: wscop;
     page-break-after: always; break-after: page;
-    width: 680px; margin: 0 auto;
+    width: 186mm; margin: 0 auto;
     font-size: 11px;
-    /* Uniform scale so a full campaign sheet (strip + progress + climatology +
-       letterhead) fits ONE A4 page. TUNING: if a sheet spills onto a second
-       page, lower this; if there's excess white space, raise it. */
-    zoom: 0.88;
   }
   .ws-sheet:last-child { page-break-after: auto; break-after: auto; }
 
@@ -28,7 +36,6 @@
   .ws-sheet > div { break-inside: avoid; page-break-inside: avoid; }
   .ws-sheet .js-plotly-plot { max-width: 100% !important; }
 
-  /* slightly tighter cards on paper */
   .ws-sheet .print-header { margin-bottom: 10px; }
   .ws-sheet .print-footer { margin-top: 10px; }
 }

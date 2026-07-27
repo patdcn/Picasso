@@ -827,7 +827,7 @@ def _render(res, clim, source, pctile, start, end, meta=None, ui=None):
         style={"font": "11px system-ui", "color": DIM, "lineHeight": "1.5", "marginTop": "8px"})
 
     return html.Div([
-        banner, era5_banner,
+        html.Div([banner, era5_banner], className="no-print"),
         html.Div(_explanation(res.mode, ui.get("hs"), ui.get("wind"), ui.get("cur_limits"),
                               ui.get("dur"), ui.get("nom"), start, end, ui.get("cfg")),
                  className="no-print"),
