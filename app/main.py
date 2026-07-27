@@ -219,5 +219,13 @@ def _toggle_nav(_clicks, is_open):
     return ("app-shell" if is_open else "app-shell collapsed"), is_open
 
 
+# Finalize callbacks once at import, before gunicorn's threaded workers serve
+# requests. Dash otherwise finalizes lazily on the first request, and with
+# multiple workers/threads two threads can race in validate_long_callbacks,
+# raising "dictionary changed size during iteration". Doing it here (single
+# thread, at import) removes that race.
+app._setup_server()
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8050")), debug=True)
