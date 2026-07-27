@@ -48,7 +48,7 @@ DEPTH_COL = {"cur_surf": CUR_S, "cur_mid": CUR_M, "cur_bottom": CUR_B}
 DEFAULT_LAT, DEFAULT_LON = 53.02, 3.24
 EMODNET_WMS = "https://ows.emodnet-humanactivities.eu/wms"
 # feature layers queried on map click (GetFeatureInfo)
-EMODNET_ID_LAYERS = ["platforms", "pipelines", "windfarmspoly", "telecommunicationcables"]
+EMODNET_ID_LAYERS = ["platforms", "pipelines", "windfarmspoly", "powercables"]
 
 _CARD = {"background": PANEL, "border": f"1px solid {GRID}", "borderRadius": "10px",
          "padding": "14px 16px", "marginBottom": "14px"}
@@ -121,9 +121,9 @@ def layout():
                                     name="Wind farms (EMODnet)", checked=False),
                                 dl.Overlay(dl.WMSTileLayer(
                                     url=EMODNET_WMS,
-                                    layers="telecommunicationcables", format="image/png", transparent=True,
+                                    layers="powercables", format="image/png", transparent=True,
                                     attribution="EMODnet Human Activities (CC-BY 4.0)"),
-                                    name="Cables (EMODnet)", checked=False),
+                                    name="Power cables (EMODnet)", checked=False),
                             ]),
                             dl.LayerGroup(id="ws-marker"),
                             dl.LayerGroup(id="ws-map-info")]),
@@ -306,29 +306,40 @@ def _mapclick(cd):
 _ID_FIELDS = ["name", "operator", "status", "type", "purpose", "content", "medium",
               "country", "code", "power_mw", "n_turbines", "year", "notes"]
 
-def _identify_popup(lat, lon):
-    """Query EMODnet GetFeatureInfo (WMS 1.1.1) around the click; build popup content."""
-    d = 0.04
+def _identify_one(layer, lat, lon, d=0.04):
+    """GetFeatureInfo for a single layer; returns [] on any error (bad name, non-JSON)."""
     params = {
         "service": "WMS", "version": "1.1.1", "request": "GetFeatureInfo",
-        "layers": ",".join(EMODNET_ID_LAYERS),
-        "query_layers": ",".join(EMODNET_ID_LAYERS),
+        "layers": layer, "query_layers": layer,
         "info_format": "application/json", "srs": "EPSG:4326",
         "bbox": f"{lon-d},{lat-d},{lon+d},{lat+d}",
         "width": 101, "height": 101, "x": 50, "y": 50, "feature_count": 5,
     }
     try:
         r = requests.get(EMODNET_WMS, params=params, timeout=8)
-        feats = r.json().get("features", [])
+        ct = r.headers.get("content-type", "")
+        if "json" not in ct.lower():      # ServiceException / HTML -> not this layer
+            return []
+        return r.json().get("features", [])
     except Exception:
-        feats = []
+        return []
+
+
+def _identify_popup(lat, lon):
+    """Query each EMODnet feature layer independently and build popup content."""
+    feats = []
+    for layer in EMODNET_ID_LAYERS:
+        for f in _identify_one(layer, lat, lon):
+            f.setdefault("_layer", layer)
+            feats.append(f)
     if not feats:
-        return html.Div("No mapped infrastructure at this point (EMODnet, European seas).",
-                        style={"font": "11px system-ui", "color": MUTED, "maxWidth": "220px"})
+        return html.Div("No mapped infrastructure at this point. Click directly on a platform, "
+                        "pipeline, cable or wind farm (EMODnet covers European seas only).",
+                        style={"font": "11px system-ui", "color": MUTED, "maxWidth": "230px"})
     rows = []
-    for f in feats[:3]:
+    for f in feats[:4]:
         props = f.get("properties", {}) or {}
-        layer = (f.get("id", "") or "").split(".")[0]
+        layer = f.get("_layer") or (f.get("id", "") or "").split(".")[0]
         title = props.get("name") or props.get("code") or layer or "Feature"
         detail = []
         for k in _ID_FIELDS:
