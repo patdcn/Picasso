@@ -53,28 +53,43 @@ def _client():
     return cdsapi.Client(quiet=True)   # falls back to ~/.cdsapirc
 
 
-def _read_nc(path, months_only=None):
-    """Read one ERA5 NetCDF file -> DataFrame(hs, wind) at the single cell, hourly UTC."""
+def _read_nc(path, lat=None, lon=None):
+    """Read one ERA5 NetCDF file -> DataFrame(hs, wind) at the node nearest
+    (lat, lon) if given, else the box mean, hourly UTC."""
     from netCDF4 import Dataset, num2date
     ds = Dataset(path)
     try:
-        # time coordinate name varies ('time' or 'valid_time')
         tname = "valid_time" if "valid_time" in ds.variables else "time"
         tv = ds.variables[tname]
         times = num2date(tv[:], tv.units,
                          only_use_cftime_datetimes=False, only_use_python_datetimes=True)
         idx = pd.to_datetime([pd.Timestamp(t) for t in times], utc=True)
 
-        def cell_mean(var):
-            a = np.array(ds.variables[var][:], dtype="float64")
-            # dims (time, lat, lon) [possibly with expver] -> mean over the tiny box
-            a = np.ma.masked_invalid(a)
-            ax = tuple(range(1, a.ndim))
-            return np.asarray(np.ma.filled(a.mean(axis=ax), np.nan), dtype="float64")
+        # locate lat/lon axes and the nearest node
+        latname = "latitude" if "latitude" in ds.variables else "lat"
+        lonname = "longitude" if "longitude" in ds.variables else "lon"
+        lats = np.asarray(ds.variables[latname][:], dtype="float64")
+        lons = np.asarray(ds.variables[lonname][:], dtype="float64")
+        if lat is not None and lon is not None:
+            iy = int(np.argmin(np.abs(lats - lat)))
+            ix = int(np.argmin(np.abs(((lons - lon + 180) % 360) - 180)))
+        else:
+            iy = ix = None
 
-        swh = cell_mean("swh")
-        u10 = cell_mean("u10")
-        v10 = cell_mean("v10")
+        def series(var):
+            a = np.ma.masked_invalid(np.array(ds.variables[var][:], dtype="float64"))
+            # dims are (time, lat, lon) possibly with a leading expver/number axis
+            while a.ndim > 3:
+                a = a[0]
+            if iy is not None:
+                v = a[:, iy, ix]
+            else:
+                v = a.reshape(a.shape[0], -1).mean(axis=1)
+            return np.asarray(np.ma.filled(v, np.nan), dtype="float64")
+
+        swh = series("swh")
+        u10 = series("u10")
+        v10 = series("v10")
     finally:
         ds.close()
     wind = np.hypot(u10, v10) * MS_TO_KN
@@ -84,8 +99,12 @@ def _read_nc(path, months_only=None):
 
 def _retrieve_years(c, lat, lon, years, months, times):
     import tempfile
-    n, s = lat + 0.13, lat - 0.13
-    w, e = lon - 0.13, lon + 0.13
+    # ERA5 waves are on a 0.5deg grid, so the box must be >= ~0.5deg each side or
+    # MARS crops to zero points and aborts. Use ~0.75deg half-width to be safe;
+    # we pick the nearest node when reading.
+    half = 0.75
+    n, s = lat + half, lat - half
+    w, e = lon - half, lon + half
     req = {
         "product_type": "reanalysis",
         "variable": VARS,
@@ -99,7 +118,7 @@ def _retrieve_years(c, lat, lon, years, months, times):
     target = tempfile.mktemp(suffix="_era5.nc")
     try:
         c.retrieve(DATASET, req, target)
-        return _read_nc(target)
+        return _read_nc(target, lat, lon)
     finally:
         try:
             os.remove(target)
