@@ -80,16 +80,57 @@ def layout():
             # ---------- controls ----------
             html.Div(className="no-print", children=[
                 html.Div([
-                    html.Div("Work location", style=_H),
-                    dl.Map(id="ws-map", center=[DEFAULT_LAT, DEFAULT_LON], zoom=6,
-                           style={"height": "190px", "borderRadius": "8px", "marginBottom": "10px"},
-                           children=[dl.TileLayer(
-                               url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"),
-                               dl.LayerGroup(id="ws-marker")]),
+                    html.Div([html.Div("Work location", style={**_H, "margin": 0}),
+                        html.Button("⤢ Expand", id="ws-map-expand", n_clicks=0, className="no-print",
+                            style={"marginLeft": "auto", "background": SOFT, "border": f"1px solid {GRID}",
+                                   "borderRadius": "6px", "padding": "3px 8px", "cursor": "pointer",
+                                   "font": "600 10px system-ui", "color": MUTED})],
+                        style={"display": "flex", "alignItems": "center", "marginBottom": "10px"}),
+                    html.Div(id="ws-map-wrap", className="ws-map-wrap", children=[
+                        dl.Map(id="ws-map", center=[DEFAULT_LAT, DEFAULT_LON], zoom=6,
+                               style={"height": "100%", "width": "100%", "borderRadius": "8px"},
+                               children=[
+                            dl.LayersControl(position="topright", collapsed=True, children=[
+                                dl.BaseLayer(dl.TileLayer(
+                                    url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+                                    attribution="© OpenStreetMap, © CARTO"),
+                                    name="Light map", checked=True),
+                                dl.BaseLayer(dl.TileLayer(
+                                    url="https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}",
+                                    attribution="Esri Ocean Basemap"),
+                                    name="Ocean / bathymetry", checked=False),
+                                dl.Overlay(dl.TileLayer(
+                                    url="https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",
+                                    attribution="© OpenSeaMap contributors (CC-BY-SA)"),
+                                    name="Sea marks (OpenSeaMap)", checked=False),
+                                dl.Overlay(dl.WMSTileLayer(
+                                    url="https://ows.emodnet-humanactivities.eu/wms",
+                                    layers="platforms", format="image/png", transparent=True,
+                                    attribution="EMODnet Human Activities (CC-BY 4.0)"),
+                                    name="Oil & gas platforms (EMODnet)", checked=False),
+                                dl.Overlay(dl.WMSTileLayer(
+                                    url="https://ows.emodnet-humanactivities.eu/wms",
+                                    layers="pipelines", format="image/png", transparent=True,
+                                    attribution="EMODnet Human Activities (CC-BY 4.0)"),
+                                    name="Pipelines (EMODnet)", checked=False),
+                                dl.Overlay(dl.WMSTileLayer(
+                                    url="https://ows.emodnet-humanactivities.eu/wms",
+                                    layers="activelicenses", format="image/png", transparent=True,
+                                    attribution="EMODnet Human Activities (CC-BY 4.0)"),
+                                    name="Licence blocks (EMODnet)", checked=False),
+                                dl.Overlay(dl.WMSTileLayer(
+                                    url="https://data.nstauthority.co.uk/arcgis/services/Public_WGS84/UKCS_Licensed_and_Unlicensed_Blocks_WGS84/MapServer/WMSServer",
+                                    layers="0", format="image/png", transparent=True,
+                                    attribution="NSTA / UK OGL"),
+                                    name="UK blocks (NSTA)", checked=False),
+                            ]),
+                            dl.LayerGroup(id="ws-marker")]),
+                    ]),
                     html.Div([
                         html.Div([_lbl("Latitude"), _num("ws-lat", DEFAULT_LAT, 0.0001)]),
                         html.Div([_lbl("Longitude"), _num("ws-lon", DEFAULT_LON, 0.0001)]),
-                    ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "10px"}),
+                    ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "10px",
+                              "marginTop": "10px"}),
                     html.Div(id="ws-regime", style={"marginTop": "10px", "font": "11.5px 'IBM Plex Mono'",
                         "color": INK, "background": SOFT, "border": f"1px solid {GRID}",
                         "borderRadius": "6px", "padding": "8px 10px"}),
@@ -210,6 +251,15 @@ def layout():
 dash.clientside_callback(
     "function(n){ if(n){ setTimeout(function(){ window.print(); }, 60); } return ''; }",
     Output("ws-print-sink", "children"), Input("ws-print-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+dash.clientside_callback(
+    "function(n){ const expanded = (n % 2 === 1);"
+    " setTimeout(function(){ window.dispatchEvent(new Event('resize')); }, 250);"
+    " return expanded ? 'ws-map-wrap ws-map-expanded' : 'ws-map-wrap'; }",
+    Output("ws-map-wrap", "className"),
+    Input("ws-map-expand", "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -365,7 +415,7 @@ def _error(msg):
 
 DEPTH_LABEL = {"cur_surf": "Surface", "cur_mid": "Mid-water", "cur_bottom": "Bottom"}
 
-def _band(fig, row, x, b, color, name, unit="", legend=True):
+def _band(fig, row, x, b, color, name, unit="", legend=True, band_legend=None):
     if b is None:
         return
     p10, p50, p90 = b["p10"], b["p50"], b["p90"]
@@ -375,9 +425,25 @@ def _band(fig, row, x, b, color, name, unit="", legend=True):
     fig.add_trace(go.Scatter(x=list(x) + list(x[::-1]),
         y=list(p90) + list(p10[::-1]), fill="toself",
         fillcolor=_rgba(color, 0.13), line=dict(width=0), hoverinfo="skip",
-        showlegend=False), row, 1)
+        name=(band_legend or ""), showlegend=bool(band_legend),
+        legendgroup="cmems_band"), row, 1)
     fig.add_trace(go.Scatter(x=x, y=p50, line=dict(color=color, width=1.8),
-        name=name, showlegend=legend,
+        name=name + " (P50)", showlegend=legend,
+        hovertemplate=f"{name}: %{{y:.2f}} {unit}<extra></extra>"), row, 1)
+
+
+def _era5_over(fig, row, xe, b, unit, name, band_legend=False):
+    import numpy as _np
+    if b is None or not _np.any(_np.isfinite(b["p50"])):
+        return
+    p10, p50, p90 = b["p10"], b["p50"], b["p90"]
+    fig.add_trace(go.Scatter(x=list(xe) + list(xe[::-1]),
+        y=list(p90) + list(p10[::-1]), fill="toself",
+        fillcolor=_rgba(INK, 0.07), line=dict(width=0), hoverinfo="skip",
+        name="ERA5 P10–P90 spread", showlegend=band_legend,
+        legendgroup="era5_band"), row, 1)
+    fig.add_trace(go.Scatter(x=xe, y=p50, line=dict(color=INK, width=1.3, dash="dash"),
+        name=name + " (P50)", showlegend=True,
         hovertemplate=f"{name}: %{{y:.2f}} {unit}<extra></extra>"), row, 1)
 
 def _rgba(hexc, a):
@@ -396,7 +462,8 @@ def _strip(bands, L, lim, depth_key, era5_bands=None):
         return fig
     L = len(bands["hs"]["p50"])
     x = np.arange(L) / 24.0
-    _band(fig, 1, x, bands.get(depth_key), DEPTH_COL[depth_key], f"CMEMS {DEPTH_LABEL[depth_key]}", "kn")
+    _band(fig, 1, x, bands.get(depth_key), DEPTH_COL[depth_key], f"CMEMS {DEPTH_LABEL[depth_key]}",
+          "kn", band_legend="CMEMS P10–P90 spread")
     fig.add_hline(y=lim[depth_key], line=dict(color=NOGO, dash="dot", width=1), row=1, col=1)
     _band(fig, 2, x, bands.get("hs"), WAVE, "CMEMS Hs", "m")
     fig.add_hline(y=lim["hs"], line=dict(color=NOGO, dash="dot", width=1), row=2, col=1)
@@ -405,12 +472,8 @@ def _strip(bands, L, lim, depth_key, era5_bands=None):
 
     if era5_bands is not None:
         xe = np.arange(len(era5_bands["hs"]["p50"])) / 24.0
-        fig.add_trace(go.Scatter(x=xe, y=era5_bands["hs"]["p50"], name="ERA5 Hs",
-            line=dict(color=INK, width=1.3, dash="dash"),
-            hovertemplate="ERA5 Hs: %{y:.2f} m<extra></extra>"), 2, 1)
-        fig.add_trace(go.Scatter(x=xe, y=era5_bands["wind"]["p50"], name="ERA5 wind",
-            line=dict(color=INK, width=1.3, dash="dash"),
-            hovertemplate="ERA5 wind: %{y:.1f} kn<extra></extra>"), 3, 1)
+        _era5_over(fig, 2, xe, era5_bands.get("hs"), "m", "ERA5 Hs", band_legend=True)
+        _era5_over(fig, 3, xe, era5_bands.get("wind"), "kn", "ERA5 wind", band_legend=False)
 
     fig.update_xaxes(title_text="days into execution window", row=3, col=1)
     fig.update_layout(height=380, margin=dict(l=44, r=14, t=26, b=34),
@@ -502,6 +565,12 @@ def _explanation(mode, hs, wind, cur_limits, dur, nom, start, end, cfg):
         html.P([html.B("P50 / P80 / P90: "), "percentiles across those historical years. P50 is the "
                 "median (expected) outcome, P80 the recommended planning/budget figure (only 1 year in 5 "
                 "is worse), P90 a conservative cover. Price the spread against P80."],
+               style={"margin": "0 0 6px"}),
+        html.P([html.B("ERA5 cross-check: "), "where shown, the dashed lines on the Hs and wind panels "
+                "are ERA5 (ECMWF) — a fully independent reanalysis from a different provider. It is a "
+                "second opinion on wave and wind only (ERA5 has no currents); close agreement with "
+                "CMEMS corroborates the workability basis. Note both assimilate satellite data, so "
+                "agreement is a consistency check rather than fully independent validation."],
                style={"margin": "0"}),
     ], style={"font": "11.5px system-ui", "color": MUTED, "lineHeight": "1.5",
               "background": SOFT, "border": f"1px solid {GRID}", "borderRadius": "8px",
@@ -568,11 +637,27 @@ def _depth_figures(d, res, pctile, start, end, ui):
                       dcc.Graph(figure=_strip(ui["bands"], (end - start).days * 24 or 24, lim, d.cur_key,
                                               era5_bands=ui.get("era5_bands")),
                                 config={"displayModeBar": False}),
-                      (html.Div("Solid coloured lines are CMEMS (P50), with the shaded P10–P90 spread; "
-                                "dashed dark lines are ERA5 (P50), the independent second source. Where "
-                                "they sit on top of each other the two hindcasts agree.",
-                                style={"font": "11px system-ui", "color": DIM, "marginTop": "4px"})
-                       if ui.get("era5_bands") is not None else None)],
+                      (html.Div([
+                          html.B("Reading this: "),
+                          "the solid coloured line is the CMEMS median (P50) for each hour of the "
+                          "window; the shaded band is the P10–P90 spread across the look-back years "
+                          "(band top = rough 1-in-10 year, bottom = calm 1-in-10 year). The red "
+                          "dotted line is your workability limit — where the band crosses it, that "
+                          "fraction of years breaches the limit, which is why P80/P90 in the cards "
+                          "sit above P50. Dashed dark lines (Hs & wind) are ERA5, an independent "
+                          "reanalysis shown as a cross-check; where ERA5 sits on the CMEMS line the "
+                          "two sources agree. Currents are CMEMS only (ERA5 has none)."],
+                                style={"font": "11px system-ui", "color": DIM, "marginTop": "4px",
+                                       "lineHeight": "1.5"})
+                       if ui.get("era5_bands") is not None else
+                       html.Div([html.B("Reading this: "),
+                          "the solid line is the CMEMS median (P50); the shaded band is the P10–P90 "
+                          "spread across the look-back years (top = rough 1-in-10 year, bottom = calm "
+                          "1-in-10 year). The red dotted line is your workability limit — where the "
+                          "band crosses it, that fraction of years breaches it, which is why P80/P90 "
+                          "in the cards sit above P50."],
+                                style={"font": "11px system-ui", "color": DIM, "marginTop": "4px",
+                                       "lineHeight": "1.5"}))],
                      style=_CARD)]
     if res.mode == "campaign":
         kids.append(html.Div([

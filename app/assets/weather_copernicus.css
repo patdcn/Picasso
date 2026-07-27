@@ -11,3 +11,12 @@
   .ws-sheet { page-break-after: always; break-after: page; }
   .ws-sheet:last-child { page-break-after: auto; break-after: auto; }
 }
+
+/* Work-location map: normal (small) vs expanded (full-screen overlay). */
+.ws-map-wrap { position: relative; height: 200px; }
+.ws-map-wrap.ws-map-expanded {
+  position: fixed; top: 24px; left: 24px; right: 24px; bottom: 24px;
+  height: auto; z-index: 1200; background: #fff; border-radius: 10px;
+  box-shadow: 0 12px 48px rgba(15, 23, 42, 0.35); padding: 6px;
+}
+.ws-map-wrap.ws-map-expanded .leaflet-container { border-radius: 8px; }
