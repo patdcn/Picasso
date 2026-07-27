@@ -20,3 +20,10 @@
   box-shadow: 0 12px 48px rgba(15, 23, 42, 0.35); padding: 6px;
 }
 .ws-map-wrap.ws-map-expanded .leaflet-container { border-radius: 8px; }
+.ws-map-btn {
+  position: absolute; left: 10px; bottom: 10px; z-index: 1000;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 6px;
+  padding: 4px 9px; cursor: pointer; font: 600 11px system-ui; color: #475569;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+.ws-map-btn:hover { background: #f8fafc; }

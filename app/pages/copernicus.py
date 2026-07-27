@@ -23,6 +23,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 import pandas as pd
+import requests
 
 from app.engines import metocean as mo
 from app import reports
@@ -45,6 +46,9 @@ CUR_S = "#0891b2"; CUR_M = "#0d9488"; CUR_B = "#7c3aed"; WAVE = "#2563eb"; WIND 
 DEPTH_COL = {"cur_surf": CUR_S, "cur_mid": CUR_M, "cur_bottom": CUR_B}
 
 DEFAULT_LAT, DEFAULT_LON = 53.02, 3.24
+EMODNET_WMS = "https://ows.emodnet-humanactivities.eu/wms"
+# feature layers queried on map click (GetFeatureInfo)
+EMODNET_ID_LAYERS = ["platforms", "pipelines", "windfarmspoly", "telecommunicationcables"]
 
 _CARD = {"background": PANEL, "border": f"1px solid {GRID}", "borderRadius": "10px",
          "padding": "14px 16px", "marginBottom": "14px"}
@@ -80,13 +84,10 @@ def layout():
             # ---------- controls ----------
             html.Div(className="no-print", children=[
                 html.Div([
-                    html.Div([html.Div("Work location", style={**_H, "margin": 0}),
-                        html.Button("⤢ Expand", id="ws-map-expand", n_clicks=0, className="no-print",
-                            style={"marginLeft": "auto", "background": SOFT, "border": f"1px solid {GRID}",
-                                   "borderRadius": "6px", "padding": "3px 8px", "cursor": "pointer",
-                                   "font": "600 10px system-ui", "color": MUTED})],
-                        style={"display": "flex", "alignItems": "center", "marginBottom": "10px"}),
+                    html.Div("Work location", style={**_H, "marginBottom": "10px"}),
                     html.Div(id="ws-map-wrap", className="ws-map-wrap", children=[
+                        html.Button("⤢ Expand", id="ws-map-expand", n_clicks=0,
+                            className="no-print ws-map-btn"),
                         dl.Map(id="ws-map", center=[DEFAULT_LAT, DEFAULT_LON], zoom=6,
                                style={"height": "100%", "width": "100%", "borderRadius": "8px"},
                                children=[
@@ -104,28 +105,32 @@ def layout():
                                     attribution="© OpenSeaMap contributors (CC-BY-SA)"),
                                     name="Sea marks (OpenSeaMap)", checked=False),
                                 dl.Overlay(dl.WMSTileLayer(
-                                    url="https://ows.emodnet-humanactivities.eu/wms",
+                                    url=EMODNET_WMS,
                                     layers="platforms", format="image/png", transparent=True,
                                     attribution="EMODnet Human Activities (CC-BY 4.0)"),
                                     name="Oil & gas platforms (EMODnet)", checked=False),
                                 dl.Overlay(dl.WMSTileLayer(
-                                    url="https://ows.emodnet-humanactivities.eu/wms",
+                                    url=EMODNET_WMS,
                                     layers="pipelines", format="image/png", transparent=True,
                                     attribution="EMODnet Human Activities (CC-BY 4.0)"),
                                     name="Pipelines (EMODnet)", checked=False),
                                 dl.Overlay(dl.WMSTileLayer(
-                                    url="https://ows.emodnet-humanactivities.eu/wms",
-                                    layers="activelicenses", format="image/png", transparent=True,
+                                    url=EMODNET_WMS,
+                                    layers="windfarmspoly", format="image/png", transparent=True,
                                     attribution="EMODnet Human Activities (CC-BY 4.0)"),
-                                    name="Licence blocks (EMODnet)", checked=False),
+                                    name="Wind farms (EMODnet)", checked=False),
                                 dl.Overlay(dl.WMSTileLayer(
-                                    url="https://data.nstauthority.co.uk/arcgis/services/Public_WGS84/UKCS_Licensed_and_Unlicensed_Blocks_WGS84/MapServer/WMSServer",
-                                    layers="0", format="image/png", transparent=True,
-                                    attribution="NSTA / UK OGL"),
-                                    name="UK blocks (NSTA)", checked=False),
+                                    url=EMODNET_WMS,
+                                    layers="telecommunicationcables", format="image/png", transparent=True,
+                                    attribution="EMODnet Human Activities (CC-BY 4.0)"),
+                                    name="Cables (EMODnet)", checked=False),
                             ]),
-                            dl.LayerGroup(id="ws-marker")]),
+                            dl.LayerGroup(id="ws-marker"),
+                            dl.LayerGroup(id="ws-map-info")]),
                     ]),
+                    html.Div("Tip: click a platform, pipeline, cable or wind farm to identify it.",
+                             className="no-print",
+                             style={"font": "10.5px system-ui", "color": DIM, "margin": "6px 0 0"}),
                     html.Div([
                         html.Div([_lbl("Latitude"), _num("ws-lat", DEFAULT_LAT, 0.0001)]),
                         html.Div([_lbl("Longitude"), _num("ws-lon", DEFAULT_LON, 0.0001)]),
@@ -257,8 +262,10 @@ dash.clientside_callback(
 dash.clientside_callback(
     "function(n){ const expanded = (n % 2 === 1);"
     " setTimeout(function(){ window.dispatchEvent(new Event('resize')); }, 250);"
-    " return expanded ? 'ws-map-wrap ws-map-expanded' : 'ws-map-wrap'; }",
+    " return [expanded ? 'ws-map-wrap ws-map-expanded' : 'ws-map-wrap',"
+    "         expanded ? '⤡ Shrink' : '⤢ Expand']; }",
     Output("ws-map-wrap", "className"),
+    Output("ws-map-expand", "children"),
     Input("ws-map-expand", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -293,6 +300,61 @@ def _mapclick(cd):
     if not cd or "latlng" not in cd:
         return no_update, no_update
     return round(cd["latlng"]["lat"], 4), round(cd["latlng"]["lng"], 4)
+
+
+# human-friendly attribute keys per EMODnet layer, in display order
+_ID_FIELDS = ["name", "operator", "status", "type", "purpose", "content", "medium",
+              "country", "code", "power_mw", "n_turbines", "year", "notes"]
+
+def _identify_popup(lat, lon):
+    """Query EMODnet GetFeatureInfo (WMS 1.1.1) around the click; build popup content."""
+    d = 0.04
+    params = {
+        "service": "WMS", "version": "1.1.1", "request": "GetFeatureInfo",
+        "layers": ",".join(EMODNET_ID_LAYERS),
+        "query_layers": ",".join(EMODNET_ID_LAYERS),
+        "info_format": "application/json", "srs": "EPSG:4326",
+        "bbox": f"{lon-d},{lat-d},{lon+d},{lat+d}",
+        "width": 101, "height": 101, "x": 50, "y": 50, "feature_count": 5,
+    }
+    try:
+        r = requests.get(EMODNET_WMS, params=params, timeout=8)
+        feats = r.json().get("features", [])
+    except Exception:
+        feats = []
+    if not feats:
+        return html.Div("No mapped infrastructure at this point (EMODnet, European seas).",
+                        style={"font": "11px system-ui", "color": MUTED, "maxWidth": "220px"})
+    rows = []
+    for f in feats[:3]:
+        props = f.get("properties", {}) or {}
+        layer = (f.get("id", "") or "").split(".")[0]
+        title = props.get("name") or props.get("code") or layer or "Feature"
+        detail = []
+        for k in _ID_FIELDS:
+            v = props.get(k)
+            if v not in (None, "", "null") and k != "name":
+                detail.append(html.Div([html.B(f"{k.replace('_', ' ')}: ",
+                    style={"color": INK}), str(v)],
+                    style={"font": "11px system-ui", "color": MUTED}))
+        rows.append(html.Div([
+            html.Div(str(title), style={"font": "600 12px system-ui", "color": ACCENT,
+                     "marginBottom": "2px"}),
+            html.Div(layer, style={"font": "10px 'IBM Plex Mono'", "color": DIM,
+                     "marginBottom": "3px"}),
+            *detail,
+        ], style={"marginBottom": "8px", "paddingBottom": "6px",
+                  "borderBottom": f"1px solid {GRID}"}))
+    return html.Div(rows, style={"maxWidth": "240px", "maxHeight": "260px", "overflowY": "auto"})
+
+
+@callback(Output("ws-map-info", "children"),
+          Input("ws-map", "clickData"), prevent_initial_call=True)
+def _identify(cd):
+    if not cd or "latlng" not in cd:
+        return no_update
+    lat, lon = cd["latlng"]["lat"], cd["latlng"]["lng"]
+    return dl.Popup(position=[lat, lon], children=_identify_popup(lat, lon))
 
 
 @callback(Output("ws-marker", "children"), Output("ws-map", "center"),
