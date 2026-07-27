@@ -8,8 +8,29 @@
 @media print {
   .no-print { display: none !important; }
   .ws-printonly { display: block !important; }
-  .ws-sheet { page-break-after: always; break-after: page; }
+
+  /* A4 portrait for THESE sheets only (named page), so the portal-wide A3 rule
+     used by the diving comparison pages is not affected. */
+  @page wscop { size: A4 portrait; margin: 10mm 12mm; }
+  .ws-sheet {
+    page: wscop;
+    page-break-after: always; break-after: page;
+    width: 680px; margin: 0 auto;
+    font-size: 11px;
+    /* Uniform scale so a full campaign sheet (strip + progress + climatology +
+       letterhead) fits ONE A4 page. TUNING: if a sheet spills onto a second
+       page, lower this; if there's excess white space, raise it. */
+    zoom: 0.88;
+  }
   .ws-sheet:last-child { page-break-after: auto; break-after: auto; }
+
+  /* keep each card/figure/letterhead block intact on its page */
+  .ws-sheet > div { break-inside: avoid; page-break-inside: avoid; }
+  .ws-sheet .js-plotly-plot { max-width: 100% !important; }
+
+  /* slightly tighter cards on paper */
+  .ws-sheet .print-header { margin-bottom: 10px; }
+  .ws-sheet .print-footer { margin-top: 10px; }
 }
 
 /* Work-location map: normal (small) vs expanded (full-screen overlay). */

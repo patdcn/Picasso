@@ -69,7 +69,6 @@ def _num(id_, val, step=0.1, **kw):
 
 def layout():
     return html.Div(style={"maxWidth": "1160px"}, children=[
-        reports.print_header(),
         html.Div([
             html.H3("Weather Stats — Copernicus", style={"marginBottom": "2px"}),
             html.P("Metocean workability at Surface / Mid-water / Bottom for a work location "
@@ -253,7 +252,6 @@ def layout():
                                     "font": "15px system-ui"})])),
             ]),
         ]),
-        reports.print_footer(),
     ])
 
 
@@ -711,15 +709,22 @@ def _clim_panel(clim):
     ], style=_CARD)
 
 
-def _depth_figures(d, res, pctile, start, end, ui):
-    """Strip + (campaign) progress for one depth — used both on screen and per print page."""
+def _depth_figures(d, res, pctile, start, end, ui, print_mode=False):
+    """Strip + (campaign) progress for one depth — used both on screen and per print page.
+    In print_mode the figures get a FIXED width (the hidden print block gives Plotly no
+    width to measure) and compact fonts so a sheet fits A4 portrait."""
     L_days = (end - start).days or 1
     lim = dict(hs=ui["hs"], wind=ui["wind"], **ui["cur_limits"])
+    strip_fig = _strip(ui["bands"], (end - start).days * 24 or 24, lim, d.cur_key,
+                       era5_bands=ui.get("era5_bands"))
+    if print_mode:
+        strip_fig.update_layout(width=680, height=330, font=dict(size=9),
+                                legend=dict(font=dict(size=8.5)),
+                                margin=dict(l=40, r=10, t=24, b=30))
     kids = [html.Div([html.Div(f"Metocean strip · {DEPTH_LABEL[d.cur_key]} · climatological band "
                                f"(P50 line, P10–P90 shaded) over {ui['cfg'].lookback_years} yr", style=_H),
-                      dcc.Graph(figure=_strip(ui["bands"], (end - start).days * 24 or 24, lim, d.cur_key,
-                                              era5_bands=ui.get("era5_bands")),
-                                config={"displayModeBar": False}),
+                      dcc.Graph(figure=strip_fig,
+                                config={"displayModeBar": False, "staticPlot": print_mode}),
                       (html.Div([
                           html.B("Reading this: "),
                           "the solid coloured line is the CMEMS median (P50) for each hour of the "
@@ -743,9 +748,13 @@ def _depth_figures(d, res, pctile, start, end, ui):
                                        "lineHeight": "1.5"}))],
                      style=_CARD)]
     if res.mode == "campaign":
+        prog_fig = _progress_one(d, L_days)
+        if print_mode:
+            prog_fig.update_layout(width=680, height=180, font=dict(size=9),
+                                   margin=dict(l=44, r=10, t=10, b=30))
         kids.append(html.Div([
             html.Div(f"Cumulative progress · {DEPTH_LABEL[d.cur_key]} · nominal work vs elapsed", style=_H),
-            dcc.Graph(figure=_progress_one(d, L_days), config={"displayModeBar": False}),
+            dcc.Graph(figure=prog_fig, config={"displayModeBar": False, "staticPlot": print_mode}),
             html.Div("Work-complete (%) against elapsed days; the gap to the client-window line is the "
                      "weather delay. A flat stretch is unworkable weather.",
                      style={"font": "11px system-ui", "color": DIM, "marginTop": "4px"}),
@@ -795,18 +804,20 @@ def _render(res, clim, source, pctile, start, end, meta=None, ui=None):
             id=f"ws-screen-{d.cur_key}",
             style={"display": "block" if i == 0 else "none"}))
 
-    # print sheets: one page per depth, each self-contained with the explanation
+    # print sheets: one page per depth, each with the DCN letterhead + disclaimer
     sheets = []
     for d in res.depths:
         sheets.append(html.Div([
+            reports.print_header(),
+            html.Div(f"Metocean workability — {DEPTH_LABEL[d.cur_key]}",
+                     style={"font": "700 15px system-ui", "color": INK, "margin": "0 0 6px"}),
+            _summary_line(ui.get("lat"), ui.get("lon"), start, end, res.mode, res),
             _explanation(res.mode, ui.get("hs"), ui.get("wind"), ui.get("cur_limits"),
                          ui.get("dur"), ui.get("nom"), start, end, ui.get("cfg")),
-            _summary_line(ui.get("lat"), ui.get("lon"), start, end, res.mode, res),
-            html.Div(f"{DEPTH_LABEL[d.cur_key]} depth", style={"font": "600 14px system-ui",
-                     "color": INK, "margin": "0 0 8px"}),
-            html.Div([card_fn(d)], style={"maxWidth": "320px", "marginBottom": "12px"}),
-            *_depth_figures(d, res, pctile, start, end, ui),
+            html.Div([card_fn(d)], style={"maxWidth": "320px", "marginBottom": "10px"}),
+            *_depth_figures(d, res, pctile, start, end, ui, print_mode=True),
             _clim_panel(clim),
+            reports.print_footer(),
         ], className="ws-sheet"))
     print_block = html.Div(sheets, className="ws-printonly")
 
