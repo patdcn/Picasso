@@ -28,11 +28,8 @@ import pandas as pd
 
 MS_TO_KN = 1.943844
 DATASET = "reanalysis-era5-single-levels"
-VARS = [
-    "significant_height_of_combined_wind_waves_and_swell",
-    "10m_u_component_of_wind",
-    "10m_v_component_of_wind",
-]
+WAVE_VARS = ["significant_height_of_combined_wind_waves_and_swell"]   # 0.5deg grid
+WIND_VARS = ["10m_u_component_of_wind", "10m_v_component_of_wind"]    # 0.25deg grid
 _ALL_DAYS = [f"{d:02d}" for d in range(1, 32)]
 _ALL_TIMES = [f"{h:02d}:00" for h in range(24)]
 _ALL_MONTHS = [f"{m:02d}" for m in range(1, 13)]
@@ -53,11 +50,30 @@ def _client():
     return cdsapi.Client(quiet=True)   # falls back to ~/.cdsapirc
 
 
+def _resolve_nc(path):
+    """Return a path to a readable .nc file. CDS sometimes returns a ZIP bundle
+    (e.g. different grids in one request); if so, extract and use the .nc inside."""
+    with open(path, "rb") as fh:
+        magic = fh.read(4)
+    if magic[:2] == b"PK":                     # zip archive
+        import zipfile, tempfile
+        d = tempfile.mkdtemp()
+        with zipfile.ZipFile(path) as z:
+            ncs = [n for n in z.namelist() if n.endswith(".nc")]
+            if not ncs:
+                raise RuntimeError("ERA5 zip contained no .nc file")
+            z.extract(ncs[0], d)
+            return os.path.join(d, ncs[0])
+    if magic == b"GRIB":                        # unexpected GRIB
+        raise RuntimeError("ERA5 returned GRIB, expected NetCDF")
+    return path
+
+
 def _read_nc(path, lat=None, lon=None):
-    """Read one ERA5 NetCDF file -> DataFrame(hs, wind) at the node nearest
-    (lat, lon) if given, else the box mean, hourly UTC."""
+    """Read one ERA5 NetCDF file -> DataFrame with whichever of hs/wind the file
+    holds, at the node nearest (lat, lon) if given, hourly UTC."""
     from netCDF4 import Dataset, num2date
-    ds = Dataset(path)
+    ds = Dataset(_resolve_nc(path))
     try:
         tname = "valid_time" if "valid_time" in ds.variables else "time"
         tv = ds.variables[tname]
@@ -65,7 +81,6 @@ def _read_nc(path, lat=None, lon=None):
                          only_use_cftime_datetimes=False, only_use_python_datetimes=True)
         idx = pd.to_datetime([pd.Timestamp(t) for t in times], utc=True)
 
-        # locate lat/lon axes and the nearest node
         latname = "latitude" if "latitude" in ds.variables else "lat"
         lonname = "longitude" if "longitude" in ds.variables else "lon"
         lats = np.asarray(ds.variables[latname][:], dtype="float64")
@@ -78,42 +93,36 @@ def _read_nc(path, lat=None, lon=None):
 
         def series(var):
             a = np.ma.masked_invalid(np.array(ds.variables[var][:], dtype="float64"))
-            # dims are (time, lat, lon) possibly with a leading expver/number axis
             while a.ndim > 3:
                 a = a[0]
-            if iy is not None:
-                v = a[:, iy, ix]
-            else:
-                v = a.reshape(a.shape[0], -1).mean(axis=1)
+            v = a[:, iy, ix] if iy is not None else a.reshape(a.shape[0], -1).mean(axis=1)
             return np.asarray(np.ma.filled(v, np.nan), dtype="float64")
 
-        swh = series("swh")
-        u10 = series("u10")
-        v10 = series("v10")
+        cols = {}
+        if "swh" in ds.variables:
+            cols["hs"] = series("swh")
+        if "u10" in ds.variables and "v10" in ds.variables:
+            cols["wind"] = np.hypot(series("u10"), series("v10")) * MS_TO_KN
     finally:
         ds.close()
-    wind = np.hypot(u10, v10) * MS_TO_KN
-    df = pd.DataFrame({"hs": swh, "wind": wind}, index=idx).sort_index()
-    return df
+    return pd.DataFrame(cols, index=idx).sort_index()
 
 
-def _retrieve_years(c, lat, lon, years, months, times):
+def _retrieve_one(c, lat, lon, years, months, times, variables):
     import tempfile
-    # ERA5 waves are on a 0.5deg grid, so the box must be >= ~0.5deg each side or
-    # MARS crops to zero points and aborts. Use ~0.75deg half-width to be safe;
-    # we pick the nearest node when reading.
+    # box must be >= the coarsest grid (waves 0.5deg) or MARS crops to empty
     half = 0.75
-    n, s = lat + half, lat - half
-    w, e = lon - half, lon + half
     req = {
         "product_type": "reanalysis",
-        "variable": VARS,
+        "variable": variables,
         "year": [str(y) for y in years],
         "month": [f"{int(m):02d}" for m in months],
         "day": _ALL_DAYS,
         "time": times,
-        "area": [round(n, 3), round(w, 3), round(s, 3), round(e, 3)],  # N,W,S,E
+        "area": [round(lat + half, 3), round(lon - half, 3),
+                 round(lat - half, 3), round(lon + half, 3)],  # N,W,S,E
         "data_format": "netcdf",
+        "download_format": "unarchived",
     }
     target = tempfile.mktemp(suffix="_era5.nc")
     try:
@@ -126,22 +135,28 @@ def _retrieve_years(c, lat, lon, years, months, times):
             pass
 
 
+def _retrieve_years(c, lat, lon, years, months, times):
+    # waves and wind are on DIFFERENT grids; request separately (each a single
+    # NetCDF) then merge, so CDS never bundles them into an unreadable zip.
+    waves = _retrieve_one(c, lat, lon, years, months, times, WAVE_VARS)
+    wind = _retrieve_one(c, lat, lon, years, months, times, WIND_VARS)
+    return waves.join(wind, how="outer")
+
+
 def fetch_point_era5(lat: float, lon: float, years, months,
                      time_step_h: int = 6) -> pd.DataFrame:
     """
-    Return hourly ERA5 hs + wind for the cell containing (lat, lon), covering the
-    execution `months` across `years`. Only execution months are fetched (the
-    climatology filters to them), and the years are chunked so each CDS request
-    stays well under the per-request cost limit and inside the 120 s worker
-    timeout. Sub-daily sampling is interpolated up to the hourly engine grid.
-    Raises on hard failure (caller fails soft).
+    Return hourly ERA5 hs + wind for the cell nearest (lat, lon), covering the
+    execution `months` across `years`. Waves (0.5deg) and wind (0.25deg) are
+    fetched as separate single-grid requests and merged. Years are chunked to
+    stay under the CDS cost limit and the 120 s worker timeout; sub-daily
+    sampling is interpolated to the hourly engine grid. Raises on hard failure.
     """
     c = _client()
     years = list(years)
     times = [f"{h:02d}:00" for h in range(0, 24, max(1, time_step_h))]
-    # keep each request under ~9000 fields (vars x years x ~31 days x months x times/day)
-    per_year = 3 * 31 * len(months) * len(times)
-    chunk = max(1, min(len(years), 9000 // max(1, per_year)))
+    per_year = 31 * len(months) * len(times)      # per grid, per variable-group
+    chunk = max(1, min(len(years), 6000 // max(1, per_year)))
     frames, errors = [], []
     for i in range(0, len(years), chunk):
         yrs = years[i:i + chunk]
@@ -154,6 +169,9 @@ def fetch_point_era5(lat: float, lon: float, years, months,
     df = pd.concat(frames).sort_index()
     df = df[~df.index.duplicated(keep="first")]
     df = df.resample("1h").mean().interpolate("time")
+    for c_ in ("hs", "wind"):
+        if c_ not in df:
+            df[c_] = np.nan
     df["cur_surf"] = np.nan
     df["cur_mid"] = np.nan
     df["cur_bottom"] = np.nan
