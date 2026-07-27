@@ -26,7 +26,6 @@
   @page wscop { size: A4 portrait; margin: 10mm 12mm; }
   .ws-sheet {
     page: wscop;
-    page-break-after: always; break-after: page;
     width: 186mm; margin: 0 auto;
     font-size: 11px;
     /* Uniform scale so ONE depth fits ONE A4 page (letterhead + explanation +
@@ -34,10 +33,10 @@
        spills onto a second page, lower this; if pages look empty, raise it. */
     zoom: 0.80;
   }
-  .ws-sheet:last-child {
-    page-break-after: avoid !important; break-after: avoid !important;
-    margin-bottom: 0 !important;
-  }
+  /* page breaks BEFORE each subsequent sheet — never after the last one, so a
+     trailing blank page cannot occur (break-after on the last sheet is the
+     classic cause of a phantom final page in Chromium) */
+  .ws-sheet + .ws-sheet { page-break-before: always; break-before: page; }
   /* no phantom trailing page from stretched containers */
   body:has(.ws-printonly), html:has(.ws-printonly) {
     height: auto !important; min-height: 0 !important;
