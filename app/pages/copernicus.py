@@ -166,8 +166,13 @@ def layout():
                                 "shifting climate doesn't bias the result. ", html.B("Exponential"),
                                 " fades older years smoothly; ", html.B("Linear"), " evenly; ",
                                 html.B("None"), " treats all years equally."], style={"margin": "0 0 6px"}),
-                        html.P([html.B("Half-life"), " — years at which a year counts half as much as the "
-                                "most recent (exponential only)."], style={"margin": "0"}),
+                        html.P([html.B("Half-life (years)"), " — how fast older years fade under "
+                                "exponential weighting. It's the age at which a year counts ",
+                                html.B("half"), " as much as the most recent one. With the default "
+                                "10: this year has full weight, a year 10 yr ago counts ½, 20 yr ago "
+                                "¼, 30 yr ago ⅛. A smaller number makes recent years dominate; a "
+                                "larger number flattens toward equal weighting. (Exponential only.)"],
+                                style={"margin": "0"}),
                     ], style={"font": "11.5px system-ui", "color": MUTED, "lineHeight": "1.5",
                               "background": SOFT, "border": f"1px solid {GRID}", "borderRadius": "8px",
                               "padding": "10px 11px", "marginBottom": "12px"}),
@@ -634,7 +639,12 @@ def _explanation(mode, hs, wind, cur_limits, dur, nom, start, end, cfg):
                 f"bottom {cur_limits['cur_bottom']:g} kn)."], style={"margin": "0 0 5px"}),
         html.P([html.B("Climatology: "), f"built from the last {cfg.lookback_years} years of reanalysis, "
                 f"filtered to the execution months, with {cfg.recency} recency weighting so recent "
-                "years count for more (guarding against a shifting climate)."], style={"margin": "0 0 5px"}),
+                "years count for more (guarding against a shifting climate)."
+                + (f" With exponential weighting a {cfg.half_life_years:g}-year half-life is used: a "
+                   f"year {cfg.half_life_years:g} years old counts half as much as the most recent, "
+                   f"{cfg.half_life_years*2:g} years old a quarter, and so on."
+                   if cfg.recency == "exponential" else "")],
+               style={"margin": "0 0 5px"}),
         html.P([html.B("P50 / P80 / P90: "), "percentiles across those historical years. P50 is the "
                 "median (expected) outcome, P80 the recommended planning/budget figure (only 1 year in 5 "
                 "is worse), P90 a conservative cover. Price the spread against P80."],
