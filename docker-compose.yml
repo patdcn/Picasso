@@ -41,6 +41,8 @@ services:
       # ERA5 second-source (Copernicus Climate Data Store) — Personal Access Token.
       - CDS_URL=${CDS_URL:-https://cds.climate.copernicus.eu/api}
       - CDS_KEY=${CDS_KEY:-}
+      # AIS track database (separate ais-db Dokploy project, via dokploy-network)
+      - AIS_DSN=${AIS_DSN:-}
       # Optional SMTP for access-request notifications (safe to leave blank):
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
