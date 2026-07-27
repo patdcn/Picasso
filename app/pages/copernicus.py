@@ -365,7 +365,7 @@ def _error(msg):
 
 DEPTH_LABEL = {"cur_surf": "Surface", "cur_mid": "Mid-water", "cur_bottom": "Bottom"}
 
-def _band(fig, row, x, b, color, name, legend=True):
+def _band(fig, row, x, b, color, name, unit="", legend=True):
     if b is None:
         return
     p10, p50, p90 = b["p10"], b["p50"], b["p90"]
@@ -377,7 +377,8 @@ def _band(fig, row, x, b, color, name, legend=True):
         fillcolor=_rgba(color, 0.13), line=dict(width=0), hoverinfo="skip",
         showlegend=False), row, 1)
     fig.add_trace(go.Scatter(x=x, y=p50, line=dict(color=color, width=1.8),
-        name=name, showlegend=legend), row, 1)
+        name=name, showlegend=legend,
+        hovertemplate=f"{name}: %{{y:.2f}} {unit}<extra></extra>"), row, 1)
 
 def _rgba(hexc, a):
     h = hexc.lstrip("#")
@@ -395,19 +396,21 @@ def _strip(bands, L, lim, depth_key, era5_bands=None):
         return fig
     L = len(bands["hs"]["p50"])
     x = np.arange(L) / 24.0
-    _band(fig, 1, x, bands.get(depth_key), DEPTH_COL[depth_key], f"CMEMS {DEPTH_LABEL[depth_key]}")
+    _band(fig, 1, x, bands.get(depth_key), DEPTH_COL[depth_key], f"CMEMS {DEPTH_LABEL[depth_key]}", "kn")
     fig.add_hline(y=lim[depth_key], line=dict(color=NOGO, dash="dot", width=1), row=1, col=1)
-    _band(fig, 2, x, bands.get("hs"), WAVE, "CMEMS Hs")
+    _band(fig, 2, x, bands.get("hs"), WAVE, "CMEMS Hs", "m")
     fig.add_hline(y=lim["hs"], line=dict(color=NOGO, dash="dot", width=1), row=2, col=1)
-    _band(fig, 3, x, bands.get("wind"), WIND, "CMEMS wind")
+    _band(fig, 3, x, bands.get("wind"), WIND, "CMEMS wind", "kn")
     fig.add_hline(y=lim["wind"], line=dict(color=NOGO, dash="dot", width=1), row=3, col=1)
 
     if era5_bands is not None:
         xe = np.arange(len(era5_bands["hs"]["p50"])) / 24.0
         fig.add_trace(go.Scatter(x=xe, y=era5_bands["hs"]["p50"], name="ERA5 Hs",
-            line=dict(color=INK, width=1.3, dash="dash")), 2, 1)
+            line=dict(color=INK, width=1.3, dash="dash"),
+            hovertemplate="ERA5 Hs: %{y:.2f} m<extra></extra>"), 2, 1)
         fig.add_trace(go.Scatter(x=xe, y=era5_bands["wind"]["p50"], name="ERA5 wind",
-            line=dict(color=INK, width=1.3, dash="dash")), 3, 1)
+            line=dict(color=INK, width=1.3, dash="dash"),
+            hovertemplate="ERA5 wind: %{y:.1f} kn<extra></extra>"), 3, 1)
 
     fig.update_xaxes(title_text="days into execution window", row=3, col=1)
     fig.update_layout(height=380, margin=dict(l=44, r=14, t=26, b=34),
