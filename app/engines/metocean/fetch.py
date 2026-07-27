@@ -58,7 +58,7 @@ def _point_frame(dataset, lat, lon, start, end, username, password,
     return df
 
 
-def _pick_levels(cds, lat, lon, start, username, password, max_probe=6000):
+def _pick_levels(cds, lat, lon, start, username, password, max_probe=5700):
     """
     Probe the full water column at the point (1-day sample) and return
     (surface_depth, mid_depth, bottom_depth) using only WET (non-NaN) levels:

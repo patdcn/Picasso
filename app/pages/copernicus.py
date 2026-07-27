@@ -365,7 +365,7 @@ def _error(msg):
 
 DEPTH_LABEL = {"cur_surf": "Surface", "cur_mid": "Mid-water", "cur_bottom": "Bottom"}
 
-def _band(fig, row, x, b, color, name):
+def _band(fig, row, x, b, color, name, legend=True):
     if b is None:
         return
     p10, p50, p90 = b["p10"], b["p50"], b["p90"]
@@ -376,8 +376,8 @@ def _band(fig, row, x, b, color, name):
         y=list(p90) + list(p10[::-1]), fill="toself",
         fillcolor=_rgba(color, 0.13), line=dict(width=0), hoverinfo="skip",
         showlegend=False), row, 1)
-    fig.add_trace(go.Scatter(x=x, y=p50, line=dict(color=color, width=1.5),
-        name=name, showlegend=(row == 1)), row, 1)
+    fig.add_trace(go.Scatter(x=x, y=p50, line=dict(color=color, width=1.8),
+        name=name, showlegend=legend), row, 1)
 
 def _rgba(hexc, a):
     h = hexc.lstrip("#")
@@ -395,7 +395,7 @@ def _strip(bands, L, lim, depth_key, era5_bands=None):
         return fig
     L = len(bands["hs"]["p50"])
     x = np.arange(L) / 24.0
-    _band(fig, 1, x, bands.get(depth_key), DEPTH_COL[depth_key], DEPTH_LABEL[depth_key])
+    _band(fig, 1, x, bands.get(depth_key), DEPTH_COL[depth_key], f"CMEMS {DEPTH_LABEL[depth_key]}")
     fig.add_hline(y=lim[depth_key], line=dict(color=NOGO, dash="dot", width=1), row=1, col=1)
     _band(fig, 2, x, bands.get("hs"), WAVE, "CMEMS Hs")
     fig.add_hline(y=lim["hs"], line=dict(color=NOGO, dash="dot", width=1), row=2, col=1)
@@ -405,9 +405,9 @@ def _strip(bands, L, lim, depth_key, era5_bands=None):
     if era5_bands is not None:
         xe = np.arange(len(era5_bands["hs"]["p50"])) / 24.0
         fig.add_trace(go.Scatter(x=xe, y=era5_bands["hs"]["p50"], name="ERA5 Hs",
-            line=dict(color=INK, width=1.2, dash="dash")), 2, 1)
+            line=dict(color=INK, width=1.3, dash="dash")), 2, 1)
         fig.add_trace(go.Scatter(x=xe, y=era5_bands["wind"]["p50"], name="ERA5 wind",
-            line=dict(color=INK, width=1.2, dash="dash"), showlegend=True), 3, 1)
+            line=dict(color=INK, width=1.3, dash="dash")), 3, 1)
 
     fig.update_xaxes(title_text="days into execution window", row=3, col=1)
     fig.update_layout(height=380, margin=dict(l=44, r=14, t=26, b=34),
@@ -564,7 +564,13 @@ def _depth_figures(d, res, pctile, start, end, ui):
                                f"(P50 line, P10–P90 shaded) over {ui['cfg'].lookback_years} yr", style=_H),
                       dcc.Graph(figure=_strip(ui["bands"], (end - start).days * 24 or 24, lim, d.cur_key,
                                               era5_bands=ui.get("era5_bands")),
-                                config={"displayModeBar": False})], style=_CARD)]
+                                config={"displayModeBar": False}),
+                      (html.Div("Solid coloured lines are CMEMS (P50), with the shaded P10–P90 spread; "
+                                "dashed dark lines are ERA5 (P50), the independent second source. Where "
+                                "they sit on top of each other the two hindcasts agree.",
+                                style={"font": "11px system-ui", "color": DIM, "marginTop": "4px"})
+                       if ui.get("era5_bands") is not None else None)],
+                     style=_CARD)]
     if res.mode == "campaign":
         kids.append(html.Div([
             html.Div(f"Cumulative progress · {DEPTH_LABEL[d.cur_key]} · nominal work vs elapsed", style=_H),
