@@ -14,7 +14,7 @@ from .workability import (
     assess, AssessResult, DepthOutcome, historical_windows, window_bands, DEPTHS,
 )
 from .demo_source import synth_point, DemoConfig
-from .cache import get_series, credentials_present
+from .cache import get_series, credentials_present, get_series_era5, era5_credentials_present
 
 try:
     from .fetch import fetch_point
@@ -22,7 +22,8 @@ except Exception:  # pragma: no cover
     fetch_point = None
 
 __all__ = [
-    "get_series", "credentials_present", "fetch_point", "synth_point", "DemoConfig",
+    "get_series", "credentials_present", "get_series_era5", "era5_credentials_present",
+    "fetch_point", "synth_point", "DemoConfig",
     "build_climatology", "ClimatologyConfig", "execution_months",
     "summarise_variable", "trend_diagnostic", "DEFAULT_THRESHOLDS",
     "assess", "AssessResult", "DepthOutcome", "historical_windows", "window_bands", "DEPTHS",

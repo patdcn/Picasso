@@ -50,3 +50,32 @@ Currents use daily-mean reanalysis (GLORYS) which doesn't resolve the tidal cycl
 the page auto-selects the tide-resolving IBI product for North Sea sites, but
 confirm slack against tide tables. CMEMS variable short-names are centralised in
 app/engines/metocean/products.py — confirm on first live run.
+
+---
+
+## ERA5 second-source comparison (optional)
+
+The page can overlay ERA5 (ECMWF) waves & wind as an independent cross-check via
+the "Compare Hs & wind vs ERA5" checkbox. ERA5 is on the Copernicus CLIMATE Data
+Store (CDS) — a different service from the Marine store — so it needs its own
+credential:
+
+1. Register / sign in at https://cds.climate.copernicus.eu (your ECMWF login
+   works via SSO).
+2. Profile page → copy your **Personal Access Token** (this is the key, NOT your
+   password).
+3. Accept the licence on the ERA5 dataset page once, or downloads fail.
+4. In the Dokploy Environment page add (no spaces around =):
+       CDS_KEY=<your personal access token>
+   (CDS_URL defaults to the right endpoint; only set it to override.)
+
+Notes:
+- The CDS API is a queued batch system, so the FIRST ERA5 pull per location is
+  slow (minutes). It's cached to /data afterwards, and it only runs when the
+  checkbox is ticked — normal runs are unaffected.
+- ERA5 provides waves & wind only (no currents); the overlay appears on the Hs
+  and wind panels as a dashed line. If the token is missing or a pull fails, the
+  CMEMS result is kept and a note explains why.
+- New dependencies: cdsapi, netCDF4 (already in requirements.txt).
+- The ERA5 fetch could not be tested against the live CDS from the build
+  environment — treat the first ticked comparison as a shakedown.

@@ -195,9 +195,11 @@ def window_bands(df: pd.DataFrame, start, end, cfg: ClimatologyConfig):
     if not wins:
         return None, 0
     bands = {}
+    import warnings
     for k in ("hs", "wind", "cur_surf", "cur_mid", "cur_bottom"):
         M = np.vstack([w[2][k][:L] for w in wins])          # (n_years, L)
-        with np.errstate(all="ignore"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
             bands[k] = {
                 "p10": np.nanpercentile(M, 10, axis=0),
                 "p50": np.nanpercentile(M, 50, axis=0),

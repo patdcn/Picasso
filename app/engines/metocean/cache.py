@@ -16,6 +16,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import fetch as _fetch
+from . import era5 as _era5
 from .demo_source import synth_point, DemoConfig
 
 # Prefer the persistent /data volume so the cache survives redeploys; fall back
@@ -85,3 +86,36 @@ def get_series(lat: float, lon: float, working_depth_m: float = 34.0,
     df = synth_point(lat, lon, DemoConfig(years=30, end_year=2025,
                                           hs_trend_per_decade=0.06))
     return df, "demo", {"current_source": "", "current_note": "", "error": ""}
+
+
+def era5_credentials_present() -> bool:
+    return _era5.cds_credentials_present()
+
+
+def _key_era5(lat: float, lon: float) -> Path:
+    return CACHE_DIR / f"era5_{lat:.2f}_{lon:.2f}.pkl"
+
+
+def get_series_era5(lat: float, lon: float, start, end, force: bool = False):
+    """
+    ERA5 second-source series (hs, wind) for cross-checking CMEMS.
+    Returns (df_or_None, status, note). status in 'live'|'cache'|'unavailable'.
+    Never raises — a comparison failure must not break the main assessment.
+    """
+    path = _key_era5(lat, lon)
+    if path.exists() and not force:
+        try:
+            return pd.read_pickle(path), "cache", ""
+        except Exception:
+            pass
+    if not era5_credentials_present():
+        return None, "unavailable", "ERA5 needs a CDS Personal Access Token (CDS_KEY)."
+    try:
+        df = _era5.fetch_point_era5(lat, lon, start=HISTORY_START, end=HISTORY_END)
+        try:
+            df.to_pickle(path)
+        except Exception:
+            pass
+        return df, "live", ""
+    except Exception as e:
+        return None, "unavailable", f"{type(e).__name__}: {e}"

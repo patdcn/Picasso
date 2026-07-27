@@ -171,6 +171,11 @@ def layout():
                         html.Div([_lbl("Mid-water"), _num("ws-cm", 0.8, 0.1)]),
                         html.Div([_lbl("Bottom"), _num("ws-cb", 0.6, 0.1)]),
                     ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr 1fr", "gap": "8px"}),
+                    dcc.Checklist(id="ws-era5",
+                        options=[{"label": " Compare Hs & wind vs ERA5 (independent 2nd source)",
+                                  "value": "on"}],
+                        value=[], inputStyle={"marginRight": "6px"},
+                        style={"font": "12px system-ui", "color": MUTED, "marginTop": "12px"}),
                 ], style=_CARD),
 
                 html.Button("Assess workability", id="ws-run", n_clicks=0,
@@ -273,9 +278,10 @@ def _panes(mode):
           State("ws-dur", "value"), State("ws-nom", "value"),
           State("ws-hs", "value"), State("ws-wind", "value"),
           State("ws-cs", "value"), State("ws-cm", "value"), State("ws-cb", "value"),
+          State("ws-era5", "value"),
           prevent_initial_call=True)
 def _run(_, lat, lon, sd, ed, pctile, lookback, halflife, recency, mode,
-         dur, nom, hs, wind, cs, cm, cb):
+         dur, nom, hs, wind, cs, cm, cb, era5_on):
     try:
         lat, lon = float(lat), float(lon)
         start, end = pd.Timestamp(sd), pd.Timestamp(ed)
@@ -300,8 +306,22 @@ def _run(_, lat, lon, sd, ed, pctile, lookback, halflife, recency, mode,
         bands, _L = window_bands(df, start, end, cfg)
     except Exception as e:
         return _error(f"Assessment failed for this window: {e}")
+
+    era5_bands, era5_note = None, ""
+    if era5_on and "on" in era5_on:
+        e5df, e5status, e5msg = get_series_era5(lat, lon, start, end)
+        if e5df is not None:
+            try:
+                era5_bands, _ = window_bands(e5df, start, end, cfg)
+                era5_note = f"ERA5 overlay ({e5status})."
+            except Exception as e:
+                era5_note = f"ERA5 comparison unavailable: {e}"
+        else:
+            era5_note = f"ERA5 comparison unavailable: {e5msg}"
+
     ui = dict(lat=lat, lon=lon, mode=mode, hs=hs, wind=wind, cur_limits=cur_limits,
-              dur=float(dur or 6), nom=float(nom or 20), cfg=cfg, bands=bands)
+              dur=float(dur or 6), nom=float(nom or 20), cfg=cfg, bands=bands,
+              era5_bands=era5_bands, era5_note=era5_note)
     return _render(res, clim, source, int(pctile or 80), start, end, meta, ui)
 
 
@@ -331,9 +351,10 @@ def _rgba(hexc, a):
     h = hexc.lstrip("#")
     return f"rgba({int(h[0:2],16)},{int(h[2:4],16)},{int(h[4:6],16)},{a})"
 
-def _strip(bands, L, lim, depth_key):
+def _strip(bands, L, lim, depth_key, era5_bands=None):
     """Climatological band strip for ONE depth: current(depth), Hs, wind.
-    Each panel shows the P50 line with a P10-P90 shaded band across look-back years."""
+    Each panel shows the P50 line with a P10-P90 shaded band across look-back years.
+    If era5_bands is given, ERA5's P50 is overlaid (dashed) on Hs and wind."""
     import numpy as np
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
                         subplot_titles=(f"Current — {DEPTH_LABEL[depth_key]} (kn)",
@@ -344,10 +365,18 @@ def _strip(bands, L, lim, depth_key):
     x = np.arange(L) / 24.0
     _band(fig, 1, x, bands.get(depth_key), DEPTH_COL[depth_key], DEPTH_LABEL[depth_key])
     fig.add_hline(y=lim[depth_key], line=dict(color=NOGO, dash="dot", width=1), row=1, col=1)
-    _band(fig, 2, x, bands.get("hs"), WAVE, "Hs")
+    _band(fig, 2, x, bands.get("hs"), WAVE, "CMEMS Hs")
     fig.add_hline(y=lim["hs"], line=dict(color=NOGO, dash="dot", width=1), row=2, col=1)
-    _band(fig, 3, x, bands.get("wind"), WIND, "Wind")
+    _band(fig, 3, x, bands.get("wind"), WIND, "CMEMS wind")
     fig.add_hline(y=lim["wind"], line=dict(color=NOGO, dash="dot", width=1), row=3, col=1)
+
+    if era5_bands is not None:
+        xe = np.arange(len(era5_bands["hs"]["p50"])) / 24.0
+        fig.add_trace(go.Scatter(x=xe, y=era5_bands["hs"]["p50"], name="ERA5 Hs",
+            line=dict(color=INK, width=1.2, dash="dash")), 2, 1)
+        fig.add_trace(go.Scatter(x=xe, y=era5_bands["wind"]["p50"], name="ERA5 wind",
+            line=dict(color=INK, width=1.2, dash="dash"), showlegend=True), 3, 1)
+
     fig.update_xaxes(title_text="days into execution window", row=3, col=1)
     fig.update_layout(height=380, margin=dict(l=44, r=14, t=26, b=34),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#ffffff",
@@ -501,7 +530,8 @@ def _depth_figures(d, res, pctile, start, end, ui):
     lim = dict(hs=ui["hs"], wind=ui["wind"], **ui["cur_limits"])
     kids = [html.Div([html.Div(f"Metocean strip · {DEPTH_LABEL[d.cur_key]} · climatological band "
                                f"(P50 line, P10–P90 shaded) over {ui['cfg'].lookback_years} yr", style=_H),
-                      dcc.Graph(figure=_strip(ui["bands"], (end - start).days * 24 or 24, lim, d.cur_key),
+                      dcc.Graph(figure=_strip(ui["bands"], (end - start).days * 24 or 24, lim, d.cur_key,
+                                              era5_bands=ui.get("era5_bands")),
                                 config={"displayModeBar": False})], style=_CARD)]
     if res.mode == "campaign":
         kids.append(html.Div([
@@ -518,6 +548,14 @@ def _render(res, clim, source, pctile, start, end, meta=None, ui=None):
     ui = ui or {}
     L_days = (end - start).days or 1
     banner = _banner(source, meta)
+    era5_note = ui.get("era5_note")
+    era5_banner = None
+    if era5_note:
+        ok = "overlay" in era5_note
+        era5_banner = html.Div(era5_note, style={"font": "12px 'IBM Plex Mono'",
+            "color": (MUTED if ok else MARG), "background": (SOFT if ok else MARG_BG),
+            "border": f"1px solid {GRID if ok else MARG}", "borderRadius": "8px",
+            "padding": "8px 10px", "marginBottom": "12px"})
 
     if res.mode == "single":
         title = f"Single task · {res.duration_h} h continuous window · {res.n_years} historical years"
@@ -569,7 +607,7 @@ def _render(res, clim, source, pctile, start, end, meta=None, ui=None):
         style={"font": "11px system-ui", "color": DIM, "lineHeight": "1.5", "marginTop": "8px"})
 
     return html.Div([
-        banner,
+        banner, era5_banner,
         html.Div(_explanation(res.mode, ui.get("hs"), ui.get("wind"), ui.get("cur_limits"),
                               ui.get("dur"), ui.get("nom"), start, end, ui.get("cfg")),
                  className="no-print"),

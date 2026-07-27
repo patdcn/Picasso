@@ -38,6 +38,9 @@ services:
       - CMEMS_PASSWORD=${CMEMS_PASSWORD:-}
       # Reanalysis cache lives on the persistent volume (survives redeploys).
       - METOCEAN_CACHE=${METOCEAN_CACHE:-/data/metocean_cache}
+      # ERA5 second-source (Copernicus Climate Data Store) — Personal Access Token.
+      - CDS_URL=${CDS_URL:-https://cds.climate.copernicus.eu/api}
+      - CDS_KEY=${CDS_KEY:-}
       # Optional SMTP for access-request notifications (safe to leave blank):
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
