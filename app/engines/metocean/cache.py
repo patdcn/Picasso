@@ -96,34 +96,95 @@ def _key_era5(lat: float, lon: float, tag: str) -> Path:
     return CACHE_DIR / f"era5_{lat:.2f}_{lon:.2f}_{tag}.pkl"
 
 
-def get_series_era5(lat: float, lon: float, start, end, cfg=None, force: bool = False):
-    """
-    ERA5 second-source series (hs, wind) for cross-checking CMEMS, covering only
-    the execution months across the look-back years (a single small CDS request).
-    Returns (df_or_None, status, note). status in 'live'|'cache'|'unavailable'.
-    Never raises — a comparison failure must not break the main assessment.
-    """
-    from .climatology import execution_months, ClimatologyConfig
-    cfg = cfg or ClimatologyConfig()
+import threading, time as _time
+_era5_lock = threading.Lock()
+_era5_inflight = {}
+_LOCK_STALE_S = 1200   # 20 min: a lock older than this means the worker died
+
+
+def _era5_scope(lat, lon, start, end, cfg):
+    from .climatology import execution_months
     months = execution_months(start, end)
     end_year = pd.Timestamp(HISTORY_END).year
     years = list(range(end_year - int(cfg.lookback_years) + 1, end_year + 1))
     tag = f"m{'-'.join(f'{m:02d}' for m in months)}_lb{cfg.lookback_years}"
-    path = _key_era5(lat, lon, tag)
+    return years, months, _key_era5(lat, lon, tag)
 
-    if path.exists() and not force:
+
+def _era5_worker(lat, lon, years, months, path):
+    lock = Path(str(path) + ".lock")
+    try:
+        df = _era5.fetch_point_era5(lat, lon, years, months)
+        df.to_pickle(path)
+    except Exception as e:
+        print(f"[weather_stats] ERA5 background fetch failed: {e}")
         try:
-            return pd.read_pickle(path), "cache", ""
+            Path(str(path) + ".err").write_text(f"{type(e).__name__}: {e}")
+        except Exception:
+            pass
+    finally:
+        for p in (lock,):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        with _era5_lock:
+            _era5_inflight.pop(str(path), None)
+
+
+def get_series_era5_async(lat, lon, start, end, cfg=None):
+    """
+    Non-blocking ERA5 fetch. Returns (status, df_or_None, note):
+      'ready'       -> df is the cached ERA5 series
+      'pending'     -> a background CDS pull is running (poll again shortly)
+      'unavailable' -> no credentials, or the last pull failed (note says why)
+    The CDS queue is far slower than the 120 s web request, so the fetch runs in a
+    daemon thread that writes the shared /data cache; the page polls the cache. A
+    lock file on the shared volume coordinates the two gunicorn workers so only one
+    fetch runs per scope.
+    """
+    from .climatology import ClimatologyConfig
+    cfg = cfg or ClimatologyConfig()
+    years, months, path = _era5_scope(lat, lon, start, end, cfg)
+    err = Path(str(path) + ".err")
+    lock = Path(str(path) + ".lock")
+
+    if path.exists():
+        try:
+            return "ready", pd.read_pickle(path), ""
         except Exception:
             pass
     if not era5_credentials_present():
-        return None, "unavailable", "ERA5 needs a CDS Personal Access Token (CDS_KEY)."
-    try:
-        df = _era5.fetch_point_era5(lat, lon, years, months)
+        return "unavailable", None, "ERA5 needs a CDS Personal Access Token (CDS_KEY)."
+    if err.exists():
+        msg = err.read_text()
         try:
-            df.to_pickle(path)
+            err.unlink()
         except Exception:
             pass
-        return df, "live", ""
-    except Exception as e:
-        return None, "unavailable", f"{type(e).__name__}: {e}"
+        return "unavailable", None, f"ERA5 fetch failed: {msg}"
+
+    # a fresh lock (this or the other worker) means a fetch is already running
+    if lock.exists():
+        try:
+            if _time.time() - lock.stat().st_mtime < _LOCK_STALE_S:
+                return "pending", None, ("Fetching ERA5 from the CDS queue — this can take a "
+                                         "few minutes; the comparison appears automatically.")
+        except OSError:
+            pass
+        try:
+            lock.unlink()   # stale -> allow restart
+        except OSError:
+            pass
+
+    with _era5_lock:
+        if str(path) not in _era5_inflight:
+            _era5_inflight[str(path)] = True
+            try:
+                lock.write_text(str(_time.time()))
+            except Exception:
+                pass
+            threading.Thread(target=_era5_worker, args=(lat, lon, years, months, path),
+                             daemon=True).start()
+    return "pending", None, ("Fetching ERA5 from the CDS queue — this can take a few "
+                             "minutes; the comparison appears automatically.")

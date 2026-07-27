@@ -79,3 +79,31 @@ Notes:
 - New dependencies: cdsapi, netCDF4 (already in requirements.txt).
 - The ERA5 fetch could not be tested against the live CDS from the build
   environment — treat the first ticked comparison as a shakedown.
+
+---
+
+## ERA5 fetch is now non-blocking (background + poll)
+
+The CDS queue is far slower than the 120 s web-request timeout (~60 s per single
+year in testing), so ticking "Compare vs ERA5" no longer blocks the page:
+
+- The pull runs in a background daemon thread; the page shows "Fetching ERA5 …"
+  and polls the /data cache every 6 s, drawing the dashed ERA5 lines automatically
+  when ready. First comparison for a given site/month/look-back takes a few
+  minutes; afterwards it's instant from cache.
+- A lock file on /data coordinates the two gunicorn workers so only one fetch runs
+  per scope. If a worker is recycled mid-pull the lock goes stale after 20 min and
+  the next tick retries. Failures are surfaced in the amber note.
+
+### Warm or smoke-test a site from the Dokploy terminal
+Runs one pull in the foreground (no web timeout) and prints timing — also warms
+the cache so the page is instant afterwards:
+
+    cd /code && PYTHONPATH=/code python -c "
+    import time; from app.engines.metocean import era5
+    t=time.time()
+    df=era5.fetch_point_era5(53.02, 3.24, [2024], [9])
+    print('OK in %.0fs rows=%d hs=%.2f wind=%.1f' % (time.time()-t, len(df), df['hs'].mean(), df['wind'].mean()))
+    "
+
+(The app runs from /code, so PYTHONPATH=/code is needed for a manual terminal run.)

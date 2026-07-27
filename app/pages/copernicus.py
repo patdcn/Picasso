@@ -29,7 +29,7 @@ from app import reports
 from app.engines.metocean import (
     build_climatology, ClimatologyConfig, assess,
     classify_region, current_dataset_for, get_series, credentials_present,
-    get_series_era5, era5_credentials_present,
+    get_series_era5_async, era5_credentials_present,
     historical_windows, window_bands, DEPTHS,
 )
 
@@ -269,6 +269,55 @@ def _panes(mode):
     return (show, hide) if mode == "single" else (hide, show)
 
 
+def _assemble(lat, lon, sd, ed, pctile, lookback, halflife, recency, mode,
+              dur, nom, hs, wind, cs, cm, cb, era5_on):
+    """Build the results view. Returns (children, era5_pending)."""
+    try:
+        lat, lon = float(lat), float(lon)
+        start, end = pd.Timestamp(sd), pd.Timestamp(ed)
+        cfg = ClimatologyConfig(lookback_years=int(lookback or 30),
+                                recency=recency or "exponential",
+                                half_life_years=float(halflife or 10), trend_stat="p95")
+        cur_limits = {"cur_surf": float(cs or 1.0), "cur_mid": float(cm or 0.8),
+                      "cur_bottom": float(cb or 0.6)}
+        hs = float(hs or 1.5); wind = float(wind or 20)
+    except Exception as e:
+        return _error(f"Check inputs: {e}"), False
+
+    try:
+        df, source, meta = get_series(lat, lon)
+    except Exception as e:
+        return _error(f"Data unavailable: {e}"), False
+
+    try:
+        clim = build_climatology(df, lat, lon, start, end, cfg)
+        res = assess(df, start, end, mode, hs_max=hs, wind_max=wind, cur_limits=cur_limits,
+                     duration_h=float(dur or 6), nominal_days=float(nom or 20), cfg=cfg, n_runs=500)
+        bands, _L = window_bands(df, start, end, cfg)
+    except Exception as e:
+        return _error(f"Assessment failed for this window: {e}"), False
+
+    era5_bands, era5_note, era5_pending = None, "", False
+    if era5_on and "on" in era5_on:
+        status, e5df, e5msg = get_series_era5_async(lat, lon, start, end, cfg)
+        if status == "ready" and e5df is not None:
+            try:
+                era5_bands, _ = window_bands(e5df, start, end, cfg)
+                era5_note = "ERA5 overlay (dashed)."
+            except Exception as e:
+                era5_note = f"ERA5 comparison unavailable: {e}"
+        elif status == "pending":
+            era5_note = e5msg
+            era5_pending = True
+        else:
+            era5_note = e5msg
+
+    ui = dict(lat=lat, lon=lon, mode=mode, hs=hs, wind=wind, cur_limits=cur_limits,
+              dur=float(dur or 6), nom=float(nom or 20), cfg=cfg, bands=bands,
+              era5_bands=era5_bands, era5_note=era5_note)
+    return _render(res, clim, source, int(pctile or 80), start, end, meta, ui), era5_pending
+
+
 @callback(Output("ws-results", "children"),
           Input("ws-run", "n_clicks"),
           State("ws-lat", "value"), State("ws-lon", "value"),
@@ -283,47 +332,29 @@ def _panes(mode):
           prevent_initial_call=True)
 def _run(_, lat, lon, sd, ed, pctile, lookback, halflife, recency, mode,
          dur, nom, hs, wind, cs, cm, cb, era5_on):
-    try:
-        lat, lon = float(lat), float(lon)
-        start, end = pd.Timestamp(sd), pd.Timestamp(ed)
-        cfg = ClimatologyConfig(lookback_years=int(lookback or 30),
-                                recency=recency or "exponential",
-                                half_life_years=float(halflife or 10), trend_stat="p95")
-        cur_limits = {"cur_surf": float(cs or 1.0), "cur_mid": float(cm or 0.8),
-                      "cur_bottom": float(cb or 0.6)}
-        hs = float(hs or 1.5); wind = float(wind or 20)
-    except Exception as e:
-        return _error(f"Check inputs: {e}")
+    args = [lat, lon, sd, ed, pctile, lookback, halflife, recency, mode,
+            dur, nom, hs, wind, cs, cm, cb, era5_on]
+    children, pending = _assemble(*args)
+    if pending:
+        # ERA5 is fetching in the background; poll the cache until it's ready
+        return html.Div([children,
+            dcc.Store(id="ws-era5-store", data=args),
+            dcc.Interval(id="ws-era5-poll", interval=6000, n_intervals=0)])
+    return children
 
-    try:
-        df, source, meta = get_series(lat, lon)   # depth model is internal now
-    except Exception as e:
-        return _error(f"Data unavailable: {e}")
 
-    try:
-        clim = build_climatology(df, lat, lon, start, end, cfg)
-        res = assess(df, start, end, mode, hs_max=hs, wind_max=wind, cur_limits=cur_limits,
-                     duration_h=float(dur or 6), nominal_days=float(nom or 20), cfg=cfg, n_runs=500)
-        bands, _L = window_bands(df, start, end, cfg)
-    except Exception as e:
-        return _error(f"Assessment failed for this window: {e}")
-
-    era5_bands, era5_note = None, ""
-    if era5_on and "on" in era5_on:
-        e5df, e5status, e5msg = get_series_era5(lat, lon, start, end, cfg)
-        if e5df is not None:
-            try:
-                era5_bands, _ = window_bands(e5df, start, end, cfg)
-                era5_note = f"ERA5 overlay ({e5status})."
-            except Exception as e:
-                era5_note = f"ERA5 comparison unavailable: {e}"
-        else:
-            era5_note = f"ERA5 comparison unavailable: {e5msg}"
-
-    ui = dict(lat=lat, lon=lon, mode=mode, hs=hs, wind=wind, cur_limits=cur_limits,
-              dur=float(dur or 6), nom=float(nom or 20), cfg=cfg, bands=bands,
-              era5_bands=era5_bands, era5_note=era5_note)
-    return _render(res, clim, source, int(pctile or 80), start, end, meta, ui)
+@callback(Output("ws-results", "children", allow_duplicate=True),
+          Output("ws-era5-poll", "disabled"),
+          Input("ws-era5-poll", "n_intervals"),
+          State("ws-era5-store", "data"),
+          prevent_initial_call=True)
+def _poll_era5(_n, args):
+    if not args:
+        return no_update, True
+    children, pending = _assemble(*args)
+    if pending:
+        return no_update, False          # still fetching — keep polling
+    return html.Div([children]), True    # ready (or failed) — replace, stop polling
 
 
 # ---------- helpers ----------
