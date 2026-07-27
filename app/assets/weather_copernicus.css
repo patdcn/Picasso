@@ -1,0 +1,13 @@
+/* Weather Stats (Copernicus) — print layout.
+   Screen: the per-depth print sheets are hidden (the interactive view with the
+   depth toggle is shown instead). Print: the interactive controls are hidden and
+   the three per-depth sheets each print on their own page. */
+
+.ws-printonly { display: none; }
+
+@media print {
+  .no-print { display: none !important; }
+  .ws-printonly { display: block !important; }
+  .ws-sheet { page-break-after: always; break-after: page; }
+  .ws-sheet:last-child { page-break-after: auto; break-after: auto; }
+}

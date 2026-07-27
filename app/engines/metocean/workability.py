@@ -184,6 +184,28 @@ class AssessResult:
 # ---------------------------------------------------------------------------
 # top-level assessment
 # ---------------------------------------------------------------------------
+def window_bands(df: pd.DataFrame, start, end, cfg: ClimatologyConfig):
+    """
+    Per-hour-of-window P10/P50/P90 across the look-back years, for each variable.
+    This is what the metocean strip draws — it responds to the look-back setting
+    (more years -> the band reflects them) rather than showing one arbitrary year.
+    Returns (bands, L) where bands[var] = {p10,p50,p90} arrays of length L.
+    """
+    wins, L = historical_windows(df, start, end, cfg, overrun_buffer_days=0)
+    if not wins:
+        return None, 0
+    bands = {}
+    for k in ("hs", "wind", "cur_surf", "cur_mid", "cur_bottom"):
+        M = np.vstack([w[2][k][:L] for w in wins])          # (n_years, L)
+        with np.errstate(all="ignore"):
+            bands[k] = {
+                "p10": np.nanpercentile(M, 10, axis=0),
+                "p50": np.nanpercentile(M, 50, axis=0),
+                "p90": np.nanpercentile(M, 90, axis=0),
+            }
+    return bands, L
+
+
 def assess(df: pd.DataFrame, start, end, mode: str,
            hs_max: float, wind_max: float, cur_limits: Dict[str, float],
            duration_h: int = 6, nominal_days: float = 30.0,

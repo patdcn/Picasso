@@ -29,7 +29,7 @@ from app import reports
 from app.engines.metocean import (
     build_climatology, ClimatologyConfig, assess,
     classify_region, current_dataset_for, get_series, credentials_present,
-    historical_windows, DEPTHS,
+    historical_windows, window_bands, DEPTHS,
 )
 
 dash.register_page(__name__, path="/weather/copernicus", name="Copernicus",
@@ -207,6 +207,16 @@ dash.clientside_callback(
     prevent_initial_call=True,
 )
 
+dash.clientside_callback(
+    "function(d){ const s=k=>({display: d===k ? 'block':'none'}); "
+    "return [s('cur_surf'), s('cur_mid'), s('cur_bottom')]; }",
+    Output("ws-screen-cur_surf", "style"),
+    Output("ws-screen-cur_mid", "style"),
+    Output("ws-screen-cur_bottom", "style"),
+    Input("ws-depth", "value"),
+    prevent_initial_call=True,
+)
+
 
 @callback(Output("ws-src-banner", "children"), Input("ws-run", "n_clicks"))
 def _banner(_):
@@ -287,10 +297,12 @@ def _run(_, lat, lon, sd, ed, pctile, lookback, halflife, recency, mode,
         clim = build_climatology(df, lat, lon, start, end, cfg)
         res = assess(df, start, end, mode, hs_max=hs, wind_max=wind, cur_limits=cur_limits,
                      duration_h=float(dur or 6), nominal_days=float(nom or 20), cfg=cfg, n_runs=500)
+        bands, _L = window_bands(df, start, end, cfg)
     except Exception as e:
         return _error(f"Assessment failed for this window: {e}")
-    strip = _strip(df, start, end, cfg, dict(hs=hs, wind=wind, **cur_limits))
-    return _render(res, clim, source, int(pctile or 80), start, end, strip, meta)
+    ui = dict(lat=lat, lon=lon, mode=mode, hs=hs, wind=wind, cur_limits=cur_limits,
+              dur=float(dur or 6), nom=float(nom or 20), cfg=cfg, bands=bands)
+    return _render(res, clim, source, int(pctile or 80), start, end, meta, ui)
 
 
 # ---------- helpers ----------
@@ -299,25 +311,44 @@ def _error(msg):
         "border": f"1px solid {NOGO}", "borderRadius": "10px", "font": "13px 'IBM Plex Mono'"})
 
 
-def _strip(df, start, end, cfg, lim):
-    wins, L = historical_windows(df, start, end, cfg, overrun_buffer_days=0)
-    if not wins:
-        return go.Figure()
-    arr = wins[-1][2]
-    n = min(L, len(arr["hs"]))
-    t = np.arange(n) / 24.0
-    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.07,
-                        subplot_titles=("Current (kn)", "Wave Hs (m)", "Wind (kn)"))
-    fig.add_trace(go.Scatter(x=t, y=arr["cur_surf"][:n], name="Surface", line=dict(color=CUR_S, width=1.2)), 1, 1)
-    fig.add_trace(go.Scatter(x=t, y=arr["cur_mid"][:n], name="Mid", line=dict(color=CUR_M, width=1.2)), 1, 1)
-    fig.add_trace(go.Scatter(x=t, y=arr["cur_bottom"][:n], name="Bottom", line=dict(color=CUR_B, width=1.2)), 1, 1)
-    for key in ("cur_surf", "cur_mid", "cur_bottom"):
-        fig.add_hline(y=lim[key], line=dict(color=DEPTH_COL[key], dash="dot", width=1), row=1, col=1)
-    fig.add_trace(go.Scatter(x=t, y=arr["hs"][:n], line=dict(color=WAVE, width=1.3), showlegend=False), 2, 1)
+DEPTH_LABEL = {"cur_surf": "Surface", "cur_mid": "Mid-water", "cur_bottom": "Bottom"}
+
+def _band(fig, row, x, b, color, name):
+    if b is None:
+        return
+    p10, p50, p90 = b["p10"], b["p50"], b["p90"]
+    import numpy as _np
+    if not _np.any(_np.isfinite(p50)):
+        return
+    fig.add_trace(go.Scatter(x=list(x) + list(x[::-1]),
+        y=list(p90) + list(p10[::-1]), fill="toself",
+        fillcolor=_rgba(color, 0.13), line=dict(width=0), hoverinfo="skip",
+        showlegend=False), row, 1)
+    fig.add_trace(go.Scatter(x=x, y=p50, line=dict(color=color, width=1.5),
+        name=name, showlegend=(row == 1)), row, 1)
+
+def _rgba(hexc, a):
+    h = hexc.lstrip("#")
+    return f"rgba({int(h[0:2],16)},{int(h[2:4],16)},{int(h[4:6],16)},{a})"
+
+def _strip(bands, L, lim, depth_key):
+    """Climatological band strip for ONE depth: current(depth), Hs, wind.
+    Each panel shows the P50 line with a P10-P90 shaded band across look-back years."""
+    import numpy as np
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
+                        subplot_titles=(f"Current — {DEPTH_LABEL[depth_key]} (kn)",
+                                        "Wave Hs (m)", "Wind (kn)"))
+    if bands is None:
+        return fig
+    L = len(bands["hs"]["p50"])
+    x = np.arange(L) / 24.0
+    _band(fig, 1, x, bands.get(depth_key), DEPTH_COL[depth_key], DEPTH_LABEL[depth_key])
+    fig.add_hline(y=lim[depth_key], line=dict(color=NOGO, dash="dot", width=1), row=1, col=1)
+    _band(fig, 2, x, bands.get("hs"), WAVE, "Hs")
     fig.add_hline(y=lim["hs"], line=dict(color=NOGO, dash="dot", width=1), row=2, col=1)
-    fig.add_trace(go.Scatter(x=t, y=arr["wind"][:n], line=dict(color=WIND, width=1.3), showlegend=False), 3, 1)
+    _band(fig, 3, x, bands.get("wind"), WIND, "Wind")
     fig.add_hline(y=lim["wind"], line=dict(color=NOGO, dash="dot", width=1), row=3, col=1)
-    fig.update_xaxes(title_text="days into window", row=3, col=1)
+    fig.update_xaxes(title_text="days into execution window", row=3, col=1)
     fig.update_layout(height=380, margin=dict(l=44, r=14, t=26, b=34),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#ffffff",
         font=dict(color=MUTED, size=10, family="IBM Plex Mono"),
@@ -368,72 +399,79 @@ def _depth_card_campaign(d, pctile, L_days):
     ], style={"background": bg, "border": f"1px solid {col}", "borderRadius": "10px", "padding": "12px 14px"})
 
 
-def _progress_chart(res, L_days):
+def _progress_one(d, L_days):
     fig = go.Figure()
-    for d in res.depths:
-        if not d.progress_days:
-            continue
-        fig.add_trace(go.Scatter(x=d.progress_days, y=d.progress_pct, name=d.label,
-            line=dict(color=DEPTH_COL[d.cur_key], width=1.6)))
+    if d.progress_days:
+        fig.add_trace(go.Scatter(x=d.progress_days, y=d.progress_pct,
+            line=dict(color=DEPTH_COL[d.cur_key], width=1.8), name=d.label))
     fig.add_hline(y=100, line=dict(color=MUTED, dash="dot", width=1))
     fig.add_vline(x=L_days, line=dict(color=NOGO, dash="dash", width=1),
                   annotation_text="client window", annotation_position="top")
-    fig.update_layout(height=240, margin=dict(l=48, r=14, t=14, b=36),
+    fig.update_layout(height=220, margin=dict(l=48, r=14, t=14, b=36),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#ffffff",
-        font=dict(color=MUTED, size=10, family="IBM Plex Mono"),
-        legend=dict(orientation="h", y=1.16, x=0, font=dict(size=10)),
+        font=dict(color=MUTED, size=10, family="IBM Plex Mono"), showlegend=False,
         xaxis_title="elapsed days", yaxis_title="work complete (%)")
     fig.update_xaxes(gridcolor=GRID, zeroline=False)
     fig.update_yaxes(gridcolor=GRID, zeroline=False, range=[0, 105])
     return fig
 
 
-def _render(res, clim, source, pctile, start, end, strip, meta=None):
-    L_days = (end - start).days or 1
+def _explanation(mode, hs, wind, cur_limits, dur, nom, start, end, cfg):
+    op = (f"a single weather-sensitive task needing {dur:g} h of continuous good weather"
+          if mode == "single" else
+          f"a campaign with {nom:g} days of nominal (good-weather) working time")
+    return html.Div([
+        html.Div("How to read this sheet", style={"font": "600 12px system-ui",
+            "textTransform": "uppercase", "letterSpacing": ".04em", "color": MUTED, "marginBottom": "6px"}),
+        html.P(["This assessment uses ", html.B("Copernicus Marine reanalysis"),
+                " — a modelled hindcast of past sea state, wind and currents (not a weather "
+                "forecast). Because the execution period is too far ahead to forecast, workability "
+                "is derived from the statistics of past years for the same calendar months."],
+               style={"margin": "0 0 5px"}),
+        html.P([html.B("Operation & limits: "), f"{op}. A given hour is workable when significant "
+                f"wave height ≤ {hs:g} m, wind ≤ {wind:g} kn, and the current at that depth is within "
+                f"its limit (surface {cur_limits['cur_surf']:g} / mid {cur_limits['cur_mid']:g} / "
+                f"bottom {cur_limits['cur_bottom']:g} kn)."], style={"margin": "0 0 5px"}),
+        html.P([html.B("Climatology: "), f"built from the last {cfg.lookback_years} years of reanalysis, "
+                f"filtered to the execution months, with {cfg.recency} recency weighting so recent "
+                "years count for more (guarding against a shifting climate)."], style={"margin": "0 0 5px"}),
+        html.P([html.B("P50 / P80 / P90: "), "percentiles across those historical years. P50 is the "
+                "median (expected) outcome, P80 the recommended planning/budget figure (only 1 year in 5 "
+                "is worse), P90 a conservative cover. Price the spread against P80."],
+               style={"margin": "0"}),
+    ], style={"font": "11.5px system-ui", "color": MUTED, "lineHeight": "1.5",
+              "background": SOFT, "border": f"1px solid {GRID}", "borderRadius": "8px",
+              "padding": "11px 13px", "marginBottom": "14px"})
+
+
+def _summary_line(lat, lon, start, end, mode, res):
+    reg = classify_region(lat, lon)
+    op = (f"single task · {res.duration_h} h window" if mode == "single"
+          else f"campaign · {res.nominal_hours/24:.0f} d nominal")
+    return html.Div([html.B(reg.label), f"  ·  {lat:.3f}, {lon:.3f}  ·  ",
+        f"{pd.Timestamp(start):%d %b %Y} → {pd.Timestamp(end):%d %b %Y}  ·  {op}"],
+        style={"font": "11.5px 'IBM Plex Mono'", "color": INK, "marginBottom": "10px"})
+
+
+def _banner(source, meta):
     meta = meta or {}
-    banner = None
     if source == "demo":
         err = meta.get("error", "")
         msg = ("Showing DEMO data — configure CMEMS credentials for live reanalysis."
                if not err else f"Live fetch failed, showing DEMO data. Reason: {err}")
-        banner = html.Div(msg, style={"font": "12px 'IBM Plex Mono'", "color": MARG,
+        return html.Div(msg, style={"font": "12px 'IBM Plex Mono'", "color": MARG,
             "background": MARG_BG, "border": f"1px solid {MARG}", "borderRadius": "8px",
             "padding": "8px 10px", "marginBottom": "12px"})
-    elif source == "live" and meta.get("current_source") == "GLOBAL":
-        banner = html.Div("Live reanalysis. Currents from global GLORYS (regional IBI unavailable "
-                          "here) — coarser, daily-mean, no tidal cycle. " + meta.get("current_note", ""),
-            style={"font": "12px 'IBM Plex Mono'", "color": MUTED, "background": SOFT,
-                   "border": f"1px solid {GRID}", "borderRadius": "8px", "padding": "8px 10px",
-                   "marginBottom": "12px"})
-    elif source == "live":
-        banner = html.Div("Live reanalysis. " + meta.get("current_note", ""),
-            style={"font": "12px 'IBM Plex Mono'", "color": MUTED, "background": SOFT,
-                   "border": f"1px solid {GRID}", "borderRadius": "8px", "padding": "8px 10px",
-                   "marginBottom": "12px"})
-
-    if res.mode == "single":
-        title = f"Single task · {res.duration_h} h continuous window · {res.n_years} historical years"
-        cards = [_depth_card_single(d) for d in res.depths]
+    note = meta.get("current_note", "")
+    if source == "live" and meta.get("current_source") == "GLOBAL":
+        txt = "Live reanalysis. Currents from global GLORYS (regional IBI unavailable here) — daily-mean. " + note
     else:
-        title = (f"Campaign · {res.nominal_hours/24:.0f} d nominal work · client window {L_days} d · "
-                 f"P{pctile} · {res.n_years} historical years")
-        cards = [_depth_card_campaign(d, pctile, L_days) for d in res.depths]
+        txt = "Live reanalysis. " + note
+    return html.Div(txt, style={"font": "12px 'IBM Plex Mono'", "color": MUTED, "background": SOFT,
+        "border": f"1px solid {GRID}", "borderRadius": "8px", "padding": "8px 10px", "marginBottom": "12px"})
 
-    head = html.Div([html.Div(title, style=_H),
-        html.Div(cards, style={"display": "grid", "gridTemplateColumns": "repeat(3,1fr)", "gap": "10px"})],
-        style=_CARD)
 
-    progress_panel = None
-    if res.mode == "campaign":
-        progress_panel = html.Div([
-            html.Div("Cumulative progress · nominal work vs elapsed calendar (weather delay)", style=_H),
-            dcc.Graph(figure=_progress_chart(res, L_days), config={"displayModeBar": False}),
-            html.Div("Each curve is the mean fraction of the nominal work completed as calendar days "
-                     "elapse; the gap between the client-window line and where a curve reaches 100% is "
-                     "the weather delay. A curve that flattens is a stretch of unworkable weather.",
-                     style={"font": "11px system-ui", "color": DIM, "marginTop": "4px"}),
-        ], style=_CARD)
-
+def _clim_panel(clim):
     def trend_line(k):
         tr = clim.trends.get(k)
         if not tr:
@@ -444,8 +482,7 @@ def _render(res, clim, source, pctile, start, end, strip, meta=None):
             f"{tr.slope_per_decade:+.3f}/decade ({tr.stat}), p={tr.p_value:.3f} ",
             html.Span(f"[{sig}]", style={"color": c})],
             style={"font": "11.5px 'IBM Plex Mono'", "margin": "2px 0"})
-
-    clim_panel = html.Div([
+    return html.Div([
         html.Div("Climatology & trend", style=_H),
         html.Div(f"months {clim.months} · look-back {clim.lookback_years} y · recency {clim.recency}",
                  style={"font": "11px system-ui", "color": DIM, "marginBottom": "8px"}),
@@ -457,14 +494,86 @@ def _render(res, clim, source, pctile, start, end, strip, meta=None):
         *[x for x in (trend_line("hs"), trend_line("wind")) if x],
     ], style=_CARD)
 
+
+def _depth_figures(d, res, pctile, start, end, ui):
+    """Strip + (campaign) progress for one depth — used both on screen and per print page."""
+    L_days = (end - start).days or 1
+    lim = dict(hs=ui["hs"], wind=ui["wind"], **ui["cur_limits"])
+    kids = [html.Div([html.Div(f"Metocean strip · {DEPTH_LABEL[d.cur_key]} · climatological band "
+                               f"(P50 line, P10–P90 shaded) over {ui['cfg'].lookback_years} yr", style=_H),
+                      dcc.Graph(figure=_strip(ui["bands"], (end - start).days * 24 or 24, lim, d.cur_key),
+                                config={"displayModeBar": False})], style=_CARD)]
+    if res.mode == "campaign":
+        kids.append(html.Div([
+            html.Div(f"Cumulative progress · {DEPTH_LABEL[d.cur_key]} · nominal work vs elapsed", style=_H),
+            dcc.Graph(figure=_progress_one(d, L_days), config={"displayModeBar": False}),
+            html.Div("Work-complete (%) against elapsed days; the gap to the client-window line is the "
+                     "weather delay. A flat stretch is unworkable weather.",
+                     style={"font": "11px system-ui", "color": DIM, "marginTop": "4px"}),
+        ], style=_CARD))
+    return kids
+
+
+def _render(res, clim, source, pctile, start, end, meta=None, ui=None):
+    ui = ui or {}
+    L_days = (end - start).days or 1
+    banner = _banner(source, meta)
+
+    if res.mode == "single":
+        title = f"Single task · {res.duration_h} h continuous window · {res.n_years} historical years"
+        card_fn = lambda d: _depth_card_single(d)
+    else:
+        title = (f"Campaign · {res.nominal_hours/24:.0f} d nominal work · client window {L_days} d · "
+                 f"P{pctile} · {res.n_years} historical years")
+        card_fn = lambda d: _depth_card_campaign(d, pctile, L_days)
+
+    overview = html.Div([html.Div(title, style=_H),
+        html.Div([card_fn(d) for d in res.depths],
+                 style={"display": "grid", "gridTemplateColumns": "repeat(3,1fr)", "gap": "10px"})],
+        style=_CARD)
+
+    toggle = html.Div([
+        html.Span("Show depth: ", style={"font": "600 12px system-ui", "color": MUTED, "marginRight": "8px"}),
+        dcc.RadioItems(id="ws-depth",
+            options=[{"label": f" {d.label}", "value": d.cur_key} for d in res.depths],
+            value=res.depths[0].cur_key, inline=True,
+            inputStyle={"marginRight": "5px"}, labelStyle={"marginRight": "16px"},
+            style={"display": "inline-block", "font": "13px system-ui"}),
+    ], className="no-print", style={"marginBottom": "10px"})
+
+    # on-screen per-depth panels (only selected shown; toggled clientside)
+    screen_panels = []
+    for i, d in enumerate(res.depths):
+        screen_panels.append(html.Div(_depth_figures(d, res, pctile, start, end, ui),
+            id=f"ws-screen-{d.cur_key}",
+            style={"display": "block" if i == 0 else "none"}))
+
+    # print sheets: one page per depth, each self-contained with the explanation
+    sheets = []
+    for d in res.depths:
+        sheets.append(html.Div([
+            _explanation(res.mode, ui.get("hs"), ui.get("wind"), ui.get("cur_limits"),
+                         ui.get("dur"), ui.get("nom"), start, end, ui.get("cfg")),
+            _summary_line(ui.get("lat"), ui.get("lon"), start, end, res.mode, res),
+            html.Div(f"{DEPTH_LABEL[d.cur_key]} depth", style={"font": "600 14px system-ui",
+                     "color": INK, "margin": "0 0 8px"}),
+            html.Div([card_fn(d)], style={"maxWidth": "320px", "marginBottom": "12px"}),
+            *_depth_figures(d, res, pctile, start, end, ui),
+            _clim_panel(clim),
+        ], className="ws-sheet"))
+    print_block = html.Div(sheets, className="ws-printonly")
+
+    footer_note = html.Div("Currents from daily-mean reanalysis don't resolve the tidal cycle at "
+        "tide-dominated sites; confirm slack against tide tables. Bottom is the deepest wet model level "
+        "(the seabed at this cell); mid-water is half that depth.",
+        style={"font": "11px system-ui", "color": DIM, "lineHeight": "1.5", "marginTop": "8px"})
+
     return html.Div([
-        banner, head, progress_panel,
-        html.Div([html.Div("Metocean strip · representative recent-year window", style=_H),
-                  dcc.Graph(figure=strip, config={"displayModeBar": False})], style=_CARD),
-        clim_panel,
-        html.Div("Currents from daily-mean reanalysis don't resolve the tidal cycle at tide-dominated "
-                 "sites; confirm slack against tide tables. Bottom is the deepest wet model level (the "
-                 "seabed at this cell); mid-water is half that depth. Wave/wind statistics are "
-                 "recency-weighted over the look-back window.",
-                 style={"font": "11px system-ui", "color": DIM, "lineHeight": "1.5"}),
+        banner,
+        html.Div(_explanation(res.mode, ui.get("hs"), ui.get("wind"), ui.get("cur_limits"),
+                              ui.get("dur"), ui.get("nom"), start, end, ui.get("cfg")),
+                 className="no-print"),
+        html.Div([overview, toggle, *screen_panels, _clim_panel(clim), footer_note],
+                 className="no-print"),
+        print_block,
     ])
