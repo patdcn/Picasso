@@ -29,8 +29,19 @@
     page-break-after: always; break-after: page;
     width: 186mm; margin: 0 auto;
     font-size: 11px;
+    /* Uniform scale so ONE depth fits ONE A4 page (letterhead + explanation +
+       card + strip [+ progress] + climatology + footer). TUNING: if a sheet
+       spills onto a second page, lower this; if pages look empty, raise it. */
+    zoom: 0.80;
   }
-  .ws-sheet:last-child { page-break-after: auto; break-after: auto; }
+  .ws-sheet:last-child {
+    page-break-after: avoid !important; break-after: avoid !important;
+    margin-bottom: 0 !important;
+  }
+  /* no phantom trailing page from stretched containers */
+  body:has(.ws-printonly), html:has(.ws-printonly) {
+    height: auto !important; min-height: 0 !important;
+  }
 
   /* keep each card/figure/letterhead block intact on its page */
   .ws-sheet > div { break-inside: avoid; page-break-inside: avoid; }

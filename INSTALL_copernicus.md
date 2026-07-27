@@ -107,3 +107,21 @@ the cache so the page is instant afterwards:
     "
 
 (The app runs from /code, so PYTHONPATH=/code is needed for a manual terminal run.)
+
+---
+
+## Cache schema versioning (fix for stale mid/bottom currents)
+
+The CMEMS point cache is keyed by lat/lon only, so frames written by OLD code
+versions (fixed 34 m depth, no cur_mid) were served forever at previously
+visited points — that is why 53.02/3.24 showed "current n/a" at mid/bottom
+while a freshly fetched point worked. Cache filenames now carry a schema tag
+(pt_v2_...) and are validated on read (all five columns + probed depth attrs),
+so old-format pickles are ignored automatically and currents are re-fetched.
+
+After deploying, the first run at a previously cached point re-pulls CMEMS
+(takes a minute or two) and then shows all three depths with the
+"surface/mid/bottom" note in the banner. Optional disk cleanup of the orphaned
+old files (safe, they are no longer read):
+
+    rm -f /data/metocean_cache/pt_*_d*.pkl

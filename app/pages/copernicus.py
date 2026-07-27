@@ -619,22 +619,26 @@ def _progress_one(d, L_days):
     return fig
 
 
-def _explanation(mode, hs, wind, cur_limits, dur, nom, start, end, cfg):
+def _explanation(mode, hs, wind, cur_limits, dur, nom, start, end, cfg, compact=False):
+    fs = "10px" if compact else "11.5px"
+    mg = "0 0 3px" if compact else "0 0 6px"
+    pad = "8px 10px" if compact else "11px 13px"
+    lh = "1.35" if compact else "1.5"
     op = (f"a single weather-sensitive task needing {dur:g} h of continuous good weather"
           if mode == "single" else
           f"a campaign with {nom:g} days of nominal (good-weather) working time")
     return html.Div([
         html.Div("How to read this sheet", style={"font": "600 12px system-ui",
-            "textTransform": "uppercase", "letterSpacing": ".04em", "color": MUTED, "marginBottom": "6px"}),
+            "textTransform": "uppercase", "letterSpacing": ".04em", "color": MUTED, "marginBottom": ("4px" if compact else "6px")}),
         html.P(["This assessment uses ", html.B("Copernicus Marine reanalysis"),
                 " — a modelled hindcast of past sea state, wind and currents (not a weather "
                 "forecast). Because the execution period is too far ahead to forecast, workability "
                 "is derived from the statistics of past years for the same calendar months."],
-               style={"margin": "0 0 5px"}),
+               style={"margin": mg}),
         html.P([html.B("Operation & limits: "), f"{op}. A given hour is workable when significant "
                 f"wave height ≤ {hs:g} m, wind ≤ {wind:g} kn, and the current at that depth is within "
                 f"its limit (surface {cur_limits['cur_surf']:g} / mid {cur_limits['cur_mid']:g} / "
-                f"bottom {cur_limits['cur_bottom']:g} kn)."], style={"margin": "0 0 5px"}),
+                f"bottom {cur_limits['cur_bottom']:g} kn)."], style={"margin": mg}),
         html.P([html.B("Climatology: "), f"built from the last {cfg.lookback_years} years of reanalysis, "
                 f"filtered to the execution months, with {cfg.recency} recency weighting so recent "
                 "years count for more (guarding against a shifting climate)."
@@ -642,20 +646,20 @@ def _explanation(mode, hs, wind, cur_limits, dur, nom, start, end, cfg):
                    f"year {cfg.half_life_years:g} years old counts half as much as the most recent, "
                    f"{cfg.half_life_years*2:g} years old a quarter, and so on."
                    if cfg.recency == "exponential" else "")],
-               style={"margin": "0 0 5px"}),
+               style={"margin": mg}),
         html.P([html.B("P50 / P80 / P90: "), "percentiles across those historical years. P50 is the "
                 "median (expected) outcome, P80 the recommended planning/budget figure (only 1 year in 5 "
                 "is worse), P90 a conservative cover. Price the spread against P80."],
-               style={"margin": "0 0 6px"}),
+               style={"margin": mg}),
         html.P([html.B("ERA5 cross-check: "), "where shown, the dashed lines on the Hs and wind panels "
                 "are ERA5 (ECMWF) — a fully independent reanalysis from a different provider. It is a "
                 "second opinion on wave and wind only (ERA5 has no currents); close agreement with "
                 "CMEMS corroborates the workability basis. Note both assimilate satellite data, so "
                 "agreement is a consistency check rather than fully independent validation."],
                style={"margin": "0"}),
-    ], style={"font": "11.5px system-ui", "color": MUTED, "lineHeight": "1.5",
+    ], style={"font": f"{fs} system-ui", "color": MUTED, "lineHeight": lh,
               "background": SOFT, "border": f"1px solid {GRID}", "borderRadius": "8px",
-              "padding": "11px 13px", "marginBottom": "14px"})
+              "padding": pad, "marginBottom": ("10px" if compact else "14px")})
 
 
 def _summary_line(lat, lon, start, end, mode, res):
@@ -718,9 +722,9 @@ def _depth_figures(d, res, pctile, start, end, ui, print_mode=False):
     strip_fig = _strip(ui["bands"], (end - start).days * 24 or 24, lim, d.cur_key,
                        era5_bands=ui.get("era5_bands"))
     if print_mode:
-        strip_fig.update_layout(width=680, height=330, font=dict(size=9),
+        strip_fig.update_layout(width=680, height=300, font=dict(size=9),
                                 legend=dict(font=dict(size=8.5)),
-                                margin=dict(l=40, r=10, t=24, b=30))
+                                margin=dict(l=40, r=10, t=22, b=28))
     kids = [html.Div([html.Div(f"Metocean strip · {DEPTH_LABEL[d.cur_key]} · climatological band "
                                f"(P50 line, P10–P90 shaded) over {ui['cfg'].lookback_years} yr", style=_H),
                       dcc.Graph(figure=strip_fig,
@@ -750,8 +754,8 @@ def _depth_figures(d, res, pctile, start, end, ui, print_mode=False):
     if res.mode == "campaign":
         prog_fig = _progress_one(d, L_days)
         if print_mode:
-            prog_fig.update_layout(width=680, height=180, font=dict(size=9),
-                                   margin=dict(l=44, r=10, t=10, b=30))
+            prog_fig.update_layout(width=680, height=160, font=dict(size=9),
+                                   margin=dict(l=44, r=10, t=8, b=28))
         kids.append(html.Div([
             html.Div(f"Cumulative progress · {DEPTH_LABEL[d.cur_key]} · nominal work vs elapsed", style=_H),
             dcc.Graph(figure=prog_fig, config={"displayModeBar": False, "staticPlot": print_mode}),
@@ -813,7 +817,7 @@ def _render(res, clim, source, pctile, start, end, meta=None, ui=None):
                      style={"font": "700 15px system-ui", "color": INK, "margin": "0 0 6px"}),
             _summary_line(ui.get("lat"), ui.get("lon"), start, end, res.mode, res),
             _explanation(res.mode, ui.get("hs"), ui.get("wind"), ui.get("cur_limits"),
-                         ui.get("dur"), ui.get("nom"), start, end, ui.get("cfg")),
+                         ui.get("dur"), ui.get("nom"), start, end, ui.get("cfg"), compact=True),
             html.Div([card_fn(d)], style={"maxWidth": "320px", "marginBottom": "10px"}),
             *_depth_figures(d, res, pctile, start, end, ui, print_mode=True),
             _clim_panel(clim),

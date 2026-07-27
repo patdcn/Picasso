@@ -41,8 +41,27 @@ def credentials_present() -> bool:
     return cfg.exists()
 
 
-def _key(lat: float, lon: float, depth: float) -> Path:
-    return CACHE_DIR / f"pt_{lat:.2f}_{lon:.2f}_d{depth:.0f}.pkl"
+def _key(lat: float, lon: float, depth: float = 0.0) -> Path:
+    # _SCHEMA is baked into the filename: bump it whenever the cached frame's
+    # columns/attrs change, so pickles written by older code versions are simply
+    # never matched again (they'd otherwise serve stale, wrong-shaped data —
+    # e.g. the pre-depth-walk frames with no cur_mid and an all-NaN bottom).
+    return CACHE_DIR / f"pt_{_SCHEMA}_{lat:.2f}_{lon:.2f}.pkl"
+
+
+_SCHEMA = "v2"
+_REQUIRED_COLS = ("hs", "wind", "cur_surf", "cur_mid", "cur_bottom")
+
+
+def _cache_valid(df) -> bool:
+    """A cached frame is usable only if it has the full current-schema shape:
+    all five columns and the probed depth attrs. A frame whose current fetch
+    failed (depth attrs None) is treated as a miss so currents get retried."""
+    try:
+        return (all(c in df.columns for c in _REQUIRED_COLS)
+                and df.attrs.get("depth_surf") is not None)
+    except Exception:
+        return False
 
 
 def get_series(lat: float, lon: float, working_depth_m: float = 34.0,
@@ -50,18 +69,19 @@ def get_series(lat: float, lon: float, working_depth_m: float = 34.0,
     """
     Return (dataframe, source, meta) where source is 'live' | 'cache' | 'demo'
     and meta is a dict: {current_source, current_note, error}.
-    Columns: hs, wind, cur_surf, cur_bottom (hourly, UTC index).
+    Columns: hs, wind, cur_surf, cur_mid, cur_bottom (hourly, UTC index).
     """
-    path = _key(lat, lon, working_depth_m)
+    path = _key(lat, lon)
 
     if path.exists() and not force:
         try:
             df = pd.read_pickle(path)
-            return df, "cache", {"current_source": df.attrs.get("current_source", ""),
-                                 "current_note": df.attrs.get("current_note", ""),
-                                 "error": ""}
+            if _cache_valid(df):
+                return df, "cache", {"current_source": df.attrs.get("current_source", ""),
+                                     "current_note": df.attrs.get("current_note", ""),
+                                     "error": ""}
         except Exception:
-            pass  # corrupt cache -> refetch
+            pass  # corrupt/stale cache -> refetch
 
     if credentials_present() and _fetch.fetch_point is not None:
         try:
