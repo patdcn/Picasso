@@ -13,6 +13,15 @@ SeaVantage workspace registration management per vessel:
   Removal uses a two-step in-row confirm (the portal's standard pattern -
   ConfirmDialogProvider crashes pages client-side).
 - A counter guards the account cap (SV_MAX_SHIPS, default 250).
+- Rows are editable (Edit -> Save/Cancel). Identity fields (name, IMO,
+  MMSI) are locked once the vessel is registered at SeaVantage. Owner and
+  operator are edited as one combined "Owner / Operator" field, split on
+  the first "/" when saving.
+- Non-registered vessels get an "update name" button that pulls the
+  AIS-broadcast name from `latest` (fed by both collectors) - the
+  authoritative source for the name a vessel actually transmits.
+- Region is refreshed automatically from each vessel's last known
+  position every time the page loads.
 
 All actions run inside try/except and report through a status banner; the
 page never dies on API or DB trouble.
@@ -51,6 +60,36 @@ DELETE_LOCK_DAYS = 7
 
 def _removable_from(ts):
     return ts + timedelta(days=DELETE_LOCK_DAYS)
+
+
+def _title_name(ais_name):
+    """AIS names are ALL CAPS; capitalize plain words but keep tokens that
+    look like acronyms or designators: containing digits (285) or without
+    vowels (PMS, HYSY, CCC, II)."""
+    out = []
+    for w in (ais_name or "").split():
+        keep = (any(ch.isdigit() for ch in w)
+                or not any(v in w.lower() for v in "aeiou")
+                or set(w.upper()) <= set("IVX"))       # roman numerals (II, III)
+        if keep:
+            out.append(w)
+        else:
+            out.append(w.capitalize())
+    return " ".join(out)
+
+
+def _owner_op(owner, operator):
+    if owner and operator:
+        return f"{owner} / {operator}"
+    return owner or operator or ""
+
+
+def _split_owner_op(value):
+    value = (value or "").strip()
+    if "/" in value:
+        left, right = value.split("/", 1)
+        return left.strip() or None, right.strip() or None
+    return value or None, None
 
 
 def _status_and_action(imo, registered_at, match_result, pending_delete):
@@ -93,34 +132,85 @@ def _status_and_action(imo, registered_at, match_result, pending_delete):
     return status, action
 
 
-def _build_table(pending_delete=None):
+def _edit_input(field, value, disabled=False, width="110px"):
+    return dcc.Input(
+        id={"type": "vtf-f", "field": field}, value=value or "",
+        disabled=disabled, debounce=False,
+        style={"width": width, "fontSize": "0.8rem", "padding": "2px 5px",
+               "border": f"1px solid {LINE}", "borderRadius": "5px",
+               "background": "#f3f4f6" if disabled else "white"})
+
+
+def _build_table(pending_delete=None, editing=None):
     rows = ais_db.fleet_with_sv()
     n_reg = ais_db.sv_registered_count()
     cap = sv_api.SV_MAX_SHIPS
     at_cap = n_reg >= cap
 
-    headers = ["Vessel", "IMO", "MMSI", "Owner / BB Charterer", "Operator",
+    headers = ["Vessel", "", "IMO", "MMSI", "Owner / Operator",
                "Built", "Flag", "Region", "Tier", "Notes",
-               "SeaVantage", "Action"]
+               "SeaVantage", "Action", ""]
     body = []
     for (imo, mmsi, name, owner, operator, built, flag, region, tier, notes,
-         active, ship_id, registered_at, match_result, ais_name) in rows:
+         active, ship_id, registered_at, match_result, ais_name,
+         _lat, _lon) in rows:
+        locked = registered_at is not None
         status, action = _status_and_action(imo, registered_at, match_result,
                                             pending_delete)
         if registered_at is None and at_cap:
             action = html.Button("Add", disabled=True, style=_BTN_DISABLED,
                                  title=f"Account limit reached ({cap} vessels)")
         style = {} if active else {"color": "#aeb4bd"}
-        def td(c, extra=None, tip=None):
-            st = {**_CELL, **style, **(extra or {})}
-            return html.Td(c, style=st, title=tip)
-        body.append(html.Tr([
-            td(name), td(str(imo)), td(str(mmsi or "—")),
-            td(owner or "—", _ELLIPSIS, owner), td(operator or "—", _ELLIPSIS, operator),
-            td(built or "—"), td(flag or "—"), td(region or "—"), td(tier or "—"),
-            td(notes or "—", _ELLIPSIS, notes),
-            td(status), td(action),
-        ]))
+
+        if editing == str(imo):
+            # --- edit mode: inputs; identity locked when SV-registered ----
+            cells = [
+                _edit_input("name", name, disabled=locked, width="150px"),
+                "",
+                _edit_input("imo", str(imo), disabled=locked, width="78px"),
+                _edit_input("mmsi", str(mmsi or ""), disabled=locked, width="90px"),
+                _edit_input("owner_op", _owner_op(owner, operator), width="190px"),
+                _edit_input("built", built, width="70px"),
+                _edit_input("flag", flag, width="60px"),
+                _edit_input("region", region, width="70px"),
+                _edit_input("tier", tier, width="60px"),
+                _edit_input("notes", notes, width="150px"),
+                status,
+                action,
+                html.Span([
+                    html.Button("Save", id="vtf-save", n_clicks=0,
+                                style={**_BTN, "background": "#f0fdf4",
+                                       "borderColor": "#bbf7d0", "color": GREEN,
+                                       "marginRight": "5px"}),
+                    html.Button("Cancel", id="vtf-cancel", n_clicks=0, style=_BTN),
+                ]),
+            ]
+        else:
+            name_btn = ""
+            if not locked:
+                name_btn = html.Button(
+                    "\u21bb name", n_clicks=0,
+                    id={"type": "vtf-nm", "imo": str(imo)},
+                    title="Fetch the AIS-broadcast name (from the collectors) "
+                          "and update the vessel name",
+                    style={**_BTN, "padding": "1px 7px", "fontSize": "0.72rem"})
+            cells = [
+                name, name_btn, str(imo), str(mmsi or "\u2014"),
+                _owner_op(owner, operator) or "\u2014",
+                built or "\u2014", flag or "\u2014", region or "\u2014",
+                tier or "\u2014", notes or "\u2014",
+                status, action,
+                html.Button("Edit", n_clicks=0,
+                            id={"type": "vtf-edit", "imo": str(imo)},
+                            style={**_BTN, "padding": "1px 8px",
+                                   "fontSize": "0.72rem"}),
+            ]
+
+        def td(c, i):
+            extra = _ELLIPSIS if i in (4, 9) and editing != str(imo) else {}
+            tip = c if isinstance(c, str) and i in (4, 9) else None
+            return html.Td(c, style={**_CELL, **style, **extra}, title=tip)
+        body.append(html.Tr([td(c, i) for i, c in enumerate(cells)]))
 
     table = html.Div(
         html.Table(
@@ -159,6 +249,7 @@ layout = html.Div(className="full-width-page", children=[
     ], style={"margin": "6px 0 4px"}),
     html.Div(id="vtf-banner"),
     dcc.Store(id="vtf-pending-delete", data=None),
+    dcc.Store(id="vtf-editing", data=None),
     dcc.Loading(html.Div(id="vtf-content"), type="default"),
 ])
 
@@ -168,43 +259,112 @@ layout = html.Div(className="full-width-page", children=[
     Output("vtf-counter", "children"),
     Output("vtf-banner", "children"),
     Output("vtf-pending-delete", "data"),
+    Output("vtf-editing", "data"),
     Input("vtf-refresh", "n_clicks"),
     Input({"type": "vtf-add", "imo": dash.ALL}, "n_clicks"),
     Input({"type": "vtf-del", "imo": dash.ALL}, "n_clicks"),
     Input({"type": "vtf-del-confirm", "imo": dash.ALL}, "n_clicks"),
     Input({"type": "vtf-del-cancel", "imo": dash.ALL}, "n_clicks"),
+    Input({"type": "vtf-edit", "imo": dash.ALL}, "n_clicks"),
+    Input({"type": "vtf-nm", "imo": dash.ALL}, "n_clicks"),
+    Input("vtf-save", "n_clicks"),
+    Input("vtf-cancel", "n_clicks"),
+    State({"type": "vtf-f", "field": dash.ALL}, "value"),
+    State({"type": "vtf-f", "field": dash.ALL}, "id"),
     State("vtf-pending-delete", "data"),
+    State("vtf-editing", "data"),
 )
-def _fleet_actions(_r, _a, _d, _dc, _dx, pending):
+def _fleet_actions(_r, _a, _d, _dc, _dx, _e, _nm, _sv, _cx,
+                   f_values, f_ids, pending, editing):
     trig = ctx.triggered_id
-    # guard against pattern-matched fall-through on (re)render: only act on a
-    # real click (triggered value truthy); otherwise just (re)build the table
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
     banner, ok = None, True
-    new_pending = None
+    new_pending, new_editing = None, editing
 
     try:
-        if isinstance(trig, dict) and clicked:
+        if clicked and isinstance(trig, dict):
             imo = int(trig["imo"])
             kind = trig["type"]
             if kind == "vtf-del":
-                new_pending = str(imo)                       # step 1 of confirm
+                new_pending, new_editing = str(imo), None
             elif kind == "vtf-del-cancel":
                 new_pending = None
             elif kind == "vtf-add":
                 banner, ok = _do_add(imo)
+                new_editing = None
             elif kind == "vtf-del-confirm":
                 banner, ok = _do_remove(imo)
+            elif kind == "vtf-edit":
+                new_editing = str(imo)
+            elif kind == "vtf-nm":
+                banner, ok = _do_update_name(imo)
+        elif clicked and trig == "vtf-save" and editing:
+            fields = {fid["field"]: (val or "").strip()
+                      for fid, val in zip(f_ids, f_values)}
+            banner, ok = _do_save(int(editing), fields)
+            new_editing = None
+        elif clicked and trig == "vtf-cancel":
+            new_editing = None
     except (ais_db.AisDbError, sv_api.SvApiError) as exc:
         banner, ok = str(exc), False
     except Exception as exc:  # never kill the page
         banner, ok = f"Unexpected error: {exc}", False
 
+    # refresh regions from last known positions on every (re)build
     try:
-        table, counter = _build_table(pending_delete=new_pending)
-    except (ais_db.AisDbError, Exception) as exc:
-        return _banner(str(exc), ok=False), "", None, None
-    return table, counter, _banner(banner, ok), new_pending
+        n_regions = ais_db.fleet_auto_update_regions()
+        if n_regions and banner is None:
+            banner, ok = f"{n_regions} region(s) updated from last known positions.", True
+    except ais_db.AisDbError:
+        pass
+
+    try:
+        table, counter = _build_table(pending_delete=new_pending,
+                                      editing=new_editing)
+    except Exception as exc:
+        return _banner(str(exc), ok=False), "", None, None, None
+    return table, counter, _banner(banner, ok), new_pending, new_editing
+
+
+def _do_update_name(imo):
+    row = _fleet_row(imo)
+    mmsi, name = row[1], row[2]
+    if not mmsi:
+        return f"{name}: no MMSI on record, cannot look up the AIS name.", False
+    ais_name = ais_db.fleet_ais_name(mmsi)
+    if not ais_name:
+        return (f"{name}: no AIS broadcast received yet (vessel not heard "
+                f"by either collector so far).", False)
+    new_name = _title_name(ais_name)
+    if new_name == name:
+        return f"{name}: AIS name matches, nothing to update.", True
+    ais_db.fleet_update(imo, {"name": new_name})
+    return f"Name updated: {name} \u2192 {new_name} (AIS broadcast).", True
+
+
+def _do_save(imo, fields):
+    row = _fleet_row(imo)
+    locked = row[12] is not None      # registered_at
+    name = row[2]
+    updates = {}
+    owner, operator = _split_owner_op(fields.get("owner_op"))
+    updates["owner"], updates["operator"] = owner, operator
+    for k in ("built", "flag", "region", "tier", "notes"):
+        updates[k] = fields.get(k) or None
+    if not locked:
+        if fields.get("name"):
+            updates["name"] = fields["name"]
+        m = fields.get("mmsi") or ""
+        if m and not m.isdigit():
+            return f"MMSI must be numeric, got '{m}'.", False
+        updates["mmsi"] = int(m) if m else None
+        new_imo = fields.get("imo") or ""
+        if new_imo and not new_imo.isdigit():
+            return f"IMO must be numeric, got '{new_imo}'.", False
+        if new_imo and int(new_imo) != imo:
+            updates["imo"] = int(new_imo)
+    ais_db.fleet_update(imo, updates)
+    return f"{updates.get('name', name)} saved.", True
 
 
 def _fleet_row(imo):

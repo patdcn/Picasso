@@ -123,7 +123,7 @@ def fleet_with_sv():
         """SELECT f.imo, f.mmsi, f.name, f.owner, f.operator, f.built, f.flag,
                   f.region, f.tier, f.notes, f.active,
                   s.ship_id, s.registered_at, s.match_result,
-                  l.ship_name AS ais_name
+                  l.ship_name AS ais_name, l.lat, l.lon
            FROM fleet f
            LEFT JOIN sv_ship s ON s.imo = f.imo
            LEFT JOIN latest l ON l.mmsi = f.mmsi
@@ -158,35 +158,68 @@ def sv_clear_registration(imo):
     q("UPDATE sv_ship SET registered_at=NULL WHERE imo=%s", (imo,))
 
 
-def latest_positions():
-    """All vessels present in the track database (latest fix per vessel),
-    with the fleet name as primary label. Ordered by name."""
-    return q(
-        """SELECT l.mmsi,
-                  COALESCE(f.name, initcap(lower(l.ship_name)), l.mmsi::text) AS name,
-                  l.ts, l.lat, l.lon, l.sog, l.nav_status, l.destination
-           FROM latest l
-           LEFT JOIN fleet f ON f.mmsi = l.mmsi
-           ORDER BY name"""
-    )
+# --- fleet editing -----------------------------------------------------------
+_FLEET_EDITABLE = ("name", "owner", "operator", "built", "flag", "region",
+                   "tier", "notes", "mmsi", "imo")
 
 
-def track(mmsi, days=30, max_points=1200):
-    """Track points for one vessel over the given window (both sources,
-    chronological). Thinned by striding to at most max_points, keeping the
-    first and last point."""
+def fleet_update(imo, updates):
+    """Update whitelisted fleet columns for one vessel. Changing IMO (the
+    primary key) also moves the sv_ship mapping along."""
+    fields = {k: v for k, v in updates.items() if k in _FLEET_EDITABLE}
+    if not fields:
+        return
+    new_imo = fields.pop("imo", None)
+    if fields:
+        cols = ", ".join(f"{k}=%s" for k in fields)
+        q(f"UPDATE fleet SET {cols}, updated_at=now() WHERE imo=%s",
+          (*fields.values(), imo))
+    if new_imo and int(new_imo) != int(imo):
+        q("UPDATE fleet SET imo=%s, updated_at=now() WHERE imo=%s", (new_imo, imo))
+        q("UPDATE sv_ship SET imo=%s WHERE imo=%s", (new_imo, imo))
+
+
+def fleet_ais_name(mmsi):
+    """AIS-broadcast name for a vessel, if any collector has heard it."""
+    rows = q("SELECT ship_name FROM latest WHERE mmsi=%s", (mmsi,))
+    return rows[0][0] if rows and rows[0][0] else None
+
+
+# --- region classification ---------------------------------------------------
+def region_from_position(lat, lon):
+    """Map a position to the fleet's region vocabulary:
+    Americas, Caspian, AG, ME, Europe, Africa, Asia. Rough bounding boxes,
+    checked in a deliberate order (Caspian before AG/Europe, etc.)."""
+    if lat is None or lon is None:
+        return None
+    if lon < -30:
+        return "Americas"
+    if 36 <= lat <= 47.5 and 46 <= lon <= 55.5:
+        return "Caspian"
+    if 22 <= lat <= 31 and 46 <= lon <= 60:
+        return "AG"
+    if 11 <= lat <= 30 and 32 <= lon <= 45:
+        return "ME"           # Red Sea corridor
+    if lat >= 35 and -12 <= lon <= 42:
+        return "Europe"       # North Sea, Med, Black Sea
+    if lat < 36 and -20 <= lon <= 52:
+        return "Africa"
+    return "Asia"
+
+
+def fleet_auto_update_regions():
+    """Refresh fleet.region from each vessel's last known position.
+    Returns the number of vessels whose region changed."""
     rows = q(
-        """SELECT ts, lat, lon, sog, nav_status, source
-           FROM positions
-           WHERE mmsi=%s AND ts >= now() - make_interval(days => %s)
-           ORDER BY ts""",
-        (mmsi, days),
+        """SELECT f.imo, f.region, l.lat, l.lon
+           FROM fleet f JOIN latest l ON l.mmsi = f.mmsi
+           WHERE f.active"""
     )
-    n = len(rows)
-    if n <= max_points:
-        return rows
-    stride = -(-n // max_points)          # ceil
-    thinned = rows[::stride]
-    if thinned[-1] != rows[-1]:
-        thinned.append(rows[-1])
-    return thinned
+    changed = 0
+    for imo, region, lat, lon in rows:
+        new = region_from_position(lat, lon)
+        if new and new != region:
+            q("UPDATE fleet SET region=%s, updated_at=now() WHERE imo=%s",
+              (new, imo))
+            changed += 1
+    return changed
