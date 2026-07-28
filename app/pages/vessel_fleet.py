@@ -178,11 +178,14 @@ def _build_table(pending_delete=None, editing=None):
                 status,
                 action,
                 html.Span([
-                    html.Button("Save", id="vtf-save", n_clicks=0,
+                    html.Button("Save", n_clicks=0,
+                                id={"type": "vtf-save", "imo": str(imo)},
                                 style={**_BTN, "background": "#f0fdf4",
                                        "borderColor": "#bbf7d0", "color": GREEN,
                                        "marginRight": "5px"}),
-                    html.Button("Cancel", id="vtf-cancel", n_clicks=0, style=_BTN),
+                    html.Button("Cancel", n_clicks=0,
+                                id={"type": "vtf-cancel", "imo": str(imo)},
+                                style=_BTN),
                 ]),
             ]
         else:
@@ -267,8 +270,8 @@ layout = html.Div(className="full-width-page", children=[
     Input({"type": "vtf-del-cancel", "imo": dash.ALL}, "n_clicks"),
     Input({"type": "vtf-edit", "imo": dash.ALL}, "n_clicks"),
     Input({"type": "vtf-nm", "imo": dash.ALL}, "n_clicks"),
-    Input("vtf-save", "n_clicks"),
-    Input("vtf-cancel", "n_clicks"),
+    Input({"type": "vtf-save", "imo": dash.ALL}, "n_clicks"),
+    Input({"type": "vtf-cancel", "imo": dash.ALL}, "n_clicks"),
     State({"type": "vtf-f", "field": dash.ALL}, "value"),
     State({"type": "vtf-f", "field": dash.ALL}, "id"),
     State("vtf-pending-delete", "data"),
@@ -298,13 +301,13 @@ def _fleet_actions(_r, _a, _d, _dc, _dx, _e, _nm, _sv, _cx,
                 new_editing = str(imo)
             elif kind == "vtf-nm":
                 banner, ok = _do_update_name(imo)
-        elif clicked and trig == "vtf-save" and editing:
-            fields = {fid["field"]: (val or "").strip()
-                      for fid, val in zip(f_ids, f_values)}
-            banner, ok = _do_save(int(editing), fields)
-            new_editing = None
-        elif clicked and trig == "vtf-cancel":
-            new_editing = None
+            elif kind == "vtf-save" and editing:
+                fields = {fid["field"]: (val or "").strip()
+                          for fid, val in zip(f_ids, f_values)}
+                banner, ok = _do_save(int(editing), fields)
+                new_editing = None
+            elif kind == "vtf-cancel":
+                new_editing = None
     except (ais_db.AisDbError, sv_api.SvApiError) as exc:
         banner, ok = str(exc), False
     except Exception as exc:  # never kill the page
