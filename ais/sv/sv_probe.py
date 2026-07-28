@@ -1,12 +1,12 @@
 """
-SeaVantage endpoint probe - run once to verify base URL, auth and parameter
-names before the poller goes live. From the ais-sv-poller container:
+SeaVantage endpoint probe - verify base URL + credentials in one run.
+From the ais-sv-poller container (Dokploy terminal):
 
-    python sv_probe.py 9698783        # probe with Picasso's IMO
+    python /app/sv_probe.py
 
-Prints HTTP status + first part of each response so a mismatch with the
-defaults is immediately obvious. Override any default via the same env vars
-the poller uses (SV_BASE_URL, SV_SEARCH_PATH, ...).
+Requires SV_BASE_URL (incl. /api), SV_USER, SV_PASSWORD in the environment.
+Calls /fleet/categories (parameter-free auth check) and /fleet/snapshot,
+printing status + a response sample.
 """
 import json
 import os
@@ -14,53 +14,26 @@ import sys
 
 import requests
 
-BASE = os.environ.get("SV_BASE_URL", "https://api.seavantage.com").rstrip("/")
-AUTH = (os.environ.get("SV_USER", ""), os.environ.get("SV_PASSWORD", ""))
-imo = sys.argv[1] if len(sys.argv) > 1 else "9698783"
-
-tests = [
-    ("search by imoNo",  os.environ.get("SV_SEARCH_PATH", "/ship/search"),
-     {os.environ.get("SV_SEARCH_PARAM", "imoNo"): imo}),
-    ("search by keyword", os.environ.get("SV_SEARCH_PATH", "/ship/search"),
-     {"keyword": "PICASSO"}),
-]
+BASE = os.environ.get("SV_BASE_URL", "").rstrip("/")
+if not BASE:
+    sys.exit("SV_BASE_URL is not set (must include /api, e.g. https://<host>/api)")
 
 s = requests.Session()
-s.auth = AUTH
+s.auth = (os.environ.get("SV_USER", ""), os.environ.get("SV_PASSWORD", ""))
 s.headers["Accept"] = "application/json"
 
-ship_id = None
-for label, path, params in tests:
+for label, path in [("categories (auth check)", "/fleet/categories"),
+                    ("workspace snapshot", "/fleet/snapshot")]:
     url = BASE + path
     try:
-        r = s.get(url, params=params, timeout=20)
-        body = r.text[:600]
-        print(f"\n=== {label}: GET {url} {params} -> HTTP {r.status_code}")
-        print(body)
-        if r.ok and ship_id is None:
-            try:
-                data = r.json().get("response", [])
-                items = data if isinstance(data, list) else [data]
-                for it in items:
-                    ship = it.get("ship", it)
-                    if ship.get("shipId"):
-                        ship_id = ship["shipId"]
-                        break
-            except Exception:
-                pass
+        r = s.get(url, timeout=30)
+        print(f"\n=== {label}: GET {url} -> HTTP {r.status_code}")
+        try:
+            print(json.dumps(r.json(), indent=2)[:1200])
+        except Exception:
+            print(r.text[:600])
     except requests.RequestException as exc:
         print(f"\n=== {label}: GET {url} -> FAILED: {exc}")
 
-if ship_id:
-    path = os.environ.get("SV_SNAPSHOT_PATH", "/ship/snapshot")
-    param = os.environ.get("SV_SNAPSHOT_PARAM", "shipId")
-    url = BASE + path
-    r = s.get(url, params={param: ship_id}, timeout=20)
-    print(f"\n=== snapshot: GET {url} {param}={ship_id} -> HTTP {r.status_code}")
-    try:
-        print(json.dumps(r.json(), indent=2)[:1500])
-    except Exception:
-        print(r.text[:800])
-else:
-    print("\n(no shipId found in search responses - snapshot probe skipped; "
-          "paste the output above so the param names can be corrected)")
+print("\nInterpretatie: 200 + code 200 = goed; 401 = credentials; "
+      "lege response bij snapshot = vloot nog niet geregistreerd in SVMP workspace.")

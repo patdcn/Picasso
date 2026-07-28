@@ -70,26 +70,28 @@ en `psycopg2-binary` in requirements. Beide projecten zitten op
 
 ## Tweede bron: SeaVantage (satelliet, 15-min poll)
 
-Service `ais-sv-poller` polt elke 15 min `/ship/snapshot` voor de hele vloot
-(shipIds eenmalig geresolved via `/ship/search`, gecachet in `sv_ship`).
-Data landt in dezelfde tabellen met `source='seavantage'`:
-- `positions`: dedupe-index absorbeert ongewijzigde herhalingen
-- `latest`: alleen bijgewerkt als de fix NIEUWER is dan wat er staat
-  (stale satelliet overschrijft nooit verse terrestrial)
-- `voyage`: gedeelde change-detection met de aisstream-collector
+Service `ais-sv-poller` doet elke 15 min EEN call: `GET /fleet/snapshot`
+(Basic Auth, bevestigd tegen hun OpenAPI-spec) en krijgt alle vessels terug
+die in de SVMP-workspace geregistreerd staan. Matching tegen onze `fleet`
+op IMO (fallback MMSI); overige workspace-vessels worden genegeerd.
+Data landt met `source='seavantage'`:
+- `positions`: dedupe-index absorbeert polls zonder nieuwe fix
+- `latest`: alleen bijgewerkt als de fix NIEUWER is (stale satelliet
+  overschrijft nooit verse terrestrial)
+- `voyage`: gedeelde change-detection; `aisEta` (MMDDHHmm) genormaliseerd
+  naar `MM-DD HH:MM`; `aisMaxDraught` gevuld
+- `sv_ship`: shipId<->IMO mapping geoogst uit responses (voor de
+  past-track API later)
 
 Setup:
-1. Migratie `init/03_seavantage.sql` handmatig toepassen op de draaiende DB.
-2. Dokploy env (ais-db project): `SV_USER`, `SV_PASSWORD`
-   (Basic Auth per SVMP-docs; optioneel `SV_BASE_URL` als de base afwijkt
-   van https://api.seavantage.com).
-3. Eerst verifiëren: Dokploy terminal op `ais-sv-poller`:
-   `python sv_probe.py 9698783` — toont status + response van search en
-   snapshot. Kloppen paden/parameternamen niet met de Postman-docs, dan zijn
-   ze via env vars te overriden (SV_SEARCH_PATH, SV_SEARCH_PARAM,
-   SV_SNAPSHOT_PATH, SV_SNAPSHOT_PARAM) zonder codewijziging.
-4. Bij 401 in de probe: check credentials, of stuur de Authorization-sectie
-   uit de Postman-docs door (mogelijk API-key header i.p.v. Basic Auth).
+1. Migratie `init/03_seavantage.sql` toepassen op de draaiende DB.
+2. **Vloot registreren in de SVMP-webinterface** (workspace fleet, evt. in
+   een eigen categorie). Let op: verwijderen kan pas 7 dagen na toevoegen.
+3. Dokploy env (ais-db project): `SV_USER`, `SV_PASSWORD`, `SV_BASE_URL`
+   (de host waar de Swagger-docs draaien + `/api`), optioneel
+   `SV_CATEGORY_ID` (categorie-UUID; leeg = hele workspace) -> redeploy.
+4. Verifieren: terminal op `ais-sv-poller`: `python /app/sv_probe.py`
+   (auth-check via /fleet/categories + snapshot-sample).
 
 ## Backup & restore
 

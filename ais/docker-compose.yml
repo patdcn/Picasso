@@ -65,7 +65,8 @@ services:
       AIS_DSN: postgresql://ais:${POSTGRES_PASSWORD}@ais-db:5432/ais
       SV_USER: ${SV_USER}
       SV_PASSWORD: ${SV_PASSWORD}
-      SV_BASE_URL: ${SV_BASE_URL:-https://api.seavantage.com}
+      SV_BASE_URL: ${SV_BASE_URL}          # incl. /api, uit de Swagger-host
+      SV_CATEGORY_ID: ${SV_CATEGORY_ID:-}  # optioneel: 1 fleet-categorie
       POLL_SECONDS: "900"     # 15 min
     depends_on:
       ais-db:

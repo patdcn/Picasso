@@ -4,40 +4,38 @@ SeaVantage poller - second AIS source for the DSV Picasso vessel tracker
 Runs alongside the aisstream websocket collector and fills its biggest gap:
 vessels beyond terrestrial AIS range (satellite-backed positions).
 
-Every POLL_SECONDS (default 900 = 15 min):
-  1. Load active fleet (imo, mmsi) from the shared `fleet` table.
-  2. Resolve missing SeaVantage shipIds via GET /ship/search (cached in
-     `sv_ship`; each vessel is resolved once).
-  3. GET /ship/snapshot for all known shipIds (batched, with per-ship
-     fallback) and store results:
-       positions : INSERT with source='seavantage'; the unique index
-                   (mmsi, ts, source) absorbs unchanged repeats, so a
-                   vessel that did not move/update costs no extra rows.
-       latest    : conditional upsert - only when this fix is NEWER than
-                   what is already there, so a stale satellite position
-                   never overwrites a fresh terrestrial one.
-       voyage    : change-detection on (callsign, destination, eta,
-                   draught), shared semantics with the aisstream collector
-                   (ETA normalised to the same 'MM-DD HH:MM' format) so the
-                   two sources do not ping-pong duplicate rows.
+Confirmed against the Insight SeaVantage OpenAPI spec:
+- Basic Auth (SVMP account/password)
+- GET {SV_BASE_URL}/fleet/snapshot  -> [{shipId, position:{...}}] for ALL
+  vessels registered in the user's SVMP workspace (optionally filtered by
+  categoryId). ONE request per cycle covers the whole fleet.
+- Envelope: {code, message, error, timestamp, response}
+- 429 responses carry a Retry-After header, which is honoured.
 
-Authentication: Basic Auth (SVMP account/password), per SeaVantage docs.
+Prerequisite: register the vessels once in the SVMP web UI (workspace
+fleet). The poller matches returned positions against our own `fleet`
+table by IMO (fallback MMSI); anything else in the workspace is ignored.
+
+Storage per cycle:
+  positions : INSERT with source='seavantage'; unique index (mmsi, ts,
+              source) absorbs repeats when a vessel has no fresh fix.
+  latest    : conditional upsert - only when this fix is NEWER than the
+              stored one, so stale satellite never overwrites fresh
+              terrestrial data.
+  voyage    : change-detection on (callsign, destination, eta, draught),
+              shared semantics with the aisstream collector (ETA
+              normalised to 'MM-DD HH:MM').
+  sv_ship   : shipId <-> IMO mapping harvested from responses (needed
+              later for the past-track API).
 
 Environment:
   AIS_DSN          postgres DSN (shared with the aisstream collector)
-  SV_USER          SeaVantage account
-  SV_PASSWORD      SeaVantage password
-  SV_BASE_URL      default https://api.seavantage.com
-  SV_SEARCH_PATH   default /ship/search      (query param SV_SEARCH_PARAM)
-  SV_SEARCH_PARAM  default imoNo
-  SV_SNAPSHOT_PATH default /ship/snapshot    (query param SV_SNAPSHOT_PARAM)
-  SV_SNAPSHOT_PARAM default shipId
-  POLL_SECONDS     default 900
-  SV_BATCH         default 20 shipIds per snapshot call
-
-If the endpoint paths/params in your Postman docs differ from these
-defaults, override them via env vars - no code change needed. Use
-sv_probe.py to verify quickly.
+  SV_USER          SVMP account
+  SV_PASSWORD      SVMP password
+  SV_BASE_URL      e.g. https://<host>/api   (REQUIRED - includes /api)
+  SV_CATEGORY_ID   optional fleet category UUID; omit to poll the whole
+                   workspace
+  POLL_SECONDS     default 900 (15 min)
 """
 
 import logging
@@ -53,13 +51,9 @@ import requests
 AIS_DSN      = os.environ.get("AIS_DSN", "")
 SV_USER      = os.environ.get("SV_USER", "")
 SV_PASSWORD  = os.environ.get("SV_PASSWORD", "")
-SV_BASE_URL  = os.environ.get("SV_BASE_URL", "https://api.seavantage.com").rstrip("/")
-SEARCH_PATH  = os.environ.get("SV_SEARCH_PATH", "/ship/search")
-SEARCH_PARAM = os.environ.get("SV_SEARCH_PARAM", "imoNo")
-SNAP_PATH    = os.environ.get("SV_SNAPSHOT_PATH", "/ship/snapshot")
-SNAP_PARAM   = os.environ.get("SV_SNAPSHOT_PARAM", "shipId")
+SV_BASE_URL  = os.environ.get("SV_BASE_URL", "").rstrip("/")
+SV_CATEGORY  = os.environ.get("SV_CATEGORY_ID", "").strip()
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "900"))
-SV_BATCH     = int(os.environ.get("SV_BATCH", "20"))
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s",
@@ -95,32 +89,41 @@ def clean_text(v):
 
 
 def parse_iso_ts(raw):
+    """ISO timestamp -> aware datetime; naive values are treated as UTC
+    (the API mixes '...Z' and zone-less strings)."""
     if not raw:
         return None
     try:
-        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
     except ValueError:
         return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def parse_snapshot_item(item):
-    """One {ship:{...}, position:{...}} element -> (pos_dict, voyage_dict)
-    or (None, None) if unusable. Tolerates flat items without 'ship'."""
-    ship = item.get("ship", item) or {}
+    """{shipId, position:{...}} (snapshot) or {ship:{...}, position:{...}}
+    (/fleet) -> (pos_dict, voyage_dict, ship_meta) or (None, None, None).
+    position may be null for vessels without a known location."""
+    ship = item.get("ship") or {}
     pos = item.get("position") or {}
+    ship_meta = {"ship_id": item.get("shipId") or ship.get("shipId"),
+                 "imo": pos.get("imoNo") or ship.get("imoNo"),
+                 "mmsi": pos.get("mmsi") or ship.get("mmsi"),
+                 "name": clean_text(pos.get("shipName") or ship.get("shipName"))}
     if not pos:
-        return None, None
+        return None, None, ship_meta
 
-    mmsi = pos.get("mmsi") or ship.get("mmsi")
-    lat, lon = pos.get("latitude"), pos.get("longitude")
+    mmsi, lat, lon = pos.get("mmsi"), pos.get("latitude"), pos.get("longitude")
     ts = parse_iso_ts(pos.get("timestamp"))
     if mmsi is None or lat is None or lon is None or ts is None:
-        return None, None
+        return None, None, ship_meta
     lat, lon = float(lat), float(lon)
     if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
-        return None, None
+        return None, None, ship_meta
     if abs(lat) < 1e-9 and abs(lon) < 1e-9:
-        return None, None
+        return None, None, ship_meta
 
     heading = pos.get("trueHeading")
     if heading is not None and int(heading) >= 511:
@@ -131,15 +134,9 @@ def parse_snapshot_item(item):
     cog = pos.get("courseOverGround")
     if cog is not None and float(cog) >= 360.0:
         cog = None
-
-    draught = None
-    for key in ("maxDraught", "draught", "aisDraught", "maximumStaticDraught"):
-        if pos.get(key) is not None:
-            draught = pos[key]
-            break
-        if ship.get(key) is not None:
-            draught = ship[key]
-            break
+    draught = pos.get("aisMaxDraught")
+    if draught is None:
+        draught = ship.get("maxDraught")
     if draught is not None and float(draught) <= 0:
         draught = None
 
@@ -153,19 +150,18 @@ def parse_snapshot_item(item):
         "heading": int(heading) if heading is not None else None,
         "nav_status": (int(pos["nvgStatus"])
                        if pos.get("nvgStatus") is not None else None),
-        "ship_name": clean_text(pos.get("shipName") or ship.get("shipName")),
+        "ship_name": ship_meta["name"],
     }
     v = {
         "mmsi": p["mmsi"],
         "ts": ts,
         "callsign": clean_text(pos.get("callSign") or ship.get("callSign")),
-        "destination": clean_text(pos.get("aisDestination")
-                                  or ship.get("destination")),
+        "destination": clean_text(pos.get("aisDestination")),
         "eta": normalise_eta(pos.get("aisEta")),
         "draught": float(draught) if draught is not None else None,
         "ship_name": p["ship_name"],
     }
-    return p, v
+    return p, v, ship_meta
 
 
 def voyage_key(v):
@@ -182,20 +178,21 @@ class SvError(RuntimeError):
     pass
 
 
-def api_get(session, path, params):
-    url = SV_BASE_URL + path
-    r = session.get(url, params=params, timeout=30)
+def api_get(session, path, params=None):
+    r = session.get(SV_BASE_URL + path, params=params or {}, timeout=60)
     if r.status_code == 401:
         raise SvError("401 Unauthorized - check SV_USER / SV_PASSWORD")
     if r.status_code == 429:
+        wait = int(r.headers.get("Retry-After", "60"))
+        log.warning("429 rate limited; waiting %d s", wait)
+        time.sleep(min(wait, 300))
         raise SvError("429 rate limited")
     r.raise_for_status()
     data = r.json()
-    # SVMP envelope: {code, message, error, response}
     if isinstance(data, dict) and "response" in data:
-        if data.get("error") or (data.get("code") not in (None, 200)):
+        if data.get("error"):
             raise SvError(f"API error {data.get('code')}: {data.get('message')}")
-        return data["response"]
+        return data["response"] or []
     return data
 
 
@@ -210,14 +207,11 @@ def q(sql, params=None, fetch=False):
             return cur.fetchall() if fetch else None
 
 
-def load_fleet():
-    return q("SELECT imo, mmsi, name FROM fleet WHERE active AND mmsi IS NOT NULL",
-             fetch=True)
-
-
-def load_ship_ids():
-    return {imo: (ship_id, mmsi) for imo, ship_id, mmsi in
-            q("SELECT imo, ship_id, mmsi FROM sv_ship", fetch=True)}
+def load_fleet_keys():
+    rows = q("SELECT imo, mmsi FROM fleet WHERE active", fetch=True)
+    imos = {str(r[0]) for r in rows}
+    mmsis = {r[1] for r in rows if r[1] is not None}
+    return imos, mmsis
 
 
 def load_last_voyages():
@@ -230,6 +224,22 @@ def load_last_voyages():
     return out
 
 
+def upsert_sv_ship(meta):
+    if not meta.get("ship_id") or not meta.get("imo"):
+        return
+    try:
+        q("""INSERT INTO sv_ship (imo, mmsi, ship_id, ship_name)
+             VALUES (%s,%s,%s,%s)
+             ON CONFLICT (imo) DO UPDATE SET ship_id=EXCLUDED.ship_id,
+                 mmsi=EXCLUDED.mmsi,
+                 ship_name=COALESCE(EXCLUDED.ship_name, sv_ship.ship_name),
+                 matched_at=now()""",
+          (int(meta["imo"]), int(meta["mmsi"]) if meta.get("mmsi") else None,
+           str(meta["ship_id"]), meta.get("name")))
+    except (ValueError, psycopg2.Error) as exc:
+        log.warning("sv_ship upsert failed for %s: %s", meta, exc)
+
+
 def insert_position(p):
     q("""INSERT INTO positions (ts, mmsi, lat, lon, sog, cog, heading, nav_status, source)
          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'seavantage')
@@ -239,8 +249,6 @@ def insert_position(p):
 
 
 def upsert_latest_if_newer(p, v):
-    """Insert vessel into latest, or update ONLY when this fix is newer than
-    the stored one - protects fresh terrestrial data from stale satellite."""
     q("""INSERT INTO latest (mmsi, ts, lat, lon, sog, cog, heading, nav_status,
                              ship_name, callsign, destination, eta, draught)
          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
@@ -270,121 +278,71 @@ def insert_voyage(v):
 # ---------------------------------------------------------------------------
 # Poll cycle
 # ---------------------------------------------------------------------------
-def resolve_ship_ids(session, fleet, known):
-    """Look up SeaVantage shipIds for fleet vessels not yet in sv_ship."""
-    for imo, mmsi, name in fleet:
-        if imo in known:
-            continue
-        try:
-            resp = api_get(session, SEARCH_PATH, {SEARCH_PARAM: str(imo)})
-        except (SvError, requests.RequestException) as exc:
-            log.warning("search %s (%s) failed: %s", name, imo, exc)
-            continue
-        items = resp if isinstance(resp, list) else [resp]
-        match = None
-        for it in items:
-            ship = it.get("ship", it) if isinstance(it, dict) else {}
-            if str(ship.get("imoNo", "")).strip() == str(imo):
-                match = ship
-                break
-        if match is None and len(items) == 1 and isinstance(items[0], dict):
-            match = items[0].get("ship", items[0])
-        if not match or not match.get("shipId"):
-            log.warning("no shipId match for %s (IMO %s)", name, imo)
-            continue
-        q("""INSERT INTO sv_ship (imo, mmsi, ship_id, ship_name)
-             VALUES (%s,%s,%s,%s)
-             ON CONFLICT (imo) DO UPDATE SET ship_id=EXCLUDED.ship_id,
-                 mmsi=EXCLUDED.mmsi, ship_name=EXCLUDED.ship_name,
-                 matched_at=now()""",
-          (imo, mmsi, match["shipId"], clean_text(match.get("shipName")) or name))
-        known[imo] = (match["shipId"], mmsi)
-        log.info("resolved %s (IMO %s) -> shipId %s", name, imo, match["shipId"])
-        time.sleep(0.3)  # be polite on the search endpoint
-
-
-def fetch_snapshots(session, ship_ids):
-    """Batched snapshot fetch with per-ship fallback."""
-    items = []
-    for i in range(0, len(ship_ids), SV_BATCH):
-        batch = ship_ids[i:i + SV_BATCH]
-        try:
-            resp = api_get(session, SNAP_PATH, {SNAP_PARAM: ",".join(batch)})
-            items.extend(resp if isinstance(resp, list) else [resp])
-            continue
-        except (SvError, requests.RequestException) as exc:
-            log.warning("batch snapshot failed (%s); falling back per ship", exc)
-        for sid in batch:
-            try:
-                resp = api_get(session, SNAP_PATH, {SNAP_PARAM: sid})
-                items.extend(resp if isinstance(resp, list) else [resp])
-            except (SvError, requests.RequestException) as exc:
-                log.warning("snapshot %s failed: %s", sid, exc)
-            time.sleep(0.3)
-    return items
-
-
 def cycle(session, voyage_last):
-    fleet = load_fleet()
-    known = load_ship_ids()
-    resolve_ship_ids(session, fleet, known)
-    ship_ids = [sid for sid, _ in known.values()]
-    if not ship_ids:
-        log.warning("no shipIds resolved yet; nothing to poll")
-        return
-    fleet_mmsis = {m for _, m, _ in fleet}
+    imos, mmsis = load_fleet_keys()
+    params = {"categoryId": SV_CATEGORY} if SV_CATEGORY else {}
+    items = api_get(session, "/fleet/snapshot", params)
 
-    items = fetch_snapshots(session, ship_ids)
-    stored = updated = voyages = 0
+    stored = voyages = skipped = nopos = 0
     for item in items:
         if not isinstance(item, dict):
             continue
-        p, v = parse_snapshot_item(item)
-        if p is None or p["mmsi"] not in fleet_mmsis:
+        p, v, meta = parse_snapshot_item(item)
+        # match against OUR fleet by IMO first, MMSI as fallback
+        ours = (str(meta.get("imo") or "") in imos or
+                (p is not None and p["mmsi"] in mmsis))
+        if not ours:
+            skipped += 1
+            continue
+        upsert_sv_ship(meta)
+        if p is None:
+            nopos += 1
             continue
         insert_position(p)
-        stored += 1
         upsert_latest_if_newer(p, v)
-        updated += 1
+        stored += 1
         key = voyage_key(v)
         has_data = any(key[:3]) or key[3] is not None
         if has_data and voyage_last.get(p["mmsi"]) != key:
             voyage_last[p["mmsi"]] = key
             insert_voyage(v)
             voyages += 1
-    log.info("cycle done: %d snapshot items, %d positions written (dupes "
-             "absorbed by index), %d voyage changes", len(items), stored, voyages)
+    log.info("cycle: %d workspace items -> %d positions, %d voyage changes, "
+             "%d without position, %d not in our fleet",
+             len(items), stored, voyages, nopos, skipped)
+    if len(items) == 0:
+        log.warning("workspace snapshot is empty - register the vessels in "
+                    "the SVMP web UI (workspace fleet) first")
 
 
 def main():
-    missing = [n for n, v in [("AIS_DSN", AIS_DSN), ("SV_USER", SV_USER),
-                              ("SV_PASSWORD", SV_PASSWORD)] if not v]
+    missing = [n for n, val in [("AIS_DSN", AIS_DSN), ("SV_USER", SV_USER),
+                                ("SV_PASSWORD", SV_PASSWORD),
+                                ("SV_BASE_URL", SV_BASE_URL)] if not val]
     if missing:
         log.error("missing env vars: %s", ", ".join(missing))
         sys.exit(1)
-    log.info("starting: base=%s poll=%ds batch=%d", SV_BASE_URL, POLL_SECONDS,
-             SV_BATCH)
+    log.info("starting: base=%s poll=%ds category=%s", SV_BASE_URL,
+             POLL_SECONDS, SV_CATEGORY or "(whole workspace)")
     session = requests.Session()
     session.auth = (SV_USER, SV_PASSWORD)
     session.headers["Accept"] = "application/json"
 
     voyage_last = None
-    backoff = 60
     while True:
         started = time.time()
         try:
             if voyage_last is None:
                 voyage_last = load_last_voyages()
             cycle(session, voyage_last)
-            backoff = 60
         except psycopg2.OperationalError as exc:
             log.warning("database unavailable: %s", exc)
-            voyage_last = None   # reload state once DB is back
+            voyage_last = None
+        except (SvError, requests.RequestException) as exc:
+            log.warning("SeaVantage API problem: %s", exc)
         except Exception:
             log.exception("cycle failed; retrying next interval")
-            backoff = min(backoff * 2, POLL_SECONDS)
-        elapsed = time.time() - started
-        time.sleep(max(30.0, POLL_SECONDS - elapsed))
+        time.sleep(max(30.0, POLL_SECONDS - (time.time() - started)))
 
 
 if __name__ == "__main__":
