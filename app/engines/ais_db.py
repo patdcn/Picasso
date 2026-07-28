@@ -156,3 +156,37 @@ def sv_record_match_failure(imo, mmsi, result):
 
 def sv_clear_registration(imo):
     q("UPDATE sv_ship SET registered_at=NULL WHERE imo=%s", (imo,))
+
+
+def latest_positions():
+    """All vessels present in the track database (latest fix per vessel),
+    with the fleet name as primary label. Ordered by name."""
+    return q(
+        """SELECT l.mmsi,
+                  COALESCE(f.name, initcap(lower(l.ship_name)), l.mmsi::text) AS name,
+                  l.ts, l.lat, l.lon, l.sog, l.nav_status, l.destination
+           FROM latest l
+           LEFT JOIN fleet f ON f.mmsi = l.mmsi
+           ORDER BY name"""
+    )
+
+
+def track(mmsi, days=30, max_points=1200):
+    """Track points for one vessel over the given window (both sources,
+    chronological). Thinned by striding to at most max_points, keeping the
+    first and last point."""
+    rows = q(
+        """SELECT ts, lat, lon, sog, nav_status, source
+           FROM positions
+           WHERE mmsi=%s AND ts >= now() - make_interval(days => %s)
+           ORDER BY ts""",
+        (mmsi, days),
+    )
+    n = len(rows)
+    if n <= max_points:
+        return rows
+    stride = -(-n // max_points)          # ceil
+    thinned = rows[::stride]
+    if thinned[-1] != rows[-1]:
+        thinned.append(rows[-1])
+    return thinned

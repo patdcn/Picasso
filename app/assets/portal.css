@@ -305,3 +305,12 @@ a.nav-footer-addr:hover { color: #0f766e; text-decoration: underline; }
 
 /* ------- calc module: full-width opt-in (pages containing .wide-page) ------- */
 .content:has(.wide-page) { max-width: none; }
+
+/* ------- Vessel Tracker map labels ------- */
+.vtt-label {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.9);
+  border-color: #d1d5db;
+}
