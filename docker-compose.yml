@@ -43,6 +43,11 @@ services:
       - CDS_KEY=${CDS_KEY:-}
       # AIS track database (separate ais-db Dokploy project, via dokploy-network)
       - AIS_DSN=${AIS_DSN:-}
+      # SeaVantage API for the Fleet page (register/deregister vessels)
+      - SV_BASE_URL=${SV_BASE_URL:-}
+      - SV_USER=${SV_USER:-}
+      - SV_PASSWORD=${SV_PASSWORD:-}
+      - SV_MAX_SHIPS=${SV_MAX_SHIPS:-250}
       # Optional SMTP for access-request notifications (safe to leave blank):
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}

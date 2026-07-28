@@ -62,6 +62,8 @@ def q(sql, params=None):
         with psycopg2.connect(AIS_DSN, connect_timeout=5) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
+                if cur.description is None:   # INSERT/UPDATE: no result set
+                    return []
                 return cur.fetchall()
     except psycopg2.Error as exc:
         raise AisDbError(f"AIS database unreachable: {exc}") from exc
@@ -112,3 +114,45 @@ def recent_positions(limit=50):
            LIMIT %s""",
         (limit,),
     )
+
+
+def fleet_with_sv():
+    """All fleet vessels (every Excel field) joined with their SeaVantage
+    registration state. Ordered by name."""
+    return q(
+        """SELECT f.imo, f.mmsi, f.name, f.owner, f.operator, f.built, f.flag,
+                  f.region, f.tier, f.notes, f.active,
+                  s.ship_id, s.registered_at, s.match_result,
+                  l.ship_name AS ais_name
+           FROM fleet f
+           LEFT JOIN sv_ship s ON s.imo = f.imo
+           LEFT JOIN latest l ON l.mmsi = f.mmsi
+           ORDER BY f.name"""
+    )
+
+
+def sv_registered_count():
+    return q("SELECT count(*) FROM sv_ship WHERE registered_at IS NOT NULL")[0][0]
+
+
+def sv_record_registration(imo, mmsi, ship_id, ship_name):
+    q("""INSERT INTO sv_ship (imo, mmsi, ship_id, ship_name, registered_at, match_result)
+         VALUES (%s,%s,%s,%s, now(), 'SUCCESS')
+         ON CONFLICT (imo) DO UPDATE SET
+           ship_id=EXCLUDED.ship_id, mmsi=EXCLUDED.mmsi,
+           ship_name=COALESCE(EXCLUDED.ship_name, sv_ship.ship_name),
+           registered_at=COALESCE(sv_ship.registered_at, now()),
+           match_result='SUCCESS', matched_at=now()""",
+      (imo, mmsi, ship_id, ship_name))
+
+
+def sv_record_match_failure(imo, mmsi, result):
+    q("""INSERT INTO sv_ship (imo, mmsi, ship_id, match_result)
+         VALUES (%s,%s,'', %s)
+         ON CONFLICT (imo) DO UPDATE SET match_result=EXCLUDED.match_result,
+           matched_at=now()""",
+      (imo, mmsi, result))
+
+
+def sv_clear_registration(imo):
+    q("UPDATE sv_ship SET registered_at=NULL WHERE imo=%s", (imo,))

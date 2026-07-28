@@ -228,12 +228,13 @@ def upsert_sv_ship(meta):
     if not meta.get("ship_id") or not meta.get("imo"):
         return
     try:
-        q("""INSERT INTO sv_ship (imo, mmsi, ship_id, ship_name)
-             VALUES (%s,%s,%s,%s)
+        q("""INSERT INTO sv_ship (imo, mmsi, ship_id, ship_name, registered_at)
+             VALUES (%s,%s,%s,%s, now())
              ON CONFLICT (imo) DO UPDATE SET ship_id=EXCLUDED.ship_id,
                  mmsi=EXCLUDED.mmsi,
                  ship_name=COALESCE(EXCLUDED.ship_name, sv_ship.ship_name),
-                 matched_at=now()""",
+                 matched_at=now(),
+                 registered_at=COALESCE(sv_ship.registered_at, now())""",
           (int(meta["imo"]), int(meta["mmsi"]) if meta.get("mmsi") else None,
            str(meta["ship_id"]), meta.get("name")))
     except (ValueError, psycopg2.Error) as exc:
