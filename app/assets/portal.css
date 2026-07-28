@@ -74,6 +74,12 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, san
   max-width: 1200px;
 }
 
+/* pages that opt out of the 1200px cap (wide tables, maps): wrap the page
+   layout in a div with className="full-width-page" */
+.content:has(.full-width-page) {
+  max-width: none;
+}
+
 /* ------- nav links ------- */
 .nav-group-label {
   text-transform: uppercase;

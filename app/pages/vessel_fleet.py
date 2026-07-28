@@ -35,8 +35,10 @@ GREEN = "#047857"
 AMBER = "#b45309"
 RED = "#b91c1c"
 
-_CELL = {"padding": "5px 9px", "borderBottom": f"1px solid {LINE}",
-         "fontSize": "0.82rem", "whiteSpace": "nowrap"}
+_CELL = {"padding": "4px 8px", "borderBottom": f"1px solid {LINE}",
+         "fontSize": "0.8rem", "whiteSpace": "nowrap"}
+_ELLIPSIS = {"maxWidth": "220px", "overflow": "hidden",
+             "textOverflow": "ellipsis"}
 _TH = {**_CELL, "textAlign": "left", "background": HEAD_BG, "color": MUTED,
        "fontWeight": "600", "position": "sticky", "top": "0", "zIndex": "1"}
 _BTN = {"padding": "3px 10px", "borderRadius": "6px", "fontSize": "0.78rem",
@@ -109,11 +111,15 @@ def _build_table(pending_delete=None):
             action = html.Button("Add", disabled=True, style=_BTN_DISABLED,
                                  title=f"Account limit reached ({cap} vessels)")
         style = {} if active else {"color": "#aeb4bd"}
+        def td(c, extra=None, tip=None):
+            st = {**_CELL, **style, **(extra or {})}
+            return html.Td(c, style=st, title=tip)
         body.append(html.Tr([
-            html.Td(c, style={**_CELL, **style}) for c in
-            [name, str(imo), str(mmsi or "—"), owner or "—", operator or "—",
-             built or "—", flag or "—", region or "—", tier or "—",
-             notes or "—", status, action]
+            td(name), td(str(imo)), td(str(mmsi or "—")),
+            td(owner or "—", _ELLIPSIS, owner), td(operator or "—", _ELLIPSIS, operator),
+            td(built or "—"), td(flag or "—"), td(region or "—"), td(tier or "—"),
+            td(notes or "—", _ELLIPSIS, notes),
+            td(status), td(action),
         ]))
 
     table = html.Div(
@@ -140,7 +146,7 @@ def _banner(msg, ok=True):
         "fontSize": "0.85rem"})
 
 
-layout = html.Div([
+layout = html.Div(className="full-width-page", children=[
     html.H3("Fleet"),
     html.P("Complete vessel list with SeaVantage workspace registration. "
            "Registered vessels are polled every 15 minutes (satellite AIS). "
