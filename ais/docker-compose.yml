@@ -55,6 +55,24 @@ services:
     networks:
       - dokploy-network
 
+  ais-sv-poller:
+    build:
+      context: .
+      dockerfile: sv/Dockerfile
+    container_name: ais-sv-poller
+    restart: unless-stopped
+    environment:
+      AIS_DSN: postgresql://ais:${POSTGRES_PASSWORD}@ais-db:5432/ais
+      SV_USER: ${SV_USER}
+      SV_PASSWORD: ${SV_PASSWORD}
+      SV_BASE_URL: ${SV_BASE_URL:-https://api.seavantage.com}
+      POLL_SECONDS: "900"     # 15 min
+    depends_on:
+      ais-db:
+        condition: service_healthy
+    networks:
+      - dokploy-network
+
   ais-backup:
     image: timescale/timescaledb:latest-pg17
     container_name: ais-backup

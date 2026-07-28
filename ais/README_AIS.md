@@ -68,6 +68,29 @@ en `psycopg2-binary` in requirements. Beide projecten zitten op
 - Alle knoppen zijn env vars op `ais-collector` (SAMPLE_SECONDS, ROTATE_SECONDS,
   SPEED_GATE_KN, ...) — wijzigen = alleen service herstarten.
 
+## Tweede bron: SeaVantage (satelliet, 15-min poll)
+
+Service `ais-sv-poller` polt elke 15 min `/ship/snapshot` voor de hele vloot
+(shipIds eenmalig geresolved via `/ship/search`, gecachet in `sv_ship`).
+Data landt in dezelfde tabellen met `source='seavantage'`:
+- `positions`: dedupe-index absorbeert ongewijzigde herhalingen
+- `latest`: alleen bijgewerkt als de fix NIEUWER is dan wat er staat
+  (stale satelliet overschrijft nooit verse terrestrial)
+- `voyage`: gedeelde change-detection met de aisstream-collector
+
+Setup:
+1. Migratie `init/03_seavantage.sql` handmatig toepassen op de draaiende DB.
+2. Dokploy env (ais-db project): `SV_USER`, `SV_PASSWORD`
+   (Basic Auth per SVMP-docs; optioneel `SV_BASE_URL` als de base afwijkt
+   van https://api.seavantage.com).
+3. Eerst verifiëren: Dokploy terminal op `ais-sv-poller`:
+   `python sv_probe.py 9698783` — toont status + response van search en
+   snapshot. Kloppen paden/parameternamen niet met de Postman-docs, dan zijn
+   ze via env vars te overriden (SV_SEARCH_PATH, SV_SEARCH_PARAM,
+   SV_SNAPSHOT_PATH, SV_SNAPSHOT_PARAM) zonder codewijziging.
+4. Bij 401 in de probe: check credentials, of stuur de Authorization-sectie
+   uit de Postman-docs door (mogelijk API-key header i.p.v. Basic Auth).
+
 ## Backup & restore
 
 Nightly dump landt als `/data/backups/ais_YYYYMMDD.dump` op de bestaande
