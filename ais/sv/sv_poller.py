@@ -47,6 +47,8 @@ from datetime import datetime, timezone
 
 import psycopg2
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 AIS_DSN      = os.environ.get("AIS_DSN", "")
 SV_USER      = os.environ.get("SV_USER", "")
@@ -328,6 +330,12 @@ def main():
     session = requests.Session()
     session.auth = (SV_USER, SV_PASSWORD)
     session.headers["Accept"] = "application/json"
+    # The 15-min idle gap between cycles outlives the server's keep-alive
+    # timeout; the first request then hits a dead socket (RemoteDisconnected).
+    # Retries transparently reconnect on a fresh connection.
+    session.mount("https://", HTTPAdapter(max_retries=Retry(
+        total=3, connect=3, read=2, backoff_factor=1,
+        status_forcelist=[502, 503, 504], allowed_methods=["GET"])))
 
     voyage_last = None
     while True:
