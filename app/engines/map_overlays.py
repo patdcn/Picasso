@@ -46,16 +46,45 @@ def _tooltip(name, operator, region, props):
     return " | ".join(parts)
 
 
-def _render_asset(meta, name, operator, region, gtype, geom, props):
+# point-marker shapes per category; default is a circle
+POINT_SHAPES = {"platform": "square", "well": "triangle"}
+
+_SHAPE_HTML = {
+    "square": ('<div style="width:9px;height:9px;background:{c};'
+               'border:1.5px solid white;box-shadow:0 0 1px #0006;"></div>',
+               [12, 12], [6, 6]),
+    "triangle": ('<div style="width:0;height:0;'
+                 'border-left:6px solid transparent;'
+                 'border-right:6px solid transparent;'
+                 'border-bottom:11px solid {c};'
+                 'filter:drop-shadow(0 0 1px white);"></div>',
+                 [12, 12], [6, 7]),
+}
+
+
+def _point_marker(category, color, lat, lon, tip):
+    shape = POINT_SHAPES.get(category)
+    if shape:
+        html, size, anchor = _SHAPE_HTML[shape]
+        return dl.DivMarker(
+            position=[lat, lon],
+            iconOptions=dict(html=html.format(c=color), className="",
+                             iconSize=size, iconAnchor=anchor),
+            bubblingMouseEvents=False, interactive=True, children=tip)
+    return dl.CircleMarker(
+        center=[lat, lon], radius=4.5, color="white", weight=1,
+        fillColor=color, fillOpacity=0.85,
+        bubblingMouseEvents=False, interactive=True, children=tip)
+
+
+def _render_asset(meta, name, operator, region, gtype, geom, props,
+                  category=None):
     color = meta["color"]
     tip = [dl.Tooltip(_tooltip(name, operator, region, props))]
     out = []
     if gtype == "Point":
         lon, lat = geom["coordinates"][:2]
-        out.append(dl.CircleMarker(
-            center=[lat, lon], radius=4.5, color="white", weight=1,
-            fillColor=color, fillOpacity=0.85,
-            bubblingMouseEvents=False, interactive=True, children=tip))
+        out.append(_point_marker(category, color, lat, lon, tip))
     elif gtype in ("LineString", "MultiLineString"):
         lines = ([geom["coordinates"]] if gtype == "LineString"
                  else geom["coordinates"])
@@ -92,7 +121,8 @@ def build_layer(ovl):
         for name, operator, region, gtype, geom, props in \
                 asset_db.assets_for_map(ovl["category"]):
             children.extend(_render_asset(meta, name, operator, region,
-                                          gtype, geom, props))
+                                          gtype, geom, props,
+                                          category=ovl["category"]))
     except AisDbError:
         return []                     # DB briefly down: keep the map alive
     return children
@@ -117,3 +147,15 @@ def by_key(key):
         if o["key"] == key:
             return o
     return None
+
+
+def legend_items():
+    """(label, swatch-style dict, shape) per category for the map legend."""
+    out = []
+    for key, meta in asset_db.CATEGORIES.items():
+        shape = POINT_SHAPES.get(key) or \
+            ("line" if meta["kind"] == "line" else
+             "polygon" if meta["kind"] == "polygon" else "circle")
+        out.append((meta["label"], meta["color"], shape,
+                    meta.get("dash") is not None))
+    return out

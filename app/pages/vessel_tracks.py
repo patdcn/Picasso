@@ -28,7 +28,7 @@ import dash_leaflet as dl
 from dash import html, dcc, Input, Output, State, callback, ctx, clientside_callback
 
 from app import buildinfo
-from app.engines import ais_db, map_overlays
+from app.engines import ais_db, map_overlays, vessel_icon
 
 dash.register_page(__name__, path="/vessel-tracker/tracks", name="Tracks",
                    category="Vessel Tracker", order=2)
@@ -64,23 +64,27 @@ def _color(nav_status):
 
 
 def _vessel_markers(rows):
-    """Large labelled dot per vessel (all-vessels view)."""
+    """Ship-shaped marker per vessel: size scales with vessel length,
+    rotation follows true heading (fallback COG)."""
     out = []
-    for mmsi, name, ts, lat, lon, sog, nav_status, dest, _vtype in rows:
-        out.append(dl.CircleMarker(
-            center=[lat, lon], radius=9,
-            color="white", weight=2,
-            fillColor=_color(nav_status), fillOpacity=0.95,
+    for (mmsi, name, ts, lat, lon, sog, nav_status, dest, _vtype,
+         heading, cog, length_m) in rows:
+        html_icon, size, anchor = vessel_icon.ship_div(
+            _color(nav_status), heading, cog, length_m)
+        out.append(dl.DivMarker(
+            position=[lat, lon],
+            iconOptions=dict(html=html_icon, className="",
+                             iconSize=size, iconAnchor=anchor),
             bubblingMouseEvents=False, n_clicks=0,
             id={"type": "vtt-dot", "mmsi": str(mmsi)},
             children=dl.Tooltip(name, permanent=True, direction="right",
-                                offset=[10, 0],
+                                offset=[size[0] / 2 + 2, 0],
                                 className="vtt-label"),
         ))
     return out
 
 
-def _track_layer(mmsi, name, points):
+def _track_layer(mmsi, name, points, _hdg=None, _cog=None, _len=None):
     """Polyline + hoverable points for the selected vessel."""
     if not points:
         return [], None
@@ -107,15 +111,20 @@ def _track_layer(mmsi, name, points):
             bubblingMouseEvents=False, interactive=True,
             children=dl.Tooltip(tip),
         ))
-    # latest position: big labelled dot on top (clickable to deselect)
+    # latest position: ship icon on top (clickable to deselect); heading
+    # and length come from `latest` via the caller
     last = points[-1]
-    children.append(dl.CircleMarker(
-        center=[last[1], last[2]], radius=9, color="white", weight=2,
-        fillColor=_color(last[4]), fillOpacity=0.95,
+    html_icon, size, anchor = vessel_icon.ship_div(
+        _color(last[4]), _hdg, _cog, _len)
+    children.append(dl.DivMarker(
+        position=[last[1], last[2]],
+        iconOptions=dict(html=html_icon, className="",
+                         iconSize=size, iconAnchor=anchor),
         bubblingMouseEvents=False, n_clicks=0,
         id={"type": "vtt-dot", "mmsi": str(mmsi)},
         children=dl.Tooltip(name, permanent=True, direction="right",
-                            offset=[10, 0], className="vtt-label"),
+                            offset=[size[0] / 2 + 2, 0],
+                            className="vtt-label"),
     ))
     bounds = [[min(p[0] for p in latlons), min(p[1] for p in latlons)],
               [max(p[0] for p in latlons), max(p[1] for p in latlons)]]
@@ -130,7 +139,8 @@ def _pad_bounds(bounds, pad=0.05):
 
 
 def _vessel_button(row, selected):
-    mmsi, name, ts, lat, lon, sog, nav_status, dest, _vtype = row
+    (mmsi, name, ts, lat, lon, sog, nav_status, dest, _vtype,
+     _hdg, _cog, _len) = row
     is_sel = str(mmsi) == (selected or "")
     sub = f"{_age(ts)} \u00b7 {ais_db.nav_status_label(nav_status)}"
     if dest:
@@ -220,6 +230,41 @@ def _type_chips(rows, typefilter):
     return chips
 
 
+def _legend():
+    """Compact asset legend, floating bottom-left on the map."""
+    def swatch(color, shape, dashed):
+        if shape == "square":
+            st = {"width": "10px", "height": "10px", "background": color,
+                  "border": "1px solid white"}
+        elif shape == "triangle":
+            st = {"width": "0", "height": "0",
+                  "borderLeft": "5px solid transparent",
+                  "borderRight": "5px solid transparent",
+                  "borderBottom": f"10px solid {color}"}
+        elif shape == "line":
+            st = {"width": "16px", "height": "0",
+                  "borderTop": f"2.5px {'dashed' if dashed else 'solid'} {color}"}
+        elif shape == "polygon":
+            st = {"width": "12px", "height": "9px",
+                  "background": color + "26",
+                  "border": f"1.5px solid {color}"}
+        else:
+            st = {"width": "9px", "height": "9px", "borderRadius": "50%",
+                  "background": color, "border": "1px solid white"}
+        return html.Span(style={**st, "display": "inline-block",
+                                "marginRight": "6px", "verticalAlign": "middle"})
+
+    rows = [html.Div([swatch(c, shape, dashed),
+                      html.Span(label, style={"verticalAlign": "middle"})],
+                     style={"whiteSpace": "nowrap", "lineHeight": "1.5"})
+            for label, c, shape, dashed in map_overlays.legend_items()]
+    return html.Div(rows, style={
+        "position": "absolute", "bottom": "12px", "left": "12px",
+        "zIndex": "1000", "background": "rgba(255,255,255,0.88)",
+        "border": f"1px solid {LINE}", "borderRadius": "8px",
+        "padding": "8px 12px", "fontSize": "0.72rem", "color": "#374151"})
+
+
 layout = html.Div(className="full-width-page", children=[
     html.Div([
         html.H3("Tracks", style={"margin": "0 12px 0 0", "display": "inline"}),
@@ -234,16 +279,17 @@ layout = html.Div(className="full-width-page", children=[
     dcc.Store(id="vtt-srvbuild", data=None),
     dcc.Store(id="vtt-reload-sink", data=None),
     html.Div([
-        *[html.Button(map_overlays.chip_label(o), n_clicks=0,
-                      id={"type": "vtt-ovl-chip", "key": o["key"]},
-                      title=o.get("hint", ""))
-          for o in map_overlays.OVERLAYS],
-        html.Div(id="vtt-chips", style={"display": "flex", "gap": "6px",
-                                        "flexWrap": "wrap"}),
-    ], style={"margin": "0 0 8px", "display": "flex", "gap": "6px",
-              "flexWrap": "wrap", "alignItems": "center"}),
+        html.Div([html.Button(map_overlays.chip_label(o), n_clicks=0,
+                              id={"type": "vtt-ovl-chip", "key": o["key"]},
+                              title=o.get("hint", ""))
+                  for o in map_overlays.OVERLAYS],
+                 style={"display": "flex", "gap": "6px", "flexWrap": "wrap"}),
+        html.Div(id="vtt-chips",
+                 style={"display": "flex", "gap": "6px", "flexWrap": "wrap",
+                        "marginTop": "6px"}),
+    ], style={"margin": "0 0 8px"}),
     html.Div([
-        html.Div(
+        html.Div([
             dl.Map(id="vtt-map", preferCanvas=True,
                    center=[30, 10], zoom=3, n_clicks=0,
                    style={"width": "100%", "height": MAP_HEIGHT,
@@ -256,7 +302,9 @@ layout = html.Div(className="full-width-page", children=[
                          for o in map_overlays.OVERLAYS],
                        dl.LayerGroup(id="vtt-layer"),
                    ]),
-            style={"flex": "1 1 auto", "minWidth": "0"}),
+            _legend()],
+            style={"flex": "1 1 auto", "minWidth": "0",
+                   "position": "relative"}),
         html.Div([
             html.Div(id="vtt-count",
                      style={"padding": "8px 10px", "fontWeight": "600",
@@ -349,7 +397,10 @@ def _render(_tick, _map_clicks, _dots, _sels, _chips, _grps,
         mmsi = int(new_selected)
         name = next((r[1] for r in rows if str(r[0]) == new_selected), new_selected)
         points = ais_db.track(mmsi, days=30)
-        layer, bounds = _track_layer(mmsi, name, points)
+        sel_row = next((r for r in rows if str(r[0]) == new_selected), None)
+        hdg, cg, ln = ((sel_row[9], sel_row[10], sel_row[11])
+                       if sel_row else (None, None, None))
+        layer, bounds = _track_layer(mmsi, name, points, hdg, cg, ln)
         if bounds is not None and not is_refresh:
             viewport = {"bounds": _pad_bounds(bounds),
                         "transition": "flyToBounds",

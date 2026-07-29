@@ -166,6 +166,12 @@ def parse_ship_static(msg):
     if draught is not None and draught <= 0:
         draught = None
 
+    dim = body.get("Dimension") or {}
+    a, b = dim.get("A") or 0, dim.get("B") or 0
+    c, d = dim.get("C") or 0, dim.get("D") or 0
+    length_m = float(a + b) if (a and b) else None      # bow+stern refs known
+    beam_m = float(c + d) if (c and d) else None
+
     ts = None
     raw_ts = meta.get("time_utc", "")
     if raw_ts:
@@ -184,6 +190,8 @@ def parse_ship_static(msg):
         "destination": clean_text(body.get("Destination")),
         "eta": eta,
         "draught": float(draught) if draught is not None else None,
+        "length_m": length_m,
+        "beam_m": beam_m,
         "ship_name": clean_text(body.get("Name") or meta.get("ShipName")),
     }
 
@@ -335,10 +343,12 @@ class Db:
     def update_latest_static(self, v):
         self.execute(
             """UPDATE latest SET callsign=%s, destination=%s, eta=%s, draught=%s,
-                                 ship_name=COALESCE(%s, ship_name)
+                   length_m=COALESCE(%s, latest.length_m),
+                   beam_m=COALESCE(%s, latest.beam_m),
+                   ship_name=COALESCE(%s, latest.ship_name)
                WHERE mmsi=%s""",
             (v["callsign"], v["destination"], v["eta"], v["draught"],
-             v["ship_name"], v["mmsi"]),
+             v["length_m"], v["beam_m"], v["ship_name"], v["mmsi"]),
         )
 
     def upsert_latest(self, p):

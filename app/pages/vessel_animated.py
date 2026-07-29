@@ -28,7 +28,7 @@ import dash_leaflet as dl
 from dash import html, dcc, Input, Output, State, callback, ctx, clientside_callback
 
 from app import buildinfo
-from app.engines import ais_db, map_overlays
+from app.engines import ais_db, map_overlays, vessel_icon
 
 dash.register_page(__name__, path="/vessel-tracker/animated", name="Track Animated",
                    category="Vessel Tracker", order=2.5)
@@ -75,18 +75,23 @@ def _fly(bounds):
 
 
 def _overview_markers(rows, selected):
-    """All vessels as labelled dots; click toggles playlist membership."""
+    """Ship-shaped markers; playlist members get a teal glow ring.
+    Size scales with vessel length, rotation follows heading/COG."""
     out = []
-    for mmsi, name, ts, lat, lon, sog, nav_status, dest, _vtype in rows:
+    for (mmsi, name, ts, lat, lon, sog, nav_status, dest, _vtype,
+         heading, cog, length_m) in rows:
         in_sel = str(mmsi) in selected
-        out.append(dl.CircleMarker(
-            center=[lat, lon], radius=9,
-            color=TEAL if in_sel else "white", weight=3 if in_sel else 2,
-            fillColor=_color(nav_status), fillOpacity=0.95,
+        html_icon, size, anchor = vessel_icon.ship_div(
+            _color(nav_status), heading, cog, length_m, selected=in_sel)
+        out.append(dl.DivMarker(
+            position=[lat, lon],
+            iconOptions=dict(html=html_icon, className="",
+                             iconSize=size, iconAnchor=anchor),
             bubblingMouseEvents=False, n_clicks=0,
             id={"type": "vta-dot", "mmsi": str(mmsi)},
             children=dl.Tooltip(name, permanent=True, direction="right",
-                                offset=[10, 0], className="vtt-label"),
+                                offset=[size[0] / 2 + 2, 0],
+                                className="vtt-label"),
         ))
     return out
 
@@ -98,11 +103,16 @@ def _show_layer(mmsi, name, points, latest_row):
         if latest_row is None:
             return [], None
         lat, lon, nav_status = latest_row[3], latest_row[4], latest_row[6]
-        marker = dl.CircleMarker(
-            center=[lat, lon], radius=10, color="white", weight=2,
-            fillColor=_color(nav_status), fillOpacity=0.95, interactive=False,
+        html_icon, size, anchor = vessel_icon.ship_div(
+            _color(nav_status), latest_row[9], latest_row[10], latest_row[11])
+        marker = dl.DivMarker(
+            position=[lat, lon],
+            iconOptions=dict(html=html_icon, className="",
+                             iconSize=size, iconAnchor=anchor),
+            interactive=False,
             children=dl.Tooltip(name, permanent=True, direction="right",
-                                offset=[10, 0], className="vtt-label"))
+                                offset=[size[0] / 2 + 2, 0],
+                                className="vtt-label"))
         return [marker], [[lat, lon], [lat, lon]]
 
     latlons = [[p[1], p[2]] for p in points]
@@ -125,18 +135,27 @@ def _show_layer(mmsi, name, points, latest_row):
             fillOpacity=0.9, weight=1, bubblingMouseEvents=False,
             children=dl.Tooltip(tip)))
     last = points[-1]
-    children.append(dl.CircleMarker(
-        center=[last[1], last[2]], radius=10, color="white", weight=2,
-        fillColor=_color(last[4]), fillOpacity=0.95, interactive=False,
+    _hdg = latest_row[9] if latest_row else None
+    _cg = latest_row[10] if latest_row else None
+    _ln = latest_row[11] if latest_row else None
+    html_icon, size, anchor = vessel_icon.ship_div(
+        _color(last[4]), _hdg, _cg, _ln)
+    children.append(dl.DivMarker(
+        position=[last[1], last[2]],
+        iconOptions=dict(html=html_icon, className="",
+                         iconSize=size, iconAnchor=anchor),
+        interactive=False,
         children=dl.Tooltip(name, permanent=True, direction="right",
-                            offset=[10, 0], className="vtt-label")))
+                            offset=[size[0] / 2 + 2, 0],
+                            className="vtt-label")))
     bounds = [[min(p[0] for p in latlons), min(p[1] for p in latlons)],
               [max(p[0] for p in latlons), max(p[1] for p in latlons)]]
     return children, bounds
 
 
 def _vessel_button(row, selected):
-    mmsi, name, ts, lat, lon, sog, nav_status, dest, _vtype = row
+    (mmsi, name, ts, lat, lon, sog, nav_status, dest, _vtype,
+     _hdg, _cog, _len) = row
     try:
         pos = selected.index(str(mmsi)) + 1
     except ValueError:
@@ -200,6 +219,42 @@ def _vessel_list(rows, selected, collapsed):
     return items
 
 
+def _legend():
+    """Compact asset legend, floating bottom-left on the map (shared look
+    with the Tracks page)."""
+    def swatch(color, shape, dashed):
+        if shape == "square":
+            st = {"width": "10px", "height": "10px", "background": color,
+                  "border": "1px solid white"}
+        elif shape == "triangle":
+            st = {"width": "0", "height": "0",
+                  "borderLeft": "5px solid transparent",
+                  "borderRight": "5px solid transparent",
+                  "borderBottom": f"10px solid {color}"}
+        elif shape == "line":
+            st = {"width": "16px", "height": "0",
+                  "borderTop": f"2.5px {'dashed' if dashed else 'solid'} {color}"}
+        elif shape == "polygon":
+            st = {"width": "12px", "height": "9px",
+                  "background": color + "26",
+                  "border": f"1.5px solid {color}"}
+        else:
+            st = {"width": "9px", "height": "9px", "borderRadius": "50%",
+                  "background": color, "border": "1px solid white"}
+        return html.Span(style={**st, "display": "inline-block",
+                                "marginRight": "6px", "verticalAlign": "middle"})
+
+    rows = [html.Div([swatch(c, shape, dashed),
+                      html.Span(label, style={"verticalAlign": "middle"})],
+                     style={"whiteSpace": "nowrap", "lineHeight": "1.5"})
+            for label, c, shape, dashed in map_overlays.legend_items()]
+    return html.Div(rows, style={
+        "position": "absolute", "bottom": "12px", "left": "12px",
+        "zIndex": "1000", "background": "rgba(255,255,255,0.88)",
+        "border": f"1px solid {LINE}", "borderRadius": "8px",
+        "padding": "8px 12px", "fontSize": "0.72rem", "color": "#374151"})
+
+
 _CTRL = {"padding": "5px 14px", "borderRadius": "6px", "fontSize": "0.82rem",
          "cursor": "pointer", "border": f"1px solid {LINE}",
          "background": "white", "fontWeight": "600"}
@@ -223,7 +278,7 @@ layout = html.Div(className="full-width-page", children=[
     dcc.Store(id="vta-srvbuild", data=None),
     dcc.Store(id="vta-reload-sink", data=None),
     html.Div([
-        html.Div(
+        html.Div([
             dl.Map(id="vta-map", preferCanvas=True,
                    center=[30, 10], zoom=3, n_clicks=0,
                    style={"width": "100%", "height": MAP_HEIGHT,
@@ -236,7 +291,9 @@ layout = html.Div(className="full-width-page", children=[
                          for o in map_overlays.OVERLAYS],
                        dl.LayerGroup(id="vta-layer"),
                    ]),
-            style={"flex": "1 1 auto", "minWidth": "0"}),
+            _legend()],
+            style={"flex": "1 1 auto", "minWidth": "0",
+                   "position": "relative"}),
         html.Div([
             html.Div([
                 html.Button("\u25b6 Play", id="vta-play", n_clicks=0,

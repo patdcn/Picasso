@@ -232,7 +232,7 @@ def latest_positions():
         """SELECT l.mmsi,
                   COALESCE(f.name, initcap(lower(l.ship_name)), l.mmsi::text) AS name,
                   l.ts, l.lat, l.lon, l.sog, l.nav_status, l.destination,
-                  f.vessel_type
+                  f.vessel_type, l.heading, l.cog, l.length_m
            FROM latest l
            LEFT JOIN fleet f ON f.mmsi = l.mmsi
            ORDER BY name"""

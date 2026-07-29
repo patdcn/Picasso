@@ -136,6 +136,11 @@ def parse_snapshot_item(item):
     cog = pos.get("courseOverGround")
     if cog is not None and float(cog) >= 360.0:
         cog = None
+    dim_a, dim_b = pos.get("aisDimA") or 0, pos.get("aisDimB") or 0
+    dim_c, dim_d = pos.get("aisDimC") or 0, pos.get("aisDimD") or 0
+    length_m = float(dim_a + dim_b) if (dim_a and dim_b) else None
+    beam_m = float(dim_c + dim_d) if (dim_c and dim_d) else None
+
     draught = pos.get("aisMaxDraught")
     if draught is None:
         draught = ship.get("maxDraught")
@@ -153,6 +158,8 @@ def parse_snapshot_item(item):
         "nav_status": (int(pos["nvgStatus"])
                        if pos.get("nvgStatus") is not None else None),
         "ship_name": ship_meta["name"],
+        "length_m": length_m,
+        "beam_m": beam_m,
     }
     v = {
         "mmsi": p["mmsi"],
@@ -253,8 +260,9 @@ def insert_position(p):
 
 def upsert_latest_if_newer(p, v):
     q("""INSERT INTO latest (mmsi, ts, lat, lon, sog, cog, heading, nav_status,
-                             ship_name, callsign, destination, eta, draught)
-         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                             ship_name, callsign, destination, eta, draught,
+                             length_m, beam_m)
+         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
          ON CONFLICT (mmsi) DO UPDATE SET
            ts=EXCLUDED.ts, lat=EXCLUDED.lat, lon=EXCLUDED.lon,
            sog=EXCLUDED.sog, cog=EXCLUDED.cog, heading=EXCLUDED.heading,
@@ -263,11 +271,14 @@ def upsert_latest_if_newer(p, v):
            callsign=COALESCE(EXCLUDED.callsign, latest.callsign),
            destination=COALESCE(EXCLUDED.destination, latest.destination),
            eta=COALESCE(EXCLUDED.eta, latest.eta),
-           draught=COALESCE(EXCLUDED.draught, latest.draught)
+           draught=COALESCE(EXCLUDED.draught, latest.draught),
+           length_m=COALESCE(EXCLUDED.length_m, latest.length_m),
+           beam_m=COALESCE(EXCLUDED.beam_m, latest.beam_m)
          WHERE latest.ts IS NULL OR EXCLUDED.ts > latest.ts""",
       (p["mmsi"], p["ts"], p["lat"], p["lon"], p["sog"], p["cog"],
        p["heading"], p["nav_status"], p["ship_name"],
-       v["callsign"], v["destination"], v["eta"], v["draught"]))
+       v["callsign"], v["destination"], v["eta"], v["draught"],
+       p["length_m"], p["beam_m"]))
 
 
 def insert_voyage(v):
