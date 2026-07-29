@@ -7,7 +7,7 @@ but instead of one selected vessel it runs a show:
 - Click vessels (column or map dot) to toggle them into the playlist;
   the click order is the flight order and is shown as a number badge.
 - Play: the map flies (birdseye zoom-out/in arc, ~4 s) to the first
-  vessel and shows its 7-day track for 60 seconds, then flies to the
+  vessel and shows its 7-day track for 10 seconds, then flies to the
   next, looping endlessly after the last one.
 - Stop returns to the overview of all vessels.
 
@@ -40,7 +40,7 @@ STATUS_COLORS = {0: "#059669", 8: "#059669", 1: "#d97706", 5: "#2563eb",
 DEFAULT_COLOR = "#6b7280"
 
 MAP_HEIGHT = "calc(100vh - 175px)"
-DWELL_SECONDS = 60
+DWELL_SECONDS = 10
 TRACK_DAYS = 7
 FLY_SECONDS = 4
 
