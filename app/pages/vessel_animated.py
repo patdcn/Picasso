@@ -28,7 +28,7 @@ import dash_leaflet as dl
 from dash import html, dcc, Input, Output, State, callback, ctx, clientside_callback
 
 from app import buildinfo
-from app.engines import ag_assets, ais_db
+from app.engines import ais_db, map_overlays
 
 dash.register_page(__name__, path="/vessel-tracker/animated", name="Track Animated",
                    category="Vessel Tracker", order=2.5)
@@ -218,7 +218,7 @@ layout = html.Div(className="full-width-page", children=[
     dcc.Store(id="vta-playing", data=False),
     dcc.Store(id="vta-index", data=0),
     dcc.Store(id="vta-collapsed", data=[]),
-    dcc.Store(id="vta-assets-on", data=True),
+    dcc.Store(id="vta-overlays", data=map_overlays.default_state()),
     dcc.Store(id="vta-mybuild", data=buildinfo.BUILD_ID),
     dcc.Store(id="vta-srvbuild", data=None),
     dcc.Store(id="vta-reload-sink", data=None),
@@ -231,7 +231,9 @@ layout = html.Div(className="full-width-page", children=[
                    children=[
                        dl.TileLayer(url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
                                     attribution="© OpenStreetMap contributors"),
-                       dl.LayerGroup(id="vta-assets-layer"),
+                       *[dl.LayerGroup(id={"type": "vta-ovl-layer",
+                                              "key": o["key"]})
+                         for o in map_overlays.OVERLAYS],
                        dl.LayerGroup(id="vta-layer"),
                    ]),
             style={"flex": "1 1 auto", "minWidth": "0"}),
@@ -242,9 +244,11 @@ layout = html.Div(className="full-width-page", children=[
                                    "borderColor": TEAL, "marginRight": "6px"}),
                 html.Button("\u25a0 Stop", id="vta-stop", n_clicks=0,
                             style=_CTRL),
-                html.Button(f"AG assets ({ag_assets.feature_count()})",
-                            id="vta-assets-btn", n_clicks=0,
-                            style={"marginLeft": "6px"}),
+                *[html.Button(map_overlays.chip_label(o), n_clicks=0,
+                              id={"type": "vta-ovl-chip", "key": o["key"]},
+                              title=o.get("hint", ""),
+                              style={"marginLeft": "6px"})
+                  for o in map_overlays.OVERLAYS],
             ], style={"padding": "8px 10px", "background": "#f8fafc",
                       "borderBottom": f"2px solid {TEAL}"}),
             html.Div(id="vta-list", style={"overflowY": "auto",
@@ -389,18 +393,35 @@ clientside_callback(
 )
 
 
-# ---- Arabian Gulf assets overlay (public dataset) ---------------------------
-@callback(Output("vta-assets-layer", "children"),
-          Output("vta-assets-btn", "style"),
-          Output("vta-assets-on", "data"),
-          Input("vta-assets-btn", "n_clicks"),
-          State("vta-assets-on", "data"))
-def _toggle_assets(n_clicks, on):
-    on = bool(on) if n_clicks in (None, 0) else not bool(on)
-    style = {"padding": "3px 12px", "borderRadius": "999px",
-             "fontSize": "0.78rem", "cursor": "pointer",
-             "border": f"1.5px solid {'#b45309' if on else LINE}",
-             "background": "#b45309" if on else "white",
-             "color": "white" if on else "#374151",
-             "fontWeight": "600" if on else "400"}
-    return (ag_assets.build_markers() if on else []), style, on
+# ---- map overlays (registry-driven; see app/engines/map_overlays.py) --------
+def _overlay_chip_style(on):
+    return {"padding": "3px 12px", "borderRadius": "999px",
+            "fontSize": "0.78rem", "cursor": "pointer",
+            "border": f"1.5px solid {'#b45309' if on else LINE}",
+            "background": "#b45309" if on else "white",
+            "color": "white" if on else "#374151",
+            "fontWeight": "600" if on else "400"}
+
+
+@callback(
+    Output({"type": "vta-ovl-layer", "key": dash.ALL}, "children"),
+    Output({"type": "vta-ovl-chip", "key": dash.ALL}, "style"),
+    Output({"type": "vta-ovl-chip", "key": dash.ALL}, "children"),
+    Output("vta-overlays", "data"),
+    Input({"type": "vta-ovl-chip", "key": dash.ALL}, "n_clicks"),
+    State("vta-overlays", "data"),
+)
+def _overlays(_clicks, state):
+    state = {**map_overlays.default_state(), **(state or {})}
+    trig = ctx.triggered_id
+    if (ctx.triggered and ctx.triggered[0].get("value")
+            and isinstance(trig, dict) and trig.get("type") == "vta-ovl-chip"):
+        k = trig.get("key")
+        state[k] = not state.get(k, False)
+    layers, styles, labels = [], [], []
+    for o in map_overlays.OVERLAYS:          # zelfde volgorde als de layout
+        on = state.get(o["key"], False)
+        layers.append(map_overlays.build_layer(o) if on else [])
+        styles.append(_overlay_chip_style(on))
+        labels.append(map_overlays.chip_label(o))
+    return layers, styles, labels, state
