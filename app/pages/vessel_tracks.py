@@ -254,11 +254,33 @@ def _legend():
         return html.Span(style={**st, "display": "inline-block",
                                 "marginRight": "6px", "verticalAlign": "middle"})
 
+    def ship_swatch(color):
+        # ship outline as pure CSS (clip-path pentagon: pointed bow)
+        return html.Span(style={
+            "display": "inline-block", "width": "9px", "height": "15px",
+            "background": color,
+            "clipPath": "polygon(50% 0, 100% 28%, 100% 100%, 0 100%, 0 28%)",
+            "marginRight": "6px", "verticalAlign": "middle",
+            "outline": "1px solid white"})
+
+    vessel_rows = [html.Div("Vessels",
+                            style={"fontWeight": "700", "marginTop": "6px",
+                                   "borderTop": f"1px solid {LINE}",
+                                   "paddingTop": "5px"})]
+    vessel_rows += [
+        html.Div([ship_swatch(c),
+                  html.Span(lbl, style={"verticalAlign": "middle"})],
+                 style={"whiteSpace": "nowrap", "lineHeight": "1.5"})
+        for lbl, c in (("Underway", "#059669"), ("At anchor", "#d97706"),
+                       ("Moored", "#2563eb"),
+                       ("Restricted / constrained", "#7c3aed"),
+                       ("Other / unknown", "#6b7280"))]
+
     rows = [html.Div([swatch(c, shape, dashed),
                       html.Span(label, style={"verticalAlign": "middle"})],
                      style={"whiteSpace": "nowrap", "lineHeight": "1.5"})
             for label, c, shape, dashed in map_overlays.legend_items()]
-    return html.Div(rows, style={
+    return html.Div(rows + vessel_rows, style={
         "position": "absolute", "bottom": "12px", "left": "12px",
         "zIndex": "1000", "background": "rgba(255,255,255,0.88)",
         "border": f"1px solid {LINE}", "borderRadius": "8px",
