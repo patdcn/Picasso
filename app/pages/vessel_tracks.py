@@ -84,8 +84,17 @@ def _track_layer(mmsi, name, points):
     if not points:
         return [], None
     latlons = [[p[1], p[2]] for p in points]
-    children = [dl.Polyline(positions=latlons, color=TEAL, weight=2.5,
-                            opacity=0.85, interactive=False)]
+    children = [
+        dl.Polyline(positions=latlons, color=TEAL, weight=2.5,
+                    opacity=0.85, interactive=False),
+        # direction-of-travel arrows along the line (MarineTraffic-style);
+        # follows point order, independent of the vessel's heading
+        dl.PolylineDecorator(positions=latlons, patterns=[dict(
+            offset="18px", repeat="70px",
+            arrowHead=dict(pixelSize=9, polygon=True,
+                           pathOptions=dict(color=TEAL, fillOpacity=0.9,
+                                            weight=1, stroke=True)))]),
+    ]
     for ts, lat, lon, sog, nav_status, source in points:
         tip = (f"{ts.strftime('%d-%m %H:%M')} UTC · "
                f"{f'{sog:.1f} kn' if sog is not None else '— kn'} · "
@@ -172,6 +181,33 @@ def _vessel_list(rows, selected):
     return items
 
 
+def _chip(label, value, active, count=None):
+    text = f"{label} ({count})" if count is not None else label
+    return html.Button(
+        text, n_clicks=0, id={"type": "vtt-tf", "val": value},
+        style={"padding": "3px 12px", "borderRadius": "999px",
+               "fontSize": "0.78rem", "cursor": "pointer",
+               "border": f"1.5px solid {TEAL if active else LINE}",
+               "background": TEAL if active else "white",
+               "color": "white" if active else "#374151",
+               "fontWeight": "600" if active else "400"})
+
+
+def _type_chips(rows, typefilter):
+    """Filter chips above the map, derived from the data (dynamic groups)."""
+    counts = {}
+    for r in rows:
+        counts[r[8] or "Other"] = counts.get(r[8] or "Other", 0) + 1
+    if len(counts) < 2:
+        return []
+    ordered = sorted(k for k in counts if k != "Other")
+    if "Other" in counts:
+        ordered.append("Other")
+    chips = [_chip("All", "__all__", typefilter is None, sum(counts.values()))]
+    chips += [_chip(t, t, typefilter == t, counts[t]) for t in ordered]
+    return chips
+
+
 layout = html.Div(className="full-width-page", children=[
     html.Div([
         html.H3("Tracks", style={"margin": "0 12px 0 0", "display": "inline"}),
@@ -179,6 +215,10 @@ layout = html.Div(className="full-width-page", children=[
     ], style={"marginBottom": "8px"}),
     dcc.Interval(id="vtt-tick", interval=900_000, n_intervals=0),  # 15 min kiosk refresh
     dcc.Store(id="vtt-selected", data=None),
+    dcc.Store(id="vtt-typefilter", data=None),
+    html.Div(id="vtt-chips", style={"margin": "0 0 8px",
+                                    "display": "flex", "gap": "6px",
+                                    "flexWrap": "wrap"}),
     html.Div([
         html.Div(
             dl.Map(id="vtt-map", preferCanvas=True,
@@ -212,25 +252,43 @@ layout = html.Div(className="full-width-page", children=[
     Output("vtt-subtitle", "children"),
     Output("vtt-map", "viewport"),
     Output("vtt-selected", "data"),
+    Output("vtt-chips", "children"),
+    Output("vtt-typefilter", "data"),
     Input("vtt-tick", "n_intervals"),
     Input("vtt-map", "n_clicks"),
     Input({"type": "vtt-dot", "mmsi": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-sel", "mmsi": dash.ALL}, "n_clicks"),
+    Input({"type": "vtt-tf", "val": dash.ALL}, "n_clicks"),
     State("vtt-selected", "data"),
+    State("vtt-typefilter", "data"),
 )
-def _render(_tick, _map_clicks, _dots, _sels, selected):
+def _render(_tick, _map_clicks, _dots, _sels, _chips, selected, typefilter):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
     is_refresh = trig in (None, "vtt-tick")
 
+    filter_changed = False
+    if (clicked and isinstance(trig, dict) and trig.get("type") == "vtt-tf"):
+        val = trig.get("val")
+        new_filter = None if val in ("__all__", typefilter) else val
+        filter_changed = new_filter != typefilter
+        typefilter = new_filter
+
     new_selected = _resolve_selection(trig, clicked, selected)
 
     try:
-        rows = ais_db.latest_positions()
+        all_rows = ais_db.latest_positions()
     except ais_db.AisDbError as exc:
         empty = html.Div(str(exc), style={"color": "#b91c1c", "padding": "12px",
                                           "fontSize": "0.85rem"})
-        return [], empty, "Vessels", "", dash.no_update, new_selected
+        return ([], empty, "Vessels", "", dash.no_update, new_selected,
+                [], typefilter)
+
+    chips = _type_chips(all_rows, typefilter)
+    rows = [r for r in all_rows
+            if typefilter is None or (r[8] or "Other") == typefilter]
+    if filter_changed:
+        new_selected = None            # filterwissel = terug naar overzicht
 
     mmsis = {str(r[0]) for r in rows}
     if new_selected not in mmsis:
@@ -238,13 +296,14 @@ def _render(_tick, _map_clicks, _dots, _sels, selected):
 
     subtitle = ("click a vessel for its 30-day track"
                 if new_selected is None else "click the map or the vessel to go back")
-    count = f"Vessels ({len(rows)})"
+    count = (f"Vessels ({len(rows)})" if typefilter is None
+             else f"{typefilter} ({len(rows)} of {len(all_rows)})")
     viewport = dash.no_update
 
     if new_selected is None:
         layer = _vessel_markers(rows)
-        # re-fit on initial load and on deselect, not on the 15-min refresh
-        if rows and (trig is None or not is_refresh):
+        # re-fit on initial load, deselect and filter change - not on refresh
+        if rows and (trig is None or not is_refresh or filter_changed):
             bounds = _pad_bounds(
                 [[min(r[3] for r in rows), min(r[4] for r in rows)],
                  [max(r[3] for r in rows), max(r[4] for r in rows)]])
@@ -262,7 +321,7 @@ def _render(_tick, _map_clicks, _dots, _sels, selected):
         subtitle = (f"{name} — {len(points)} points, last 30 days · " + subtitle)
 
     return (layer, _vessel_list(rows, new_selected), count, subtitle,
-            viewport, new_selected)
+            viewport, new_selected, chips, typefilter)
 
 
 def _resolve_selection(trig, clicked, current):
