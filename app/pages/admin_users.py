@@ -33,6 +33,12 @@ _CALC_ROLE_ROWS = {
     "/calculation/admin": ("super", " super-user (moderate & manage)"),
 }
 
+# Generic per-page edit rights that reuse the param_modules storage and the
+# adm-par checkbox family (so the existing save flow picks them up as-is).
+_EDIT_RIGHT_ROWS = {
+    "/vessel-tracker/fleet": " edit fleet (vessels & SeaVantage)",
+}
+
 
 def _module_rows(allowed, param_allowed, calc_role=None):
     pmods = set(params.param_edit_modules())
@@ -56,10 +62,11 @@ def _module_rows(allowed, param_allowed, calc_role=None):
                 value=[kind] if ticked else [],
                 inputStyle={"marginRight": "6px"},
                 style={"fontSize": "0.82rem", "color": ACCENT, "whiteSpace": "nowrap"})
-        elif path in pmods:
+        elif path in pmods or path in _EDIT_RIGHT_ROWS:
             right = dcc.Checklist(
                 id={"type": "adm-par", "path": path},
-                options=[{"label": " edit parameters", "value": path}],
+                options=[{"label": _EDIT_RIGHT_ROWS.get(path, " edit parameters"),
+                          "value": path}],
                 value=[path] if path in param_allowed else [],
                 inputStyle={"marginRight": "6px"},
                 style={"fontSize": "0.82rem", "color": ACCENT, "whiteSpace": "nowrap"})

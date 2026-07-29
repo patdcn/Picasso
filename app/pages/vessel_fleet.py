@@ -31,9 +31,12 @@ from datetime import datetime, timedelta, timezone
 import dash
 from dash import html, dcc, Input, Output, State, callback, ctx
 
+from app import auth
 from app.engines import ais_db, sv_api
 
-dash.register_page(__name__, path="/vessel-tracker/fleet", name="Fleet",
+PAGE_PATH = "/vessel-tracker/fleet"
+
+dash.register_page(__name__, path=PAGE_PATH, name="Fleet",
                    category="Vessel Tracker", order=1)
 
 INK = "#1f2937"
@@ -193,7 +196,7 @@ def _apply_sort(rows, sort):
 
 
 def _build_table(pending_delete=None, editing=None, search="", ftype=None,
-                 fregion=None, sort=None):
+                 fregion=None, sort=None, can_edit=True):
     raw = ais_db.fleet_with_sv()
     all_rows = [_row_dict(r) for r in raw]
     rows = _apply_sort(_apply_filters(all_rows, search, ftype, fregion), sort)
@@ -220,9 +223,15 @@ def _build_table(pending_delete=None, editing=None, search="", ftype=None,
     for d in rows:
         imo, mmsi = d["imo"], d["mmsi"]
         locked = d["registered_at"] is not None
-        status, action = _status_and_action(imo, d["registered_at"],
-                                            d["match_result"], pending_delete)
-        if d["registered_at"] is None and at_cap:
+        if can_edit:
+            status, action = _status_and_action(imo, d["registered_at"],
+                                                d["match_result"], pending_delete)
+        else:
+            status, _ = _status_and_action(imo, d["registered_at"],
+                                           d["match_result"], None)
+            action = html.Span("\u2014", style={"color": "#c0c5cc"},
+                               title="You have view-only access to the fleet")
+        if can_edit and d["registered_at"] is None and at_cap:
             action = html.Button("Add", disabled=True, style=_BTN_DISABLED,
                                  title=f"Account limit reached ({cap} vessels)")
         style = {} if d["active"] else {"color": "#aeb4bd"}
@@ -256,7 +265,7 @@ def _build_table(pending_delete=None, editing=None, search="", ftype=None,
             ]
         else:
             name_btn = ""
-            if not locked:
+            if not locked and can_edit:
                 name_btn = html.Button(
                     "\u21bb name", n_clicks=0,
                     id={"type": "vtf-nm", "imo": str(imo)},
@@ -274,7 +283,7 @@ def _build_table(pending_delete=None, editing=None, search="", ftype=None,
                 html.Button("Edit", n_clicks=0,
                             id={"type": "vtf-edit", "imo": str(imo)},
                             style={**_BTN, "padding": "1px 8px",
-                                   "fontSize": "0.72rem"}),
+                                   "fontSize": "0.72rem"}) if can_edit else "",
             ]
 
         def td(c, i):
@@ -323,6 +332,8 @@ def _new_field(fid, placeholder, width="110px", required=False):
                             "borderColor": "#f59e0b" if required else LINE})
 
 
+_ADD_BTN_STYLE = {**_BTN, "padding": "6px 14px", "fontWeight": "600"}
+
 layout = html.Div(className="full-width-page", children=[
     html.H3("Fleet"),
     html.P("Complete vessel list with SeaVantage workspace registration. "
@@ -333,7 +344,7 @@ layout = html.Div(className="full-width-page", children=[
                   children=[html.Option(value=v) for v in VESSEL_TYPES]),
     html.Div([
         html.Button("+ Add vessel", id="vtf-add-open", n_clicks=0,
-                    style={**_BTN, "padding": "6px 14px", "fontWeight": "600"}),
+                    style=_ADD_BTN_STYLE),
         html.Button("Refresh", id="vtf-refresh", n_clicks=0,
                     style={**_BTN, "padding": "6px 14px", "marginLeft": "8px"}),
         dcc.Input(id="vtf-search", value="", debounce=True, type="text",
@@ -395,6 +406,7 @@ layout = html.Div(className="full-width-page", children=[
     Output("vtf-addform", "style"),
     Output("vtf-ftype", "options"),
     Output("vtf-fregion", "options"),
+    Output("vtf-add-open", "style"),
     Input("vtf-refresh", "n_clicks"),
     Input("vtf-add-open", "n_clicks"),
     Input("vtf-new-save", "n_clicks"),
@@ -432,10 +444,20 @@ def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
     banner, ok = None, True
+    can_edit = auth.may_edit_params(auth.current_user(), PAGE_PATH)
+    if not can_edit:
+        editing, adding = None, False
     new_pending, new_editing, new_adding = None, editing, bool(adding)
 
+    _MUTATING = ("vtf-add", "vtf-del", "vtf-del-confirm", "vtf-edit",
+                 "vtf-nm", "vtf-save")
     try:
-        if clicked and isinstance(trig, dict) and trig.get("type") == "vtf-sort":
+        if (clicked and not can_edit
+                and ((isinstance(trig, dict) and trig.get("type") in _MUTATING)
+                     or trig in ("vtf-add-open", "vtf-new-save"))):
+            banner, ok = ("You have view-only access to the fleet; ask an "
+                          "admin for 'edit fleet' rights.", False)
+        elif clicked and isinstance(trig, dict) and trig.get("type") == "vtf-sort":
             col = trig["col"]
             if sort and sort.get("col") == col and sort.get("dir") == "asc":
                 sort = {"col": col, "dir": "desc"}
@@ -499,13 +521,15 @@ def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
     try:
         table, counter, types, regions = _build_table(
             pending_delete=new_pending, editing=new_editing,
-            search=search, ftype=ftype, fregion=fregion, sort=sort)
+            search=search, ftype=ftype, fregion=fregion, sort=sort,
+            can_edit=can_edit)
     except Exception as exc:
         return (_banner(str(exc), ok=False), "", None, None, None, False,
-                {"display": "none"}, [], [])
-    form_style = {"display": "block"} if new_adding else {"display": "none"}
+                {"display": "none"}, [], [], _ADD_BTN_STYLE)
+    form_style = {"display": "block"} if (new_adding and can_edit) else {"display": "none"}
+    add_btn_style = _ADD_BTN_STYLE if can_edit else {"display": "none"}
     return (table, counter, _banner(banner, ok), new_pending, new_editing,
-            new_adding, form_style, types, regions)
+            new_adding, form_style, types, regions, add_btn_style)
 
 
 @callback(Output("vtf-sort", "data"),
