@@ -123,7 +123,7 @@ def fleet_with_sv():
         """SELECT f.imo, f.mmsi, f.name, f.owner, f.operator, f.built, f.flag,
                   f.region, f.tier, f.notes, f.active,
                   s.ship_id, s.registered_at, s.match_result,
-                  l.ship_name AS ais_name, l.lat, l.lon
+                  l.ship_name AS ais_name, l.lat, l.lon, f.vessel_type
            FROM fleet f
            LEFT JOIN sv_ship s ON s.imo = f.imo
            LEFT JOIN latest l ON l.mmsi = f.mmsi
@@ -160,7 +160,7 @@ def sv_clear_registration(imo):
 
 # --- fleet editing -----------------------------------------------------------
 _FLEET_EDITABLE = ("name", "owner", "operator", "built", "flag", "region",
-                   "tier", "notes", "mmsi", "imo")
+                   "tier", "notes", "mmsi", "imo", "vessel_type")
 
 
 def fleet_update(imo, updates):
@@ -257,3 +257,30 @@ def track(mmsi, days=30, max_points=1200):
     if thinned[-1] != rows[-1]:
         thinned.append(rows[-1])
     return thinned
+
+
+def fleet_insert(fields):
+    """Add a new vessel. Name and IMO are mandatory; IMO must be unique.
+    Returns an error string, or None on success."""
+    name = (fields.get("name") or "").strip()
+    imo = (fields.get("imo") or "").strip()
+    if not name or not imo:
+        return "Name and IMO are mandatory."
+    if not (imo.isdigit() and len(imo) == 7):
+        return f"IMO must be 7 digits, got '{imo}'."
+    if q("SELECT 1 FROM fleet WHERE imo=%s", (int(imo),)):
+        return f"IMO {imo} already exists in the fleet."
+    mmsi = (fields.get("mmsi") or "").strip()
+    if mmsi and not mmsi.isdigit():
+        return f"MMSI must be numeric, got '{mmsi}'."
+    if mmsi and q("SELECT 1 FROM fleet WHERE mmsi=%s", (int(mmsi),)):
+        return f"MMSI {mmsi} already exists in the fleet."
+    q("""INSERT INTO fleet (imo, mmsi, name, owner, operator, built, flag,
+                            region, tier, notes, vessel_type, active)
+         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE)""",
+      (int(imo), int(mmsi) if mmsi else None, name,
+       fields.get("owner") or None, fields.get("operator") or None,
+       fields.get("built") or None, fields.get("flag") or None,
+       fields.get("region") or None, fields.get("tier") or None,
+       fields.get("notes") or None, fields.get("vessel_type") or None))
+    return None
