@@ -37,6 +37,7 @@ _CALC_ROLE_ROWS = {
 # adm-par checkbox family (so the existing save flow picks them up as-is).
 _EDIT_RIGHT_ROWS = {
     "/vessel-tracker/fleet": " edit fleet (vessels & SeaVantage)",
+    "/vessel-tracker/assets": " edit subsea assets",
 }
 
 
