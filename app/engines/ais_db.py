@@ -285,3 +285,17 @@ def fleet_insert(fields):
        fields.get("region") or None, fields.get("tier") or None,
        fields.get("notes") or None, fields.get("vessel_type") or None))
     return None
+
+
+def fleet_import_from_sv(imo, mmsi, name):
+    """Insert a vessel discovered in the SeaVantage workspace but missing
+    from our fleet. vessel_type stays NULL on purpose: the mandatory-type
+    rule is enforced on the next manual edit. Returns True if inserted."""
+    if q("SELECT 1 FROM fleet WHERE imo=%s", (int(imo),)):
+        return False
+    if mmsi and q("SELECT 1 FROM fleet WHERE mmsi=%s", (int(mmsi),)):
+        return False
+    q("""INSERT INTO fleet (imo, mmsi, name, notes, active)
+         VALUES (%s,%s,%s,'imported from SeaVantage workspace',TRUE)""",
+      (int(imo), int(mmsi) if mmsi else None, name))
+    return True

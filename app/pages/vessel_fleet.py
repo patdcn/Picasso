@@ -510,6 +510,14 @@ def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
     except Exception as exc:  # never kill the page
         banner, ok = f"Unexpected error: {exc}", False
 
+    if trig in (None, "vtf-refresh"):
+        try:
+            sync_msg = _sync_with_workspace()
+            if sync_msg and banner is None:
+                banner, ok = sync_msg, True
+        except (sv_api.SvApiError, ais_db.AisDbError, Exception):
+            pass    # SV onbereikbaar mag de pagina nooit blokkeren
+
     try:
         n_regions = ais_db.fleet_auto_update_regions()
         if n_regions and banner is None:
@@ -586,6 +594,50 @@ def _do_save(imo, fields):
             updates["imo"] = int(new_imo)
     ais_db.fleet_update(imo, updates)
     return f"{updates.get('name', name)} saved.", True
+
+
+def _sync_with_workspace():
+    """Two-way reconciliation with the SVMP workspace (one snapshot call):
+    - vessels registered there but unknown here -> imported into the fleet
+      (name/IMO/MMSI from AIS data; vessel type left for the first edit)
+    - vessels we consider registered but absent there -> registration
+      cleared (deregistered via the SVMP UI).
+    A failed or empty snapshot never clears anything (guard against API
+    hiccups wiping registrations). Returns a banner message or None."""
+    items = sv_api.snapshot()
+    if not items:
+        return None
+    known = {r[0]: r for r in ais_db.fleet_with_sv()}     # imo -> row
+    seen_imos, imported = set(), []
+    for item in items:
+        pos = (item or {}).get("position") or {}
+        ship_id = (item or {}).get("shipId")
+        imo_raw = pos.get("imoNo")
+        if not imo_raw or not str(imo_raw).isdigit():
+            continue
+        imo = int(imo_raw)
+        seen_imos.add(imo)
+        mmsi = pos.get("mmsi")
+        mmsi = int(mmsi) if (mmsi and str(mmsi).isdigit()) else None
+        name = _title_name(pos.get("shipName") or "") or f"IMO {imo}"
+        if imo not in known:
+            if ais_db.fleet_import_from_sv(imo, mmsi, name):
+                imported.append(name)
+        if ship_id:   # registratie vastleggen/bevestigen (klok start bij ons)
+            ais_db.sv_record_registration(imo, mmsi, str(ship_id), name)
+    cleared = []
+    for imo, row in known.items():
+        if row[12] is not None and imo not in seen_imos:   # registered_at
+            ais_db.sv_clear_registration(imo)
+            cleared.append(row[2])
+    parts = []
+    if imported:
+        parts.append(f"Imported from your SeaVantage workspace: "
+                     f"{', '.join(imported)} — set the vessel type via Edit.")
+    if cleared:
+        parts.append(f"No longer in the workspace (deregistered): "
+                     f"{', '.join(cleared)}.")
+    return " ".join(parts) or None
 
 
 def _fleet_row(imo):

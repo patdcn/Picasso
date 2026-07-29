@@ -74,3 +74,11 @@ def deregister(ship_ids):
     with _session() as s:
         r = s.delete(SV_BASE_URL + "/fleet", json=list(ship_ids), timeout=30)
         _check(r)
+
+
+def snapshot():
+    """GET /fleet/snapshot: every vessel registered in the SVMP workspace,
+    with its latest position (may be null)."""
+    with _session() as s:
+        r = s.get(SV_BASE_URL + "/fleet/snapshot", timeout=30)
+        return _check(r) or []
