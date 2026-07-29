@@ -148,20 +148,28 @@ def _edit_input(field, value, disabled=False, width="110px"):
 # (label, sort-key or None); sort keys resolve on the row dicts below
 _COLUMNS = [("Vessel", "name"), ("", None), ("IMO", "imo"), ("MMSI", "mmsi"),
             ("Type", "vessel_type"), ("Owner / Operator", "owner"),
+            ("Dim.", "length_m"),
             ("Built", "built"), ("Flag", "flag"), ("Region", "region"),
             ("Tier", "tier"), ("Notes", None), ("SeaVantage", "registered_at"),
             ("Action", None), ("", None)]
 
 
+def _dim_txt(d):
+    if not d.get("length_m"):
+        return "\u2014"
+    b = f" \u00d7 {d['beam_m']:.0f}" if d.get("beam_m") else ""
+    return f"{d['length_m']:.0f}{b} m"
+
+
 def _row_dict(r):
     (imo, mmsi, name, owner, operator, built, flag, region, tier, notes,
      active, ship_id, registered_at, match_result, ais_name, lat, lon,
-     vessel_type) = r
+     vessel_type, length_m, beam_m) = r
     return dict(imo=imo, mmsi=mmsi, name=name, owner=owner, operator=operator,
                 built=built, flag=flag, region=region, tier=tier, notes=notes,
                 active=active, ship_id=ship_id, registered_at=registered_at,
                 match_result=match_result, ais_name=ais_name,
-                vessel_type=vessel_type)
+                vessel_type=vessel_type, length_m=length_m, beam_m=beam_m)
 
 
 def _apply_filters(rows, search, ftype, fregion):
@@ -183,16 +191,20 @@ def _apply_filters(rows, search, ftype, fregion):
 
 
 def _apply_sort(rows, sort):
+    """Sort with empty values ALWAYS last, in both directions."""
     col = (sort or {}).get("col") or "name"
     rev = (sort or {}).get("dir") == "desc"
+    filled = [d for d in rows if d.get(col) is not None]
+    empty = [d for d in rows if d.get(col) is None]
 
     def key(d):
         v = d.get(col)
-        return (v is None, str(v).lower() if isinstance(v, str) else v)
+        return str(v).lower() if isinstance(v, str) else v
     try:
-        return sorted(rows, key=key, reverse=rev)
+        return sorted(filled, key=key, reverse=rev) + empty
     except TypeError:
-        return sorted(rows, key=lambda d: str(d.get(col) or ""), reverse=rev)
+        return sorted(filled, key=lambda d: str(d.get(col)),
+                      reverse=rev) + empty
 
 
 def _build_table(pending_delete=None, editing=None, search="", ftype=None,
@@ -245,6 +257,8 @@ def _build_table(pending_delete=None, editing=None, search="", ftype=None,
                 _edit_input("vessel_type", d["vessel_type"], width="70px"),
                 _edit_input("owner_op", _owner_op(d["owner"], d["operator"]),
                             width="180px"),
+                html.Span(_dim_txt(d), title="From AIS (auto)",
+                          style={"color": MUTED, "fontSize": "0.78rem"}),
                 _edit_input("built", d["built"], width="60px"),
                 _edit_input("flag", d["flag"], width="60px"),
                 _edit_input("region", d["region"], width="70px"),
@@ -276,6 +290,7 @@ def _build_table(pending_delete=None, editing=None, search="", ftype=None,
                 d["name"], name_btn, str(imo), str(mmsi or "\u2014"),
                 d["vessel_type"] or "\u2014",
                 _owner_op(d["owner"], d["operator"]) or "\u2014",
+                _dim_txt(d),
                 d["built"] or "\u2014", d["flag"] or "\u2014",
                 d["region"] or "\u2014", d["tier"] or "\u2014",
                 d["notes"] or "\u2014",
@@ -287,8 +302,8 @@ def _build_table(pending_delete=None, editing=None, search="", ftype=None,
             ]
 
         def td(c, i):
-            extra = _ELLIPSIS if i in (5, 10) and editing != str(imo) else {}
-            tip = c if isinstance(c, str) and i in (5, 10) else None
+            extra = _ELLIPSIS if i in (5, 11) and editing != str(imo) else {}
+            tip = c if isinstance(c, str) and i in (5, 11) else None
             return html.Td(c, style={**_CELL, **style, **extra}, title=tip)
         body.append(html.Tr([td(c, i) for i, c in enumerate(cells)]))
 
@@ -520,9 +535,15 @@ def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
 
     try:
         n_regions = ais_db.fleet_auto_update_regions()
-        if n_regions and banner is None:
-            banner, ok = (f"{n_regions} region(s) updated from last known "
-                          f"positions.", True)
+        n_dims = ais_db.fleet_auto_update_dims()
+        if (n_regions or n_dims) and banner is None:
+            parts = []
+            if n_regions:
+                parts.append(f"{n_regions} region(s)")
+            if n_dims:
+                parts.append(f"{n_dims} dimension(s)")
+            banner, ok = (" and ".join(parts) +
+                          " updated from AIS data.", True)
     except ais_db.AisDbError:
         pass
 

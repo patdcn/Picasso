@@ -123,7 +123,8 @@ def fleet_with_sv():
         """SELECT f.imo, f.mmsi, f.name, f.owner, f.operator, f.built, f.flag,
                   f.region, f.tier, f.notes, f.active,
                   s.ship_id, s.registered_at, s.match_result,
-                  l.ship_name AS ais_name, l.lat, l.lon, f.vessel_type
+                  l.ship_name AS ais_name, l.lat, l.lon, f.vessel_type,
+                  f.length_m, f.beam_m
            FROM fleet f
            LEFT JOIN sv_ship s ON s.imo = f.imo
            LEFT JOIN latest l ON l.mmsi = f.mmsi
@@ -299,3 +300,19 @@ def fleet_import_from_sv(imo, mmsi, name):
          VALUES (%s,%s,%s,'imported from SeaVantage workspace',TRUE)""",
       (int(imo), int(mmsi) if mmsi else None, name))
     return True
+
+
+def fleet_auto_update_dims():
+    """Copy AIS-derived dimensions (latest.length_m/beam_m) onto the fleet.
+    AIS is authoritative here: values are overwritten whenever they differ.
+    Returns the number of vessels updated."""
+    rows = q(
+        """UPDATE fleet f SET length_m=l.length_m, beam_m=l.beam_m,
+                              updated_at=now()
+           FROM latest l
+           WHERE l.mmsi = f.mmsi AND l.length_m IS NOT NULL
+             AND (f.length_m IS DISTINCT FROM l.length_m
+                  OR f.beam_m IS DISTINCT FROM l.beam_m)
+           RETURNING 1"""
+    )
+    return len(rows)
