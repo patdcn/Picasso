@@ -330,6 +330,10 @@ def main():
     session = requests.Session()
     session.auth = (SV_USER, SV_PASSWORD)
     session.headers["Accept"] = "application/json"
+    # One request per 15 min: keep-alive is useless and its idle timeout was
+    # the source of RemoteDisconnected retries. Close cleanly after each
+    # response; the retry adapter below remains as a genuine-failure net.
+    session.headers["Connection"] = "close"
     # The 15-min idle gap between cycles outlives the server's keep-alive
     # timeout; the first request then hits a dead socket (RemoteDisconnected).
     # Retries transparently reconnect on a fresh connection.
