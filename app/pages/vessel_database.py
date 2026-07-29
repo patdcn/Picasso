@@ -11,12 +11,39 @@ database is unreachable (separate Dokploy project) the page shows an
 explanatory card instead of failing, in line with the portal's _safe()
 philosophy.
 """
+import glob
+import os
 from datetime import datetime, timezone
 
 import dash
-from dash import html, dcc, Input, Output, callback
+from dash import html, dcc, Input, Output, State, callback, ctx, no_update
 
+from app import auth
 from app.engines import ais_db
+
+BACKUP_DIR = os.environ.get("AIS_BACKUP_DIR", "/data/backups")
+
+
+def _list_backups():
+    """Nightly pg_dump files, newest first: (path, filename, size, mtime)."""
+    out = []
+    for p in glob.glob(os.path.join(BACKUP_DIR, "ais_*.dump")):
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        out.append((p, os.path.basename(p), st.st_size,
+                    datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)))
+    out.sort(key=lambda t: t[1], reverse=True)
+    return out
+
+
+def _fmt_size(n):
+    for unit in ("B", "kB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n / 1.0:.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} GB"
 
 dash.register_page(__name__, path="/vessel-tracker/database", name="Database",
                    category="Vessel Tracker", order=3)
@@ -110,8 +137,79 @@ layout = html.Div(
         ),
         dcc.Interval(id="vtdb-tick", interval=60_000, n_intervals=0),
         html.Div(id="vtdb-content"),
+        html.Div(id="vtdb-backup-box", style={"display": "none"}, children=html.Div(
+            [
+                html.Div("Backups", style={"fontWeight": "600",
+                                           "marginBottom": "6px"}),
+                html.Div("Nightly pg_dump of the complete AIS database "
+                         "(03:00 UTC, 14-day rotation). Restore requires the "
+                         "TimescaleDB pre/post-restore ritual - see the README.",
+                         style={"color": MUTED, "fontSize": "0.78rem",
+                                "marginBottom": "8px", "maxWidth": "620px"}),
+                html.Div([
+                    dcc.Dropdown(id="vtdb-backup-select", clearable=False,
+                                 style={"width": "340px", "fontSize": "0.85rem",
+                                        "display": "inline-block",
+                                        "verticalAlign": "middle"}),
+                    html.Button("\u2b07 Download", id="vtdb-backup-dl", n_clicks=0,
+                                style={"padding": "6px 14px", "borderRadius": "8px",
+                                       "border": f"1px solid {TEAL}", "color": TEAL,
+                                       "background": "white", "cursor": "pointer",
+                                       "fontWeight": "600", "marginLeft": "10px",
+                                       "verticalAlign": "middle"}),
+                ]),
+                dcc.Download(id="vtdb-backup-file"),
+            ],
+            style={"border": f"1px solid {LINE}", "borderRadius": "10px",
+                   "padding": "12px 16px", "background": "white",
+                   "marginTop": "16px", "maxWidth": "720px"})),
     ]
 )
+
+
+@callback(
+    Output("vtdb-backup-box", "style"),
+    Output("vtdb-backup-select", "options"),
+    Output("vtdb-backup-select", "value"),
+    Input("vtdb-tick", "n_intervals"),
+    Input("vtdb-refresh", "n_clicks"),
+    State("vtdb-backup-select", "value"),
+)
+def _backup_box(_t, _c, current):
+    user = auth.current_user()
+    if not (user and user.get("is_admin")):
+        return {"display": "none"}, [], None
+    backups = _list_backups()
+    if not backups:
+        return {"display": "none"}, [], None
+    options = [{"label": f"{name}  ({_fmt_size(size)}, "
+                         f"{mts.strftime('%d-%m-%Y %H:%M')} UTC)",
+                "value": name}
+               for _p, name, size, mts in backups]
+    valid = {o["value"] for o in options}
+    value = current if current in valid else options[0]["value"]
+    return {"display": "block"}, options, value
+
+
+@callback(
+    Output("vtdb-backup-file", "data"),
+    Input("vtdb-backup-dl", "n_clicks"),
+    State("vtdb-backup-select", "value"),
+    prevent_initial_call=True,
+)
+def _backup_download(n, name):
+    if not n or not name:
+        return no_update
+    user = auth.current_user()
+    if not (user and user.get("is_admin")):        # server-side guard
+        return no_update
+    # pad-vergrendeling: alleen bestandsnamen uit de backup-map zelf
+    safe = os.path.basename(name)
+    path = os.path.join(BACKUP_DIR, safe)
+    if not (safe.startswith("ais_") and safe.endswith(".dump")
+            and os.path.isfile(path)):
+        return no_update
+    return dcc.send_file(path)
 
 
 @callback(
