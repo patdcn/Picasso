@@ -27,6 +27,7 @@ import dash
 import dash_leaflet as dl
 from dash import html, dcc, Input, Output, State, callback, ctx, clientside_callback
 
+from app import buildinfo
 from app.engines import ais_db
 
 dash.register_page(__name__, path="/vessel-tracker/animated", name="Track Animated",
@@ -217,6 +218,9 @@ layout = html.Div(className="full-width-page", children=[
     dcc.Store(id="vta-playing", data=False),
     dcc.Store(id="vta-index", data=0),
     dcc.Store(id="vta-collapsed", data=[]),
+    dcc.Store(id="vta-mybuild", data=buildinfo.BUILD_ID),
+    dcc.Store(id="vta-srvbuild", data=None),
+    dcc.Store(id="vta-reload-sink", data=None),
     html.Div([
         html.Div(
             dl.Map(id="vta-map", preferCanvas=True,
@@ -355,5 +359,26 @@ clientside_callback(
     """,
     Output("vta-map", "invalidateSize"),
     Input("nav-toggle", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# ---- kiosk auto-reload after deploys ----------------------------------------
+@callback(Output("vta-srvbuild", "data"),
+          Input("vta-refresh", "n_intervals"))
+def _push_build(_n):
+    return buildinfo.BUILD_ID
+
+
+clientside_callback(
+    """
+    function(srv, mine) {
+        if (srv && mine && srv !== mine) { window.location.reload(); }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("vta-reload-sink", "data"),
+    Input("vta-srvbuild", "data"),
+    State("vta-mybuild", "data"),
     prevent_initial_call=True,
 )

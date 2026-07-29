@@ -27,6 +27,7 @@ import dash
 import dash_leaflet as dl
 from dash import html, dcc, Input, Output, State, callback, ctx, clientside_callback
 
+from app import buildinfo
 from app.engines import ais_db
 
 dash.register_page(__name__, path="/vessel-tracker/tracks", name="Tracks",
@@ -228,6 +229,9 @@ layout = html.Div(className="full-width-page", children=[
     dcc.Store(id="vtt-selected", data=None),
     dcc.Store(id="vtt-typefilter", data=None),
     dcc.Store(id="vtt-collapsed", data=[]),
+    dcc.Store(id="vtt-mybuild", data=buildinfo.BUILD_ID),
+    dcc.Store(id="vtt-srvbuild", data=None),
+    dcc.Store(id="vtt-reload-sink", data=None),
     html.Div(id="vtt-chips", style={"margin": "0 0 8px",
                                     "display": "flex", "gap": "6px",
                                     "flexWrap": "wrap"}),
@@ -371,5 +375,26 @@ clientside_callback(
     """,
     Output("vtt-map", "invalidateSize"),
     Input("nav-toggle", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# ---- kiosk auto-reload after deploys ----------------------------------------
+@callback(Output("vtt-srvbuild", "data"),
+          Input("vtt-tick", "n_intervals"))
+def _push_build(_n):
+    return buildinfo.BUILD_ID
+
+
+clientside_callback(
+    """
+    function(srv, mine) {
+        if (srv && mine && srv !== mine) { window.location.reload(); }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("vtt-reload-sink", "data"),
+    Input("vtt-srvbuild", "data"),
+    State("vtt-mybuild", "data"),
     prevent_initial_call=True,
 )
