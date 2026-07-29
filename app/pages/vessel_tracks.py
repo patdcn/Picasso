@@ -152,10 +152,12 @@ def _vessel_button(row, selected):
                "cursor": "pointer", "fontSize": "0.82rem"})
 
 
-def _vessel_list(rows, selected):
+def _vessel_list(rows, selected, collapsed=None):
     """Vessel column, dynamically grouped by vessel type (DSV, PLB, ...).
-    Groups come straight from the data; typeless vessels fall under
-    'Other'. Rows arrive name-sorted, so groups stay name-sorted too."""
+    Group headers are accordion toggles; collapsed groups (stored per group
+    name) survive the 15-min kiosk refresh. Typeless vessels fall under
+    'Other'; rows arrive name-sorted, so groups stay name-sorted too."""
+    collapsed = set(collapsed or [])
     if not rows:
         return [html.Div("No vessels in the track database yet.",
                          style={"color": MUTED, "padding": "12px",
@@ -169,15 +171,24 @@ def _vessel_list(rows, selected):
 
     items = []
     for gname in ordered:
-        items.append(html.Div(
-            f"{gname} ({len(groups[gname])})",
-            style={"padding": "5px 10px", "fontSize": "0.72rem",
+        is_collapsed = gname in collapsed
+        marker = "\u25b8" if is_collapsed else "\u25be"     # > / v
+        items.append(html.Button(
+            [html.Span(marker, style={"marginRight": "6px",
+                                      "fontSize": "0.65rem"}),
+             f"{gname} ({len(groups[gname])})"],
+            n_clicks=0, id={"type": "vtt-grp", "name": gname},
+            title="Click to collapse / expand this group",
+            style={"display": "block", "width": "100%", "textAlign": "left",
+                   "padding": "5px 10px", "fontSize": "0.72rem",
                    "fontWeight": "700", "letterSpacing": "0.06em",
                    "textTransform": "uppercase", "color": TEAL,
-                   "background": "#f0fdfa",
-                   "borderBottom": f"1px solid {LINE}",
-                   "position": "sticky", "top": "0"}))
-        items.extend(_vessel_button(row, selected) for row in groups[gname])
+                   "background": "#f0fdfa", "cursor": "pointer",
+                   "border": "none", "borderBottom": f"1px solid {LINE}",
+                   "position": "sticky", "top": "0", "zIndex": "1"}))
+        if not is_collapsed:
+            items.extend(_vessel_button(row, selected)
+                         for row in groups[gname])
     return items
 
 
@@ -216,6 +227,7 @@ layout = html.Div(className="full-width-page", children=[
     dcc.Interval(id="vtt-tick", interval=900_000, n_intervals=0),  # 15 min kiosk refresh
     dcc.Store(id="vtt-selected", data=None),
     dcc.Store(id="vtt-typefilter", data=None),
+    dcc.Store(id="vtt-collapsed", data=[]),
     html.Div(id="vtt-chips", style={"margin": "0 0 8px",
                                     "display": "flex", "gap": "6px",
                                     "flexWrap": "wrap"}),
@@ -254,18 +266,28 @@ layout = html.Div(className="full-width-page", children=[
     Output("vtt-selected", "data"),
     Output("vtt-chips", "children"),
     Output("vtt-typefilter", "data"),
+    Output("vtt-collapsed", "data"),
     Input("vtt-tick", "n_intervals"),
     Input("vtt-map", "n_clicks"),
     Input({"type": "vtt-dot", "mmsi": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-sel", "mmsi": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-tf", "val": dash.ALL}, "n_clicks"),
+    Input({"type": "vtt-grp", "name": dash.ALL}, "n_clicks"),
     State("vtt-selected", "data"),
     State("vtt-typefilter", "data"),
+    State("vtt-collapsed", "data"),
 )
-def _render(_tick, _map_clicks, _dots, _sels, _chips, selected, typefilter):
+def _render(_tick, _map_clicks, _dots, _sels, _chips, _grps,
+            selected, typefilter, collapsed):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
     is_refresh = trig in (None, "vtt-tick")
+
+    collapsed = list(collapsed or [])
+    if (clicked and isinstance(trig, dict) and trig.get("type") == "vtt-grp"):
+        g = trig.get("name")
+        collapsed = ([c for c in collapsed if c != g] if g in collapsed
+                     else collapsed + [g])
 
     filter_changed = False
     if (clicked and isinstance(trig, dict) and trig.get("type") == "vtt-tf"):
@@ -282,7 +304,7 @@ def _render(_tick, _map_clicks, _dots, _sels, _chips, selected, typefilter):
         empty = html.Div(str(exc), style={"color": "#b91c1c", "padding": "12px",
                                           "fontSize": "0.85rem"})
         return ([], empty, "Vessels", "", dash.no_update, new_selected,
-                [], typefilter)
+                [], typefilter, collapsed)
 
     chips = _type_chips(all_rows, typefilter)
     rows = [r for r in all_rows
@@ -320,8 +342,8 @@ def _render(_tick, _map_clicks, _dots, _sels, _chips, selected, typefilter):
                         "options": {"padding": [40, 40]}}
         subtitle = (f"{name} — {len(points)} points, last 30 days · " + subtitle)
 
-    return (layer, _vessel_list(rows, new_selected), count, subtitle,
-            viewport, new_selected, chips, typefilter)
+    return (layer, _vessel_list(rows, new_selected, collapsed), count,
+            subtitle, viewport, new_selected, chips, typefilter, collapsed)
 
 
 def _resolve_selection(trig, clicked, current):
