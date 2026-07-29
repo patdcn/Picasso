@@ -231,7 +231,8 @@ def latest_positions():
     return q(
         """SELECT l.mmsi,
                   COALESCE(f.name, initcap(lower(l.ship_name)), l.mmsi::text) AS name,
-                  l.ts, l.lat, l.lon, l.sog, l.nav_status, l.destination
+                  l.ts, l.lat, l.lon, l.sog, l.nav_status, l.destination,
+                  f.vessel_type
            FROM latest l
            LEFT JOIN fleet f ON f.mmsi = l.mmsi
            ORDER BY name"""
@@ -264,8 +265,8 @@ def fleet_insert(fields):
     Returns an error string, or None on success."""
     name = (fields.get("name") or "").strip()
     imo = (fields.get("imo") or "").strip()
-    if not name or not imo:
-        return "Name and IMO are mandatory."
+    if not name or not imo or not (fields.get("vessel_type") or "").strip():
+        return "Name, IMO and vessel type are mandatory."
     if not (imo.isdigit() and len(imo) == 7):
         return f"IMO must be 7 digits, got '{imo}'."
     if q("SELECT 1 FROM fleet WHERE imo=%s", (int(imo),)):

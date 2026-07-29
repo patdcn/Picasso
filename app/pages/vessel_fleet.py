@@ -353,14 +353,14 @@ layout = html.Div(className="full-width-page", children=[
     # add-vessel form: permanent in the layout (hidden), so its inputs always
     # exist for the callback - conditional rendering broke this page before
     html.Div(id="vtf-addform", style={"display": "none"}, children=html.Div([
-        html.Div("New vessel \u2014 Name and IMO are mandatory",
+        html.Div("New vessel \u2014 Name, IMO and Type are mandatory",
                  style={"fontWeight": "600", "marginBottom": "6px",
                         "fontSize": "0.85rem"}),
         html.Div([
             _new_field("name", "Vessel name *", "160px", required=True),
             _new_field("imo", "IMO (7 digits) *", "110px", required=True),
             _new_field("mmsi", "MMSI", "100px"),
-            _new_field("vessel_type", "Type (DSV/PLB/\u2026)", "110px"),
+            _new_field("vessel_type", "Type (DSV/PLB/\u2026) *", "120px", required=True),
             _new_field("owner_op", "Owner / Operator", "180px"),
             _new_field("built", "Built", "60px"),
             _new_field("flag", "Flag", "70px"),
@@ -546,6 +546,8 @@ def _do_save(imo, fields):
     updates["owner"], updates["operator"] = owner, operator
     for k in ("built", "flag", "region", "tier", "notes", "vessel_type"):
         updates[k] = fields.get(k) or None
+    if not updates["vessel_type"]:
+        return "Vessel type is mandatory (DSV, PLB, OSV, \u2026).", False
     if not locked:
         if fields.get("name"):
             updates["name"] = fields["name"]

@@ -65,7 +65,7 @@ def _color(nav_status):
 def _vessel_markers(rows):
     """Large labelled dot per vessel (all-vessels view)."""
     out = []
-    for mmsi, name, ts, lat, lon, sog, nav_status, dest in rows:
+    for mmsi, name, ts, lat, lon, sog, nav_status, dest, _vtype in rows:
         out.append(dl.CircleMarker(
             center=[lat, lon], radius=9,
             color="white", weight=2,
@@ -119,34 +119,56 @@ def _pad_bounds(bounds, pad=0.05):
     return bounds
 
 
+def _vessel_button(row, selected):
+    mmsi, name, ts, lat, lon, sog, nav_status, dest, _vtype = row
+    is_sel = str(mmsi) == (selected or "")
+    sub = f"{_age(ts)} \u00b7 {ais_db.nav_status_label(nav_status)}"
+    if dest:
+        sub += f" \u00b7 {dest}"
+    return html.Button(
+        [html.Div([
+            html.Span("\u25cf", style={"color": _color(nav_status),
+                                        "marginRight": "7px"}),
+            html.Span(name, style={"fontWeight": "600"}),
+         ]),
+         html.Div(sub, style={"color": MUTED, "fontSize": "0.72rem",
+                              "marginLeft": "17px", "whiteSpace": "nowrap",
+                              "overflow": "hidden", "textOverflow": "ellipsis"})],
+        id={"type": "vtt-sel", "mmsi": str(mmsi)}, n_clicks=0,
+        style={"display": "block", "width": "100%", "textAlign": "left",
+               "padding": "6px 10px", "border": "none",
+               "borderBottom": f"1px solid {LINE}",
+               "borderLeft": f"3px solid {TEAL if is_sel else 'transparent'}",
+               "background": "#f0fdfa" if is_sel else "white",
+               "cursor": "pointer", "fontSize": "0.82rem"})
+
+
 def _vessel_list(rows, selected):
+    """Vessel column, dynamically grouped by vessel type (DSV, PLB, ...).
+    Groups come straight from the data; typeless vessels fall under
+    'Other'. Rows arrive name-sorted, so groups stay name-sorted too."""
+    if not rows:
+        return [html.Div("No vessels in the track database yet.",
+                         style={"color": MUTED, "padding": "12px",
+                                "fontSize": "0.85rem"})]
+    groups = {}
+    for row in rows:
+        groups.setdefault(row[8] or "Other", []).append(row)
+    ordered = sorted(k for k in groups if k != "Other")
+    if "Other" in groups:
+        ordered.append("Other")
+
     items = []
-    for mmsi, name, ts, lat, lon, sog, nav_status, dest in rows:
-        is_sel = str(mmsi) == (selected or "")
-        sub = f"{_age(ts)} · {ais_db.nav_status_label(nav_status)}"
-        if dest:
-            sub += f" · {dest}"
-        items.append(html.Button(
-            [html.Div([
-                html.Span("●", style={"color": _color(nav_status),
-                                      "marginRight": "7px"}),
-                html.Span(name, style={"fontWeight": "600"}),
-             ]),
-             html.Div(sub, style={"color": MUTED, "fontSize": "0.72rem",
-                                  "marginLeft": "17px", "whiteSpace": "nowrap",
-                                  "overflow": "hidden", "textOverflow": "ellipsis"})],
-            id={"type": "vtt-sel", "mmsi": str(mmsi)}, n_clicks=0,
-            style={"display": "block", "width": "100%", "textAlign": "left",
-                   "padding": "6px 10px", "border": "none",
+    for gname in ordered:
+        items.append(html.Div(
+            f"{gname} ({len(groups[gname])})",
+            style={"padding": "5px 10px", "fontSize": "0.72rem",
+                   "fontWeight": "700", "letterSpacing": "0.06em",
+                   "textTransform": "uppercase", "color": TEAL,
+                   "background": "#f0fdfa",
                    "borderBottom": f"1px solid {LINE}",
-                   "borderLeft": f"3px solid {TEAL if is_sel else 'transparent'}",
-                   "background": "#f0fdfa" if is_sel else "white",
-                   "cursor": "pointer", "fontSize": "0.82rem"},
-        ))
-    if not items:
-        items = [html.Div("No vessels in the track database yet.",
-                          style={"color": MUTED, "padding": "12px",
-                                 "fontSize": "0.85rem"})]
+                   "position": "sticky", "top": "0"}))
+        items.extend(_vessel_button(row, selected) for row in groups[gname])
     return items
 
 
