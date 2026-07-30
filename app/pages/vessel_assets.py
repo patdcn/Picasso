@@ -69,14 +69,16 @@ def _geom_summary(geom_type, geometry):
     return geom_type
 
 
-def _build_table(pending_delete, can_edit, search, fcat, fregion):
+def _build_table(pending_delete, can_edit, search, fcat, fregion,
+                 fcountry=None):
     rows = asset_db.list_assets(category=fcat or None, region=fregion or None,
-                                search=search or None)
-    headers = ["Name", "Category", "Region", "Operator", "Geometry",
-               "Source", "Updated", "Action"]
+                                search=search or None,
+                                country=fcountry or None)
+    headers = ["Name", "Category", "Region", "Country", "Geometry",
+               "Operator", "Source", "Updated", "Action"]
     body = []
-    for (aid, cat, name, operator, region, gtype, geometry, _props,
-         source, updated) in rows:
+    for (aid, cat, name, operator, region, country, locode, gtype,
+         geometry, _props, source, updated) in rows:
         meta = asset_db.CATEGORIES.get(cat, {"label": cat, "color": MUTED})
         if not can_edit:
             action = html.Span("\u2014", style={"color": "#c0c5cc"},
@@ -105,17 +107,19 @@ def _build_table(pending_delete, can_edit, search, fcat, fregion):
             html.Td([html.Span("\u25cf ", style={"color": meta["color"]}),
                      meta["label"]], style=_CELL),
             html.Td(region or "\u2014", style=_CELL),
-            html.Td(operator or "\u2014",
-                    style={**_CELL, "maxWidth": "220px", "overflow": "hidden",
-                           "textOverflow": "ellipsis"}, title=operator),
+            html.Td(country or "\u2014", style=_CELL,
+                    title=f"UN/LOCODE: {locode}" if locode else None),
             html.Td(_geom_summary(gtype, geometry), style=_CELL),
+            html.Td(operator or "\u2014",
+                    style={**_CELL, "maxWidth": "200px", "overflow": "hidden",
+                           "textOverflow": "ellipsis"}, title=operator),
             html.Td(source, style={**_CELL, "color": MUTED}),
             html.Td(updated.strftime("%d-%m-%y"), style=_CELL),
             html.Td(action, style=_CELL),
         ]))
     if not body:
         body = [html.Tr(html.Td("No assets match the current filters.",
-                                colSpan=8,
+                                colSpan=9,
                                 style={**_CELL, "color": MUTED}))]
     table = html.Div(
         html.Table([html.Thead(html.Tr([html.Th(h, style=_TH)
@@ -165,6 +169,10 @@ layout = html.Div(className="full-width-page", children=[
                      style={"width": "130px", "display": "inline-block",
                             "verticalAlign": "middle", "marginLeft": "8px",
                             "fontSize": "0.8rem"}),
+        dcc.Dropdown(id="vas-fcountry", placeholder="Country", clearable=True,
+                     style={"width": "150px", "display": "inline-block",
+                            "verticalAlign": "middle", "marginLeft": "8px",
+                            "fontSize": "0.8rem"}),
         html.Span(id="vas-counter",
                   style={"marginLeft": "14px", "color": MUTED}),
     ], style={"margin": "6px 0 4px", "display": "flex",
@@ -188,6 +196,11 @@ layout = html.Div(className="full-width-page", children=[
                       style={**_IN, "width": "150px"}),
             dcc.Input(id="vas-f-operator", value="", placeholder="Operator",
                       style={**_IN, "width": "180px"}),
+            dcc.Input(id="vas-f-country", value="", placeholder="Country",
+                      style={**_IN, "width": "130px"}),
+            dcc.Input(id="vas-f-code", value="",
+                      placeholder="Code (UN/LOCODE / WPI)",
+                      style={**_IN, "width": "160px"}),
         ], style={"display": "flex", "flexWrap": "wrap", "gap": "6px",
                   "alignItems": "center", "marginBottom": "6px"}),
         html.Div([
@@ -233,6 +246,7 @@ layout = html.Div(className="full-width-page", children=[
     Output("vas-form", "style"),
     Output("vas-form-title", "children"),
     Output("vas-fregion", "options"),
+    Output("vas-fcountry", "options"),
     Output("vas-f-name", "value"),
     Output("vas-f-cat", "value"),
     Output("vas-f-region", "value"),
@@ -240,6 +254,8 @@ layout = html.Div(className="full-width-page", children=[
     Output("vas-f-lat", "value"),
     Output("vas-f-lon", "value"),
     Output("vas-f-coords", "value"),
+    Output("vas-f-country", "value"),
+    Output("vas-f-code", "value"),
     Input("vas-refresh", "n_clicks"),
     Input("vas-add-open", "n_clicks"),
     Input("vas-f-save", "n_clicks"),
@@ -247,6 +263,7 @@ layout = html.Div(className="full-width-page", children=[
     Input("vas-search", "value"),
     Input("vas-fcat", "value"),
     Input("vas-fregion", "value"),
+    Input("vas-fcountry", "value"),
     Input({"type": "vas-edit", "aid": dash.ALL}, "n_clicks"),
     Input({"type": "vas-del", "aid": dash.ALL}, "n_clicks"),
     Input({"type": "vas-del-confirm", "aid": dash.ALL}, "n_clicks"),
@@ -255,13 +272,15 @@ layout = html.Div(className="full-width-page", children=[
     State("vas-f-region", "value"), State("vas-f-operator", "value"),
     State("vas-f-lat", "value"), State("vas-f-lon", "value"),
     State("vas-f-coords", "value"),
+    State("vas-f-country", "value"), State("vas-f-code", "value"),
     State("vas-pending-delete", "data"),
     State("vas-editing", "data"),
     State("vas-form-open", "data"),
 )
-def _actions(_r, _ao, _fs, _fc, search, fcat, fregion,
+def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
              _e, _d, _dc, _dx,
              f_name, f_cat, f_region, f_operator, f_lat, f_lon, f_coords,
+             f_country, f_code,
              pending, editing, form_open):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
@@ -269,7 +288,7 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion,
     banner, ok = None, True
     new_pending, new_editing = None, editing
     new_open = bool(form_open) and can_edit
-    form_vals = [dash.no_update] * 7
+    form_vals = [dash.no_update] * 9
 
     _MUT = ("vas-edit", "vas-del", "vas-del-confirm")
     try:
@@ -293,8 +312,8 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion,
             elif kind == "vas-edit":
                 row = asset_db.asset_get(aid)
                 if row:
-                    (_id, cat, name, operator, region, gtype, geometry,
-                     _props, _src) = row
+                    (_id, cat, name, operator, region, country, locode,
+                     gtype, geometry, _props, _src) = row
                     lat = lon = ""
                     coords = ""
                     if gtype == "Point":
@@ -305,13 +324,15 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion,
                             {"type": gtype,
                              "coordinates": geometry["coordinates"]})
                     form_vals = [name, cat, region or "", operator or "",
-                                 lat, lon, coords]
+                                 lat, lon, coords, country or "",
+                                 locode or (_props or {}).get("wpi_number",
+                                                              "")]
                     new_editing, new_open = str(aid), True
         elif clicked and trig == "vas-add-open":
             new_open = not new_open
             if new_open:
                 new_editing = None
-                form_vals = ["", None, "", "", "", "", ""]
+                form_vals = ["", None, "", "", "", "", "", "", ""]
         elif clicked and trig == "vas-f-cancel":
             new_open, new_editing = False, None
         elif clicked and trig == "vas-f-save":
@@ -322,13 +343,27 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion,
             else:
                 gtype, geom = asset_db.parse_geometry(
                     f_cat, lat=f_lat, lon=f_lon, text=f_coords)
+                meta = {}
+                if (f_country or "").strip():
+                    meta["country"] = f_country.strip()
+                code = (f_code or "").strip().upper()
+                if code:
+                    key = ("un_locode" if len(code) == 5 and code.isalpha()
+                           else "wpi_number")
+                    meta[key] = code
                 if editing:
+                    row = asset_db.asset_get(int(editing))
+                    props = dict(row[9] or {}) if row else {}
+                    props.pop("wpi_number", None)
+                    props.pop("jurisdiction", None)   # country is nu leidend
+                    props.update(meta)
                     asset_db.asset_update(int(editing), f_cat, name,
-                                          f_operator, f_region, gtype, geom)
+                                          f_operator, f_region, gtype, geom,
+                                          properties=props)
                     banner = f"{name} updated."
                 else:
                     asset_db.asset_insert(f_cat, name, f_operator, f_region,
-                                          gtype, geom)
+                                          gtype, geom, properties=meta)
                     banner = (f"{name} added - visible on the Tracker maps "
                               f"under '{asset_db.CATEGORIES[f_cat]['label']}'.")
                 new_open, new_editing = False, None
@@ -341,13 +376,15 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion,
 
     try:
         table, counter = _build_table(new_pending, can_edit, search, fcat,
-                                      fregion)
+                                      fregion, fcountry)
         region_opts = asset_db.regions()
+        country_opts = asset_db.countries()
     except Exception as exc:
         return (_banner(str(exc), ok=False), "", None, None, None, False,
-                {"display": "none"}, "New asset", [], *[dash.no_update] * 7)
+                {"display": "none"}, "New asset", [], [],
+                *[dash.no_update] * 9)
 
     style = {"display": "block"} if new_open else {"display": "none"}
     title = "Edit asset" if new_editing else "New asset"
     return (table, counter, _banner(banner, ok), new_pending, new_editing,
-            new_open, style, title, region_opts, *form_vals)
+            new_open, style, title, region_opts, country_opts, *form_vals)

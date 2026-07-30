@@ -108,15 +108,18 @@ def parse_geometry(category, lat=None, lon=None, text=None):
 
 
 # --- queries -----------------------------------------------------------------
-def list_assets(category=None, region=None, search=None):
-    sql = """SELECT id, category, name, operator, region, geom_type,
-                    geometry, properties, source, updated_at
+def list_assets(category=None, region=None, search=None, country=None):
+    sql = """SELECT id, category, name, operator, region, country,
+                    un_locode, geom_type, geometry, properties, source,
+                    updated_at
              FROM map_asset WHERE active"""
     params = []
     if category:
         sql += " AND category=%s"; params.append(category)
     if region:
         sql += " AND region=%s"; params.append(region)
+    if country:
+        sql += " AND country=%s"; params.append(country)
     if search:
         sql += " AND (name ILIKE %s OR operator ILIKE %s)"
         params += [f"%{search}%", f"%{search}%"]
@@ -125,7 +128,8 @@ def list_assets(category=None, region=None, search=None):
 
 
 def assets_for_map(category):
-    return q("""SELECT name, operator, region, geom_type, geometry, properties
+    return q("""SELECT name, operator, region, country, un_locode,
+                       geom_type, geometry, properties
                 FROM map_asset WHERE active AND category=%s""", (category,))
 
 
@@ -134,25 +138,49 @@ def counts_by_category():
                      WHERE active GROUP BY category"""))
 
 
+def countries():
+    return [r[0] for r in q("""SELECT DISTINCT country FROM map_asset
+                               WHERE active AND country IS NOT NULL
+                               ORDER BY country""")]
+
+
 def regions():
     return [r[0] for r in q("""SELECT DISTINCT region FROM map_asset
                                WHERE active AND region IS NOT NULL
                                ORDER BY region""")]
 
 
+def _lift(properties):
+    """Pop country/un_locode out of properties into columns; the AG
+    bundle's 'jurisdiction' feeds country as fallback (and stays in
+    properties as source data)."""
+    props = dict(properties or {})
+    country = props.pop("country", None) or props.get("jurisdiction")
+    locode = props.pop("un_locode", None)
+    return country, (locode.upper() if locode else None), props
+
+
 def asset_insert(category, name, operator, region, geom_type, geometry,
                  properties=None, source="manual"):
     if category not in CATEGORIES:
         raise ValueError(f"Unknown category {category!r}")
-    q("""INSERT INTO map_asset (category, name, operator, region, geom_type,
-                                geometry, properties, source)
-         VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s)""",
-      (category, name, operator or None, region or None, geom_type,
-       json.dumps(geometry), json.dumps(properties or {}), source))
+    country, locode, props = _lift(properties)
+    q("""INSERT INTO map_asset (category, name, operator, region, country,
+                                un_locode, geom_type, geometry, properties,
+                                source)
+         VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s)""",
+      (category, name, operator or None, region or None, country, locode,
+       geom_type, json.dumps(geometry), json.dumps(props), source))
 
 
 def asset_update(asset_id, category, name, operator, region,
-                 geom_type=None, geometry=None):
+                 geom_type=None, geometry=None, properties=None):
+    if properties is not None:
+        country, locode, props = _lift(properties)
+        q("""UPDATE map_asset SET properties=%s::jsonb, country=%s,
+                 un_locode=%s, updated_at=now()
+             WHERE id=%s""",
+          (json.dumps(props), country, locode, asset_id))
     if geometry is not None:
         q("""UPDATE map_asset SET category=%s, name=%s, operator=%s,
                  region=%s, geom_type=%s, geometry=%s::jsonb, updated_at=now()
@@ -166,8 +194,8 @@ def asset_update(asset_id, category, name, operator, region,
 
 
 def asset_get(asset_id):
-    rows = q("""SELECT id, category, name, operator, region, geom_type,
-                       geometry, properties, source
+    rows = q("""SELECT id, category, name, operator, region, country,
+                       un_locode, geom_type, geometry, properties, source
                 FROM map_asset WHERE id=%s AND active""", (asset_id,))
     return rows[0] if rows else None
 

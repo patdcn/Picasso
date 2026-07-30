@@ -43,13 +43,14 @@ OVERLAYS = [_SEAMARKS] + [
 ]
 
 
-def _tooltip(name, operator, region, props):
+def _tooltip(name, operator, region, country, locode, props):
     parts = [name]
-    sub = " · ".join(x for x in (operator, region) if x)
+    props = props or {}
+    code = locode or props.get("wpi_number")
+    sub = " · ".join(x for x in (operator, region, country, code) if x)
     if sub:
         parts.append(sub)
-    note = (props or {}).get("coordinate_quality") or \
-           (props or {}).get("source_note")
+    note = props.get("coordinate_quality") or props.get("source_note")
     if note:
         parts.append(f"({note})")
     return " | ".join(parts)
@@ -94,11 +95,13 @@ def _decimate_geom(gtype, geom):
     return geom
 
 
-def _feature(category, meta, name, operator, region, gtype, geom, props):
+def _feature(category, meta, name, operator, region, country, locode,
+             gtype, geom, props):
     display = {
         "__color": meta["color"],
         "__dash": meta.get("dash"),
-        "__tip": _html.escape(_tooltip(name, operator, region, props)),
+        "__tip": _html.escape(_tooltip(name, operator, region, country,
+                                       locode, props)),
         "__shape": POINT_SHAPES.get(category, "circle"),
     }
     if meta["kind"] == "polygon" and gtype in ("Polygon", "MultiPolygon"):
@@ -113,10 +116,11 @@ def _feature_collection(ovl):
     meta = asset_db.CATEGORIES[ovl["category"]]
     feats = []
     try:
-        for name, operator, region, gtype, geom, props in \
-                asset_db.assets_for_map(ovl["category"]):
+        for (name, operator, region, country, locode, gtype, geom,
+             props) in asset_db.assets_for_map(ovl["category"]):
             feats.append(_feature(ovl["category"], meta, name, operator,
-                                  region, gtype, geom, props))
+                                  region, country, locode, gtype, geom,
+                                  props))
     except AisDbError:
         return {"type": "FeatureCollection", "features": []}
     return {"type": "FeatureCollection", "features": feats}
