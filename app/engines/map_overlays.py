@@ -10,7 +10,16 @@ MAINTENANCE:
 - add/remove an overlay CATEGORY -> edit asset_db.CATEGORIES
 - add/remove ASSETS -> Subsea Assets page, or the importers in app/tools/
 The map pages themselves never change.
+
+RENDERING (phase 1, client-side): each category is ONE dl.GeoJSON
+component. Per-feature display properties (__color, __dash, __shape,
+__tip, __fill) are computed here and rendered by the generic functions in
+app/assets/vt_overlays.js - Python stays the single source of truth for
+styling, the browser does the drawing (canvas), which keeps large layers
+(hundreds of routes) smooth. Long routes are decimated to chart-level
+vertex counts before shipping.
 """
+import html as _html
 import dash_leaflet as dl
 
 from app.engines import asset_db
@@ -49,83 +58,87 @@ def _tooltip(name, operator, region, props):
 # point-marker shapes per category; default is a circle
 POINT_SHAPES = {"platform": "square", "well": "triangle"}
 
-_SHAPE_HTML = {
-    "square": ('<div style="width:9px;height:9px;background:{c};'
-               'border:1.5px solid white;box-shadow:0 0 1px #0006;"></div>',
-               [12, 12], [6, 6]),
-    "triangle": ('<div style="width:0;height:0;'
-                 'border-left:6px solid transparent;'
-                 'border-right:6px solid transparent;'
-                 'border-bottom:11px solid {c};'
-                 'filter:drop-shadow(0 0 1px white);"></div>',
-                 [12, 12], [6, 7]),
-}
+_MAX_VERTICES = 400          # decimate chart-level routes beyond this
+_JS = {k: {"variable": f"vtOverlays.{k}"}
+       for k in ("style", "pointToLayer", "onEachFeature")}
 
 
-def _point_marker(category, color, lat, lon, tip):
-    shape = POINT_SHAPES.get(category)
-    if shape:
-        html, size, anchor = _SHAPE_HTML[shape]
-        return dl.DivMarker(
-            position=[lat, lon],
-            iconOptions=dict(html=html.format(c=color), className="",
-                             iconSize=size, iconAnchor=anchor),
-            bubblingMouseEvents=False, interactive=True, children=tip)
-    return dl.CircleMarker(
-        center=[lat, lon], radius=4.5, color="white", weight=1,
-        fillColor=color, fillOpacity=0.85,
-        bubblingMouseEvents=False, interactive=True, children=tip)
-
-
-def _render_asset(meta, name, operator, region, gtype, geom, props,
-                  category=None):
-    color = meta["color"]
-    tip = [dl.Tooltip(_tooltip(name, operator, region, props))]
-    out = []
-    if gtype == "Point":
-        lon, lat = geom["coordinates"][:2]
-        out.append(_point_marker(category, color, lat, lon, tip))
-    elif gtype in ("LineString", "MultiLineString"):
-        lines = ([geom["coordinates"]] if gtype == "LineString"
-                 else geom["coordinates"])
-        for line in lines:
-            latlons = [[c[1], c[0]] for c in line if len(c) >= 2]
-            if len(latlons) >= 2:
-                out.append(dl.Polyline(
-                    positions=latlons, color=color, weight=1.6, opacity=0.75,
-                    dashArray=meta.get("dash"),
-                    bubblingMouseEvents=False, interactive=True, children=tip))
-    elif gtype in ("Polygon", "MultiPolygon"):
-        polys = ([geom["coordinates"]] if gtype == "Polygon"
-                 else geom["coordinates"])
-        for rings in polys:
-            if not rings:
-                continue
-            latlons = [[c[1], c[0]] for c in rings[0] if len(c) >= 2]
-            if len(latlons) >= 3:
-                out.append(dl.Polygon(
-                    positions=latlons, color=color, weight=1.5, opacity=0.7,
-                    fillColor=color, fillOpacity=0.12,
-                    bubblingMouseEvents=False, interactive=True, children=tip))
+def _decimate(coords):
+    n = len(coords)
+    if n <= _MAX_VERTICES:
+        return coords
+    stride = -(-n // _MAX_VERTICES)
+    out = coords[::stride]
+    if out[-1] != coords[-1]:
+        out.append(coords[-1])
     return out
 
 
-def build_layer(ovl):
-    """Children for one overlay's LayerGroup."""
-    if ovl["kind"] == "tile":
-        return [dl.TileLayer(url=ovl["url"], opacity=0.9,
-                             attribution=ovl.get("attribution", ""))]
+def _decimate_geom(gtype, geom):
+    try:
+        if gtype == "LineString":
+            return {"type": gtype,
+                    "coordinates": _decimate(geom["coordinates"])}
+        if gtype == "MultiLineString":
+            return {"type": gtype,
+                    "coordinates": [_decimate(l) for l in geom["coordinates"]]}
+        if gtype == "Polygon":
+            return {"type": gtype,
+                    "coordinates": [_decimate(r) for r in geom["coordinates"]]}
+        if gtype == "MultiPolygon":
+            return {"type": gtype,
+                    "coordinates": [[_decimate(r) for r in poly]
+                                    for poly in geom["coordinates"]]}
+    except (KeyError, TypeError):
+        pass
+    return geom
+
+
+def _feature(category, meta, name, operator, region, gtype, geom, props):
+    display = {
+        "__color": meta["color"],
+        "__dash": meta.get("dash"),
+        "__tip": _html.escape(_tooltip(name, operator, region, props)),
+        "__shape": POINT_SHAPES.get(category, "circle"),
+    }
+    if meta["kind"] == "polygon" and gtype in ("Polygon", "MultiPolygon"):
+        display["__fill"] = 0.12
+        display["__weight"] = 1.5
+    return {"type": "Feature",
+            "geometry": _decimate_geom(gtype, geom),
+            "properties": display}
+
+
+def _feature_collection(ovl):
     meta = asset_db.CATEGORIES[ovl["category"]]
-    children = []
+    feats = []
     try:
         for name, operator, region, gtype, geom, props in \
                 asset_db.assets_for_map(ovl["category"]):
-            children.extend(_render_asset(meta, name, operator, region,
-                                          gtype, geom, props,
-                                          category=ovl["category"]))
+            feats.append(_feature(ovl["category"], meta, name, operator,
+                                  region, gtype, geom, props))
     except AisDbError:
-        return []                     # DB briefly down: keep the map alive
-    return children
+        return {"type": "FeatureCollection", "features": []}
+    return {"type": "FeatureCollection", "features": feats}
+
+
+def build_layer(ovl):
+    """Children for one overlay's LayerGroup: one dl.GeoJSON per category,
+    rendered client-side by app/assets/vt_overlays.js."""
+    if ovl["kind"] == "tile":
+        return [dl.TileLayer(url=ovl["url"], opacity=0.9,
+                             attribution=ovl.get("attribution", ""))]
+    fc = _feature_collection(ovl)
+    if not fc["features"]:
+        return []
+    return [dl.GeoJSON(
+        data=fc,
+        style=_JS["style"],
+        pointToLayer=_JS["pointToLayer"],
+        onEachFeature=_JS["onEachFeature"],
+        interactive=True,
+        bubblingMouseEvents=False,
+    )]
 
 
 def chip_label(ovl):
