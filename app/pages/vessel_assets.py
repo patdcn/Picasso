@@ -24,6 +24,8 @@ import dash
 from dash import html, dcc, Input, Output, State, callback, ctx
 
 from app import auth
+import dash_leaflet as dl
+
 from app.engines import ais_db, asset_db
 
 PAGE_PATH = "/vessel-tracker/assets"
@@ -215,9 +217,40 @@ layout = html.Div(className="full-width-page", children=[
         dcc.Textarea(id="vas-f-coords", value="",
                      placeholder=("Route/shape: one 'lat, lon' per line "
                                   "(polygon closes itself), or paste a "
-                                  "GeoJSON geometry {\u2026}"),
-                     style={**_IN, "width": "100%", "minHeight": "90px",
+                                  "GeoJSON geometry {\u2026}, or use "
+                                  "\u201cDraw on map\u201d below"),
+                     style={**_IN, "width": "100%", "minHeight": "70px",
                             "fontFamily": "monospace"}),
+        html.Div([
+            html.Button("\u270e Draw on map", id="vas-draw-toggle",
+                        n_clicks=0, style={**_BTN, "marginTop": "6px"}),
+            html.Span(id="vas-draw-hint", style={"marginLeft": "10px",
+                      "color": MUTED, "fontSize": "0.72rem"}),
+        ]),
+        html.Div(id="vas-draw-wrap", style={"display": "none"}, children=[
+            dl.Map(id="vas-draw-map", center=[52.45, 4.6], zoom=8,
+                   style={"height": "340px", "width": "100%",
+                          "marginTop": "8px", "borderRadius": "8px"},
+                   children=[
+                       dl.TileLayer(),
+                       dl.FeatureGroup(id="vas-draw-fg", children=[
+                           dl.EditControl(
+                               id="vas-draw-edit",
+                               position="topright",
+                               draw={"polygon": True, "polyline": True,
+                                     "marker": True, "rectangle": False,
+                                     "circle": False, "circlemarker": False},
+                               edit={"edit": True, "remove": True}),
+                       ]),
+                   ]),
+            html.Div("Draw a polygon, route or point; it fills the "
+                     "geometry field above. When editing an existing "
+                     "asset, drawing a new shape replaces it (the current "
+                     "geometry stays in the text field until you do). Use "
+                     "the trash tool to clear a mistake.",
+                     style={"color": MUTED, "fontSize": "0.72rem",
+                            "marginTop": "4px"}),
+        ]),
         html.Div([
             html.Button("Save asset", id="vas-f-save", n_clicks=0,
                         style={**_BTN, "background": "#f0fdf4",
@@ -232,6 +265,8 @@ layout = html.Div(className="full-width-page", children=[
     dcc.Store(id="vas-pending-delete", data=None),
     dcc.Store(id="vas-editing", data=None),     # asset id under edit, or None
     dcc.Store(id="vas-form-open", data=False),
+    dcc.Store(id="vas-draw-open", data=False),
+    dcc.Store(id="vas-draw-seed", data=None),   # geometry to preload on edit
     dcc.Loading(html.Div(id="vas-content"), type="default"),
 ])
 
@@ -388,3 +423,74 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
     title = "Edit asset" if new_editing else "New asset"
     return (table, counter, _banner(banner, ok), new_pending, new_editing,
             new_open, style, title, region_opts, country_opts, *form_vals)
+
+
+# --- draw-on-map panel -------------------------------------------------------
+# The EditControl returns drawn features as a FeatureCollection in its
+# `geojson` prop. We take the LAST drawn feature's geometry and write it,
+# as a compact GeoJSON geometry object, into the coords textarea - which the
+# existing parse_geometry() already understands (it detects a leading '{').
+
+@callback(
+    Output("vas-draw-wrap", "style"),
+    Output("vas-draw-open", "data"),
+    Output("vas-draw-toggle", "children"),
+    Input("vas-draw-toggle", "n_clicks"),
+    State("vas-draw-open", "data"),
+    prevent_initial_call=True,
+)
+def _toggle_draw(n, is_open):
+    is_open = not bool(is_open)
+    style = {"display": "block"} if is_open else {"display": "none"}
+    label = "\u2715 Close map" if is_open else "\u270e Draw on map"
+    return style, is_open, label
+
+
+@callback(
+    Output("vas-f-coords", "value", allow_duplicate=True),
+    Output("vas-draw-hint", "children"),
+    Input("vas-draw-edit", "geojson"),
+    State("vas-draw-open", "data"),
+    prevent_initial_call=True,
+)
+def _drawn_to_coords(fc, is_open):
+    if not is_open or not fc:
+        return dash.no_update, dash.no_update
+    feats = (fc or {}).get("features") or []
+    if not feats:
+        return dash.no_update, "Cleared - draw a new shape."
+    geom = (feats[-1] or {}).get("geometry") or {}
+    gtype = geom.get("type")
+    if gtype not in ("Point", "LineString", "Polygon"):
+        return dash.no_update, dash.no_update
+    n = 1
+    if gtype == "LineString":
+        n = len(geom.get("coordinates", []))
+    elif gtype == "Polygon":
+        rings = geom.get("coordinates", [[]])
+        n = len(rings[0]) if rings else 0
+    hint = f"{gtype} captured ({n} pts) \u2192 geometry field filled."
+    if len(feats) > 1:
+        hint += f"  (using the last of {len(feats)} shapes)"
+    return json.dumps(geom), hint
+
+
+# grey-tiles fix: Leaflet must recalculate its size once the (previously
+# display:none) map panel becomes visible, otherwise only a grey strip of
+# tiles renders. This clientside callback fires on panel open and pokes the
+# map via a window resize event, which dash-leaflet listens to.
+dash.clientside_callback(
+    """
+    function(is_open) {
+        if (is_open) {
+            setTimeout(function() {
+                window.dispatchEvent(new Event('resize'));
+            }, 120);
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("vas-draw-map", "id"),
+    Input("vas-draw-open", "data"),
+    prevent_initial_call=True,
+)
