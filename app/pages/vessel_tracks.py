@@ -330,11 +330,6 @@ def _info_card(info):
         html.Span("Latest AIS information",
                   style={"fontWeight": "700", "fontSize": "0.82rem",
                          "flex": "1 1 auto"}),
-        html.Button("\u2715", id="vtt-info-close", n_clicks=0,
-                    title="Close",
-                    style={"border": "none", "background": "none",
-                           "cursor": "pointer", "color": "#94a3b8",
-                           "fontSize": "0.85rem"}),
     ], style={"display": "flex", "alignItems": "center",
               "borderBottom": f"1px solid {LINE}", "paddingBottom": "6px",
               "marginBottom": "4px"})
@@ -446,6 +441,9 @@ layout = html.Div(className="full-width-page", children=[
                    ]),
             _seamarks_toggle(),
             html.Div(id="vtt-info", style={"display": "none"}),
+            html.Button("\u2715", id="vtt-info-close", n_clicks=0,
+                        title="Close",
+                        style={"display": "none"}),
             _legend()],
             style={"flex": "1 1 auto", "minWidth": "0",
                    "position": "relative"}),
@@ -493,6 +491,7 @@ layout = html.Div(className="full-width-page", children=[
     Output("vtt-col-toggle", "style"),
     Output("vtt-info", "style"),
     Output("vtt-info", "children"),
+    Output("vtt-info-close", "style"),
     Input("vtt-tick", "n_intervals"),
     Input("vtt-search", "value"),
     Input("vtt-col-toggle", "n_clicks"),
@@ -554,7 +553,7 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
                                           "fontSize": "0.85rem"})
         return ([], empty, "Vessels", "", dash.no_update, new_selected,
                 [], typefilter, collapsed, col_style_out, reopen_style,
-                {"display": "none"}, [])
+                {"display": "none"}, [], {"display": "none"})
 
     chips = _type_chips(all_rows, typefilter)
     rows = [r for r in all_rows
@@ -606,9 +605,17 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
         info_style, info_children = _info_card(info)
     else:
         info_style, info_children = {"display": "none"}, []
+    close_style = ({"position": "absolute", "left": "292px",
+                    "bottom": f"calc({MAP_HEIGHT} - 250px)", "zIndex": 1001,
+                    "border": "none", "background": "white", "cursor": "pointer",
+                    "color": "#94a3b8", "fontSize": "0.85rem",
+                    "borderRadius": "4px", "padding": "2px 6px",
+                    "boxShadow": "0 1px 4px rgba(0,0,0,0.2)"}
+                   if info_style.get("display") != "none"
+                   else {"display": "none"})
     return (layer, _vessel_list(rows, new_selected, collapsed), count,
             subtitle, viewport, new_selected, chips, typefilter, collapsed,
-            col_style_out, reopen_style, info_style, info_children)
+            col_style_out, reopen_style, info_style, info_children, close_style)
 
 
 def _resolve_selection(trig, clicked, current):
