@@ -553,22 +553,24 @@ def _toggle_draw(n, is_open):
     Output("vas-f-coords", "value", allow_duplicate=True),
     Output("vas-draw-hint", "children"),
     Input("vas-draw-edit", "geojson"),
-    State("vas-draw-edit", "action"),
+    Input("vas-draw-edit", "action"),
     State("vas-draw-open", "data"),
     prevent_initial_call=True,
 )
 def _drawn_to_coords(fc, action, is_open):
-    # Only react to genuine user drawing/editing, not to the seed that the
-    # main callback writes into `geojson` when opening the form for edit.
-    # A user draw/edit/delete sets EditControl.action; a programmatic
-    # geojson-set does not.
-    if not action:
-        return dash.no_update, dash.no_update
-    if not is_open or not fc:
+    # `action` fires on every user draw/edit/delete (dict with type +
+    # n_actions); `geojson` holds the resulting features. We read the last
+    # drawn feature and write its geometry into the coords field. The
+    # programmatic clear (editToolbar) also lands here as an empty geojson -
+    # handled by the empty-features branch below, which does NOT wipe the
+    # field, only resets the hint.
+    if not is_open:
         return dash.no_update, dash.no_update
     feats = (fc or {}).get("features") or []
     if not feats:
-        return dash.no_update, "Cleared - draw a new shape."
+        # empty layer: could be a fresh open or a clear - leave the field,
+        # just refresh the hint
+        return dash.no_update, dash.no_update
     geom = (feats[-1] or {}).get("geometry") or {}
     gtype = geom.get("type")
     if gtype not in ("Point", "LineString", "Polygon"):
