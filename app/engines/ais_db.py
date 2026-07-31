@@ -240,6 +240,29 @@ def latest_positions():
     )
 
 
+def latest_info(mmsi):
+    """All fields the map info-popup shows for one vessel: current fix,
+    voyage data (destination/ETA/draught) and fleet metadata. Returns a
+    dict or None."""
+    rows = q(
+        """SELECT l.mmsi,
+                  COALESCE(f.name, initcap(lower(l.ship_name)),
+                           l.mmsi::text)               AS name,
+                  l.ts, l.lat, l.lon, l.sog, l.cog, l.heading, l.nav_status,
+                  l.destination, l.eta, l.draught, l.callsign,
+                  f.vessel_type, f.flag, f.imo, l.length_m, l.beam_m
+           FROM latest l
+           LEFT JOIN fleet f ON f.mmsi = l.mmsi
+           WHERE l.mmsi = %s""", (mmsi,))
+    if not rows:
+        return None
+    r = rows[0]
+    keys = ("mmsi", "name", "ts", "lat", "lon", "sog", "cog", "heading",
+            "nav_status", "destination", "eta", "draught", "callsign",
+            "vessel_type", "flag", "imo", "length_m", "beam_m")
+    return dict(zip(keys, r))
+
+
 def track(mmsi, days=30, max_points=1200):
     """Track points for one vessel over the given window (both sources,
     chronological). Thinned by striding to at most max_points, keeping the

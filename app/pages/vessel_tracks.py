@@ -230,6 +230,120 @@ def _type_chips(rows, typefilter):
     return chips
 
 
+def _seamarks_toggle():
+    """Small layer button, top-right on the map, toggling the OpenSeaMap
+    seamark overlay on/off."""
+    return html.Div(
+        html.Button([html.Span("\u2693 ", style={"fontSize": "0.9rem"}),
+                     "Seamarks"], id="vtt-seamarks-btn", n_clicks=0,
+                    title="Toggle sea marks (buoys, lights, cables)",
+                    style={"padding": "5px 9px", "fontSize": "0.72rem",
+                           "border": f"1px solid {LINE}", "borderRadius": "6px",
+                           "background": "white", "cursor": "pointer",
+                           "color": "#475569", "fontWeight": "600",
+                           "boxShadow": "0 1px 4px rgba(0,0,0,0.15)"}),
+        style={"position": "absolute", "top": "10px", "right": "10px",
+               "zIndex": 1000})
+
+
+def _seamarks_tile(on):
+    if not on:
+        return []
+    return [dl.TileLayer(
+        url="https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",
+        attribution="© OpenSeaMap", opacity=1.0)]
+
+
+_NAV_LABELS = {0: "Underway (engine)", 1: "At anchor", 2: "Not under command",
+               3: "Restricted manoeuvrability", 4: "Constrained by draught",
+               5: "Moored", 6: "Aground", 7: "Fishing",
+               8: "Underway (sailing)", 15: "Undefined"}
+
+
+def _info_row(label, value):
+    return html.Div([
+        html.Span(label, style={"color": "#64748b", "fontSize": "0.72rem",
+                                "flex": "0 0 118px"}),
+        html.Span(value, style={"fontSize": "0.76rem", "fontWeight": "600",
+                                "color": "#0f172a"}),
+    ], style={"display": "flex", "alignItems": "baseline", "gap": "8px",
+              "padding": "2px 0"})
+
+
+def _fmt_age(ts):
+    if ts is None:
+        return "\u2014"
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=_dt.timezone.utc)
+    secs = int((now - ts).total_seconds())
+    if secs < 90:
+        return f"{secs}s ago"
+    if secs < 5400:
+        return f"{secs // 60} min ago"
+    if secs < 172800:
+        return f"{secs // 3600} h ago"
+    return f"{secs // 86400} d ago"
+
+
+def _info_card(info):
+    """SeaVantage-style latest-AIS card, shown above the legend when a
+    vessel is selected."""
+    if not info:
+        return {"display": "none"}, []
+    def num(v, unit="", dec=0):
+        if v is None:
+            return "\u2014"
+        return (f"{v:.{dec}f}{unit}" if dec else f"{int(round(v))}{unit}")
+    nav = _NAV_LABELS.get(info.get("nav_status"), "\u2014")
+    rows = [
+        _info_row("Navigational status", nav),
+        _info_row("Position received", _fmt_age(info.get("ts"))),
+        _info_row("Latitude / Longitude",
+                  f"{info['lat']:.4f}, {info['lon']:.4f}"
+                  if info.get("lat") is not None else "\u2014"),
+        _info_row("Speed", num(info.get("sog"), " kn", 1)),
+        _info_row("Course", num(info.get("cog"), " \u00b0")),
+        _info_row("True heading", num(info.get("heading"), " \u00b0")),
+        _info_row("Draught", num(info.get("draught"), " m", 1)),
+        _info_row("Destination", info.get("destination") or "\u2014"),
+        _info_row("Reported ETA", info.get("eta") or "\u2014"),
+        _info_row("Call sign", info.get("callsign") or "\u2014"),
+        _info_row("Type", info.get("vessel_type") or "\u2014"),
+    ]
+    dims = None
+    if info.get("length_m") and info.get("beam_m"):
+        dims = f"{info['length_m']:.0f} \u00d7 {info['beam_m']:.0f} m"
+    if dims:
+        rows.append(_info_row("Dimensions", dims))
+    if info.get("imo"):
+        rows.append(_info_row("IMO", str(info["imo"])))
+
+    style = {"position": "absolute", "left": "10px", "bottom": "220px",
+             "zIndex": 1000, "background": "rgba(255,255,255,0.97)",
+             "border": f"1px solid {LINE}", "borderRadius": "10px",
+             "padding": "10px 14px", "width": "300px",
+             "boxShadow": "0 2px 10px rgba(0,0,0,0.18)",
+             "maxHeight": f"calc({MAP_HEIGHT} - 260px)", "overflowY": "auto"}
+    header = html.Div([
+        html.Span("Latest AIS information",
+                  style={"fontWeight": "700", "fontSize": "0.82rem",
+                         "flex": "1 1 auto"}),
+        html.Button("\u2715", id="vtt-info-close", n_clicks=0,
+                    title="Close",
+                    style={"border": "none", "background": "none",
+                           "cursor": "pointer", "color": "#94a3b8",
+                           "fontSize": "0.85rem"}),
+    ], style={"display": "flex", "alignItems": "center",
+              "borderBottom": f"1px solid {LINE}", "paddingBottom": "6px",
+              "marginBottom": "4px"})
+    name = html.Div(info.get("name", ""),
+                    style={"fontWeight": "700", "fontSize": "0.9rem",
+                           "color": TEAL, "margin": "2px 0 6px"})
+    return style, [header, name, *rows]
+
+
 def _legend():
     """Compact asset legend, floating bottom-left on the map."""
     def swatch(color, shape, dashed):
@@ -298,6 +412,7 @@ layout = html.Div(className="full-width-page", children=[
     ], style={"marginBottom": "8px"}),
     dcc.Interval(id="vtt-tick", interval=900_000, n_intervals=0),  # 15 min kiosk refresh
     dcc.Store(id="vtt-selected", data=None),
+    dcc.Store(id="vtt-seamarks-on", data=False),
     dcc.Store(id="vtt-typefilter", data=None),
     dcc.Store(id="vtt-collapsed", data=[]),
     dcc.Store(id="vtt-overlays", data=map_overlays.default_state()),
@@ -323,11 +438,14 @@ layout = html.Div(className="full-width-page", children=[
                    children=[
                        dl.TileLayer(url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
                                     attribution="© OpenStreetMap contributors"),
+                       dl.LayerGroup(id="vtt-seamarks-layer"),
                        *[dl.LayerGroup(id={"type": "vtt-ovl-layer",
                                               "key": o["key"]})
                          for o in map_overlays.OVERLAYS],
                        dl.LayerGroup(id="vtt-layer"),
                    ]),
+            _seamarks_toggle(),
+            html.Div(id="vtt-info", style={"display": "none"}),
             _legend()],
             style={"flex": "1 1 auto", "minWidth": "0",
                    "position": "relative"}),
@@ -373,11 +491,14 @@ layout = html.Div(className="full-width-page", children=[
     Output("vtt-collapsed", "data"),
     Output("vtt-col", "style"),
     Output("vtt-col-toggle", "style"),
+    Output("vtt-info", "style"),
+    Output("vtt-info", "children"),
     Input("vtt-tick", "n_intervals"),
     Input("vtt-search", "value"),
     Input("vtt-col-toggle", "n_clicks"),
     Input("vtt-col-toggle2", "n_clicks"),
     Input("vtt-map", "n_clicks"),
+    Input("vtt-info-close", "n_clicks"),
     Input({"type": "vtt-dot", "mmsi": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-sel", "mmsi": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-tf", "val": dash.ALL}, "n_clicks"),
@@ -387,8 +508,8 @@ layout = html.Div(className="full-width-page", children=[
     State("vtt-collapsed", "data"),
     State("vtt-col", "style"),
 )
-def _render(_tick, search, _colt, _colt2, _map_clicks, _dots, _sels, _chips,
-            _grps, selected, typefilter, collapsed, col_style):
+def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
+            _sels, _chips, _grps, selected, typefilter, collapsed, col_style):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
     is_refresh = trig in (None, "vtt-tick")
@@ -421,7 +542,10 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _dots, _sels, _chips,
         filter_changed = new_filter != typefilter
         typefilter = new_filter
 
-    new_selected = _resolve_selection(trig, clicked, selected)
+    if trig == "vtt-info-close":
+        new_selected = None
+    else:
+        new_selected = _resolve_selection(trig, clicked, selected)
 
     try:
         all_rows = ais_db.latest_positions()
@@ -429,7 +553,8 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _dots, _sels, _chips,
         empty = html.Div(str(exc), style={"color": "#b91c1c", "padding": "12px",
                                           "fontSize": "0.85rem"})
         return ([], empty, "Vessels", "", dash.no_update, new_selected,
-                [], typefilter, collapsed, col_style_out, reopen_style)
+                [], typefilter, collapsed, col_style_out, reopen_style,
+                {"display": "none"}, [])
 
     chips = _type_chips(all_rows, typefilter)
     rows = [r for r in all_rows
@@ -473,9 +598,17 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _dots, _sels, _chips,
                         "options": {"padding": [40, 40]}}
         subtitle = (f"{name} — {len(points)} points, last 30 days · " + subtitle)
 
+    if new_selected:
+        try:
+            info = ais_db.latest_info(int(new_selected))
+        except (ais_db.AisDbError, ValueError, Exception):
+            info = None
+        info_style, info_children = _info_card(info)
+    else:
+        info_style, info_children = {"display": "none"}, []
     return (layer, _vessel_list(rows, new_selected, collapsed), count,
             subtitle, viewport, new_selected, chips, typefilter, collapsed,
-            col_style_out, reopen_style)
+            col_style_out, reopen_style, info_style, info_children)
 
 
 def _resolve_selection(trig, clicked, current):
@@ -560,3 +693,26 @@ def _overlays(_clicks, state):
         styles.append(_overlay_chip_style(on))
         labels.append(map_overlays.chip_label(o))
     return layers, styles, labels, state
+
+
+# --- seamarks layer toggle ---------------------------------------------------
+@callback(
+    Output("vtt-seamarks-layer", "children"),
+    Output("vtt-seamarks-btn", "style"),
+    Output("vtt-seamarks-on", "data"),
+    Input("vtt-seamarks-btn", "n_clicks"),
+    State("vtt-seamarks-on", "data"),
+    prevent_initial_call=True,
+)
+def _toggle_seamarks(_n, is_on):
+    is_on = not bool(is_on)
+    base = {"padding": "5px 9px", "fontSize": "0.72rem",
+            "borderRadius": "6px", "cursor": "pointer", "fontWeight": "600",
+            "boxShadow": "0 1px 4px rgba(0,0,0,0.15)"}
+    if is_on:
+        style = {**base, "background": TEAL, "color": "white",
+                 "border": f"1px solid {TEAL}"}
+    else:
+        style = {**base, "background": "white", "color": "#475569",
+                 "border": f"1px solid {LINE}"}
+    return _seamarks_tile(is_on), style, is_on
