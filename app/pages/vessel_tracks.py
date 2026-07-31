@@ -327,13 +327,29 @@ layout = html.Div(className="full-width-page", children=[
             _legend()],
             style={"flex": "1 1 auto", "minWidth": "0",
                    "position": "relative"}),
-        html.Div([
-            html.Div(id="vtt-count",
-                     style={"padding": "8px 10px", "fontWeight": "600",
-                            "borderBottom": f"2px solid {TEAL}",
-                            "fontSize": "0.85rem", "background": "#f8fafc"}),
+        html.Button("\u25b8", id="vtt-col-toggle", n_clicks=0,
+                    title="Show vessel list",
+                    style={"display": "none"}),
+        html.Div(id="vtt-col", children=[
+            html.Div([
+                html.Div(id="vtt-count", style={"fontWeight": "600",
+                         "fontSize": "0.85rem", "flex": "1 1 auto"}),
+                html.Button("\u25be", id="vtt-col-toggle2", n_clicks=0,
+                            title="Hide vessel list",
+                            style={"border": "none", "background": "none",
+                                   "cursor": "pointer", "fontSize": "0.8rem",
+                                   "color": TEAL, "padding": "0 4px"}),
+            ], style={"display": "flex", "alignItems": "center",
+                      "padding": "8px 10px", "borderBottom": f"2px solid {TEAL}",
+                      "background": "#f8fafc"}),
+            dcc.Input(id="vtt-search", value="", debounce=False, type="text",
+                      placeholder="Filter by name\u2026",
+                      style={"width": "100%", "boxSizing": "border-box",
+                             "padding": "6px 10px", "fontSize": "0.8rem",
+                             "border": "none",
+                             "borderBottom": f"1px solid {LINE}"}),
             html.Div(id="vtt-list", style={"overflowY": "auto",
-                                           "height": f"calc({MAP_HEIGHT} - 36px)"}),
+                     "height": f"calc({MAP_HEIGHT} - 72px)"}),
         ], style={"flex": "0 0 290px", "border": f"1px solid {LINE}",
                   "borderRadius": "8px", "overflow": "hidden",
                   "background": "white"}),
@@ -351,7 +367,12 @@ layout = html.Div(className="full-width-page", children=[
     Output("vtt-chips", "children"),
     Output("vtt-typefilter", "data"),
     Output("vtt-collapsed", "data"),
+    Output("vtt-col", "style"),
+    Output("vtt-col-toggle", "style"),
     Input("vtt-tick", "n_intervals"),
+    Input("vtt-search", "value"),
+    Input("vtt-col-toggle", "n_clicks"),
+    Input("vtt-col-toggle2", "n_clicks"),
     Input("vtt-map", "n_clicks"),
     Input({"type": "vtt-dot", "mmsi": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-sel", "mmsi": dash.ALL}, "n_clicks"),
@@ -360,12 +381,28 @@ layout = html.Div(className="full-width-page", children=[
     State("vtt-selected", "data"),
     State("vtt-typefilter", "data"),
     State("vtt-collapsed", "data"),
+    State("vtt-col", "style"),
 )
-def _render(_tick, _map_clicks, _dots, _sels, _chips, _grps,
-            selected, typefilter, collapsed):
+def _render(_tick, search, _colt, _colt2, _map_clicks, _dots, _sels, _chips,
+            _grps, selected, typefilter, collapsed, col_style):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
     is_refresh = trig in (None, "vtt-tick")
+
+    # vessel-column collapse (mirrors the main nav toggle behaviour)
+    col_hidden = bool((col_style or {}).get("display") == "none")
+    if trig in ("vtt-col-toggle", "vtt-col-toggle2"):
+        col_hidden = not col_hidden
+    base_col_style = {"flex": "0 0 290px", "border": f"1px solid {LINE}",
+                      "borderRadius": "8px", "overflow": "hidden",
+                      "background": "white"}
+    col_style_out = ({**base_col_style, "display": "none"} if col_hidden
+                     else base_col_style)
+    reopen_style = ({"padding": "6px 8px", "cursor": "pointer",
+                     "border": f"1px solid {LINE}", "borderRadius": "6px",
+                     "background": "white", "color": TEAL, "fontWeight": "700",
+                     "alignSelf": "flex-start"} if col_hidden
+                    else {"display": "none"})
 
     collapsed = list(collapsed or [])
     if (clicked and isinstance(trig, dict) and trig.get("type") == "vtt-grp"):
@@ -388,11 +425,14 @@ def _render(_tick, _map_clicks, _dots, _sels, _chips, _grps,
         empty = html.Div(str(exc), style={"color": "#b91c1c", "padding": "12px",
                                           "fontSize": "0.85rem"})
         return ([], empty, "Vessels", "", dash.no_update, new_selected,
-                [], typefilter, collapsed)
+                [], typefilter, collapsed, col_style_out, reopen_style)
 
     chips = _type_chips(all_rows, typefilter)
     rows = [r for r in all_rows
             if typefilter is None or (r[8] or "Other") == typefilter]
+    q = (search or "").strip().lower()
+    if q:
+        rows = [r for r in rows if q in (r[1] or "").lower()]
     if filter_changed:
         new_selected = None            # filterwissel = terug naar overzicht
 
@@ -430,7 +470,8 @@ def _render(_tick, _map_clicks, _dots, _sels, _chips, _grps,
         subtitle = (f"{name} — {len(points)} points, last 30 days · " + subtitle)
 
     return (layer, _vessel_list(rows, new_selected, collapsed), count,
-            subtitle, viewport, new_selected, chips, typefilter, collapsed)
+            subtitle, viewport, new_selected, chips, typefilter, collapsed,
+            col_style_out, reopen_style)
 
 
 def _resolve_selection(trig, clicked, current):

@@ -30,7 +30,7 @@ from app.engines import ais_db, asset_db
 
 PAGE_PATH = "/vessel-tracker/assets"
 
-dash.register_page(__name__, path=PAGE_PATH, name="Subsea Assets",
+dash.register_page(__name__, path=PAGE_PATH, name="Map Features DB",
                    category="Vessel Tracker", order=1.5)
 
 MUTED = "#6b7280"
@@ -168,7 +168,7 @@ def _banner(msg, ok=True):
 
 
 layout = html.Div(className="full-width-page", children=[
-    html.H3("Subsea Assets"),
+    html.H3("Map Features DB"),
     html.P("Platforms, wells, cables, pipelines, windfarms, EEZ, fields, "
            "anchorages and ports - the data behind the Tracker map "
            "overlays. Chart-level positions: never a substitute for the "

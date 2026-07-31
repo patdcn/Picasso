@@ -322,17 +322,34 @@ layout = html.Div(className="full-width-page", children=[
             _legend()],
             style={"flex": "1 1 auto", "minWidth": "0",
                    "position": "relative"}),
-        html.Div([
+        html.Button("\u25b8", id="vta-col-toggle", n_clicks=0,
+                    title="Show vessel list", style={"display": "none"}),
+        html.Div(id="vta-col", children=[
             html.Div([
-                html.Button("\u25b6 Play", id="vta-play", n_clicks=0,
-                            style={**_CTRL, "color": TEAL,
-                                   "borderColor": TEAL, "marginRight": "6px"}),
-                html.Button("\u25a0 Stop", id="vta-stop", n_clicks=0,
-                            style=_CTRL),
-            ], style={"padding": "8px 10px", "background": "#f8fafc",
+                html.Div([
+                    html.Button("\u25b6 Play", id="vta-play", n_clicks=0,
+                                style={**_CTRL, "color": TEAL,
+                                       "borderColor": TEAL,
+                                       "marginRight": "6px"}),
+                    html.Button("\u25a0 Stop", id="vta-stop", n_clicks=0,
+                                style=_CTRL),
+                ], style={"flex": "1 1 auto"}),
+                html.Button("\u25be", id="vta-col-toggle2", n_clicks=0,
+                            title="Hide vessel list",
+                            style={"border": "none", "background": "none",
+                                   "cursor": "pointer", "fontSize": "0.8rem",
+                                   "color": TEAL, "padding": "0 4px"}),
+            ], style={"display": "flex", "alignItems": "center",
+                      "padding": "8px 10px", "background": "#f8fafc",
                       "borderBottom": f"2px solid {TEAL}"}),
+            dcc.Input(id="vta-search", value="", debounce=False, type="text",
+                      placeholder="Filter by name\u2026",
+                      style={"width": "100%", "boxSizing": "border-box",
+                             "padding": "6px 10px", "fontSize": "0.8rem",
+                             "border": "none",
+                             "borderBottom": f"1px solid {LINE}"}),
             html.Div(id="vta-list", style={"overflowY": "auto",
-                                           "height": f"calc({MAP_HEIGHT} - 52px)"}),
+                     "height": f"calc({MAP_HEIGHT} - 88px)"}),
         ], style={"flex": "0 0 290px", "border": f"1px solid {LINE}",
                   "borderRadius": "8px", "overflow": "hidden",
                   "background": "white"}),
@@ -350,6 +367,11 @@ layout = html.Div(className="full-width-page", children=[
     Output("vta-index", "data"),
     Output("vta-step", "disabled"),
     Output("vta-collapsed", "data"),
+    Output("vta-col", "style"),
+    Output("vta-col-toggle", "style"),
+    Input("vta-search", "value"),
+    Input("vta-col-toggle", "n_clicks"),
+    Input("vta-col-toggle2", "n_clicks"),
     Input("vta-play", "n_clicks"),
     Input("vta-stop", "n_clicks"),
     Input("vta-step", "n_intervals"),
@@ -361,11 +383,25 @@ layout = html.Div(className="full-width-page", children=[
     State("vta-playing", "data"),
     State("vta-index", "data"),
     State("vta-collapsed", "data"),
+    State("vta-col", "style"),
 )
-def _render(_p, _s, _step, _ref, _sels, _dots, _grps,
-            selected, playing, index, collapsed):
+def _render(search, _colt, _colt2, _p, _s, _step, _ref, _sels, _dots, _grps,
+            selected, playing, index, collapsed, col_style):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
+    col_hidden = bool((col_style or {}).get("display") == "none")
+    if trig in ("vta-col-toggle", "vta-col-toggle2"):
+        col_hidden = not col_hidden
+    base_col_style = {"flex": "0 0 290px", "border": f"1px solid {LINE}",
+                      "borderRadius": "8px", "overflow": "hidden",
+                      "background": "white"}
+    col_style_out = ({**base_col_style, "display": "none"} if col_hidden
+                     else base_col_style)
+    reopen_style = ({"padding": "6px 8px", "cursor": "pointer",
+                     "border": f"1px solid {LINE}", "borderRadius": "6px",
+                     "background": "white", "color": TEAL, "fontWeight": "700",
+                     "alignSelf": "flex-start"} if col_hidden
+                    else {"display": "none"})
     selected = list(selected or [])
     collapsed = list(collapsed or [])
     playing = bool(playing)
@@ -405,7 +441,7 @@ def _render(_p, _s, _step, _ref, _sels, _dots, _grps,
         err = html.Div(str(exc), style={"color": "#b91c1c", "padding": "12px",
                                         "fontSize": "0.85rem"})
         return ([], err, "", dash.no_update, selected, False, 0, True,
-                collapsed)
+                collapsed, col_style_out, reopen_style)
 
     by_mmsi = {str(r[0]): r for r in rows}
     selected = [m for m in selected if m in by_mmsi]   # drop vanished vessels
@@ -434,8 +470,11 @@ def _render(_p, _s, _step, _ref, _sels, _dots, _grps,
         status = notice or (f"{len(selected)} of {len(rows)} vessels selected"
                             f" — click vessels, then \u25b6 Play")
 
-    return (layer, _vessel_list(rows, selected, collapsed), status, viewport,
-            selected, playing, index, not playing, collapsed)
+    q = (search or "").strip().lower()
+    list_rows = ([r for r in rows if q in (r[1] or "").lower()] if q else rows)
+    return (layer, _vessel_list(list_rows, selected, collapsed), status,
+            viewport, selected, playing, index, not playing, collapsed,
+            col_style_out, reopen_style)
 
 
 clientside_callback(
