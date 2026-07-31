@@ -20,7 +20,7 @@ CATEGORIES = {
     "platform":      {"label": "Platforms / Jackets", "kind": "point",
                       "color": "#374151"},
     "well":          {"label": "Subsea Wells", "kind": "point",
-                      "color": "#0e7490"},
+                      "color": "#eab308"},
     "power_cable":   {"label": "Power Cables", "kind": "line",
                       "color": "#2563eb", "dash": "6 6"},
     "telecom_cable": {"label": "Telecom / Fibre", "kind": "line",

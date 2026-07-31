@@ -52,6 +52,20 @@ window.vtOverlays = Object.assign({}, window.vtOverlays, {
         })
       });
     }
+    if (p.__shape === "pentagon") {
+      return L.marker(latlng, {
+        interactive: true,
+        bubblingMouseEvents: false,
+        icon: L.divIcon({
+          className: "",
+          html: '<div style="width:11px;height:11px;background:' + c +
+                ';clip-path:polygon(50% 0, 100% 38%, 82% 100%, 18% 100%, 0 38%);' +
+                'filter:drop-shadow(0 0 1px white);"></div>',
+          iconSize: [12, 12],
+          iconAnchor: [6, 6]
+        })
+      });
+    }
     return L.circleMarker(latlng, {
       radius: 4.5,
       color: "white",

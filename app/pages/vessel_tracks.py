@@ -241,6 +241,10 @@ def _legend():
                   "borderLeft": "5px solid transparent",
                   "borderRight": "5px solid transparent",
                   "borderBottom": f"10px solid {color}"}
+        elif shape == "pentagon":
+            st = {"width": "11px", "height": "11px", "background": color,
+                  "clipPath":
+                  "polygon(50% 0, 100% 38%, 82% 100%, 18% 100%, 0 38%)"}
         elif shape == "line":
             st = {"width": "16px", "height": "0",
                   "borderTop": f"2.5px {'dashed' if dashed else 'solid'} {color}"}

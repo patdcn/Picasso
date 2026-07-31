@@ -57,7 +57,7 @@ def _tooltip(name, operator, region, country, locode, props):
 
 
 # point-marker shapes per category; default is a circle
-POINT_SHAPES = {"platform": "square", "well": "triangle"}
+POINT_SHAPES = {"platform": "square", "well": "pentagon"}
 
 _MAX_VERTICES = 400          # decimate chart-level routes beyond this
 _JS = {k: {"variable": f"vtOverlays.{k}"}
