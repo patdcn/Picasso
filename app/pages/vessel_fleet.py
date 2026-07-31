@@ -422,6 +422,16 @@ layout = html.Div(className="full-width-page", children=[
     Output("vtf-ftype", "options"),
     Output("vtf-fregion", "options"),
     Output("vtf-add-open", "style"),
+    Output("vtf-new-name", "value"),
+    Output("vtf-new-imo", "value"),
+    Output("vtf-new-mmsi", "value"),
+    Output("vtf-new-vessel_type", "value"),
+    Output("vtf-new-owner_op", "value"),
+    Output("vtf-new-built", "value"),
+    Output("vtf-new-flag", "value"),
+    Output("vtf-new-region", "value"),
+    Output("vtf-new-tier", "value"),
+    Output("vtf-new-notes", "value"),
     Input("vtf-refresh", "n_clicks"),
     Input("vtf-add-open", "n_clicks"),
     Input("vtf-new-save", "n_clicks"),
@@ -463,6 +473,7 @@ def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
     if not can_edit:
         editing, adding = None, False
     new_pending, new_editing, new_adding = None, editing, bool(adding)
+    clear_new = False        # leeg de nieuw-vessel velden na save/open/cancel
 
     _MUTATING = ("vtf-add", "vtf-del", "vtf-del-confirm", "vtf-edit",
                  "vtf-nm", "vtf-save")
@@ -503,8 +514,10 @@ def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
                 new_editing = None
         elif clicked and trig == "vtf-add-open":
             new_adding, new_editing = not new_adding, None
+            if new_adding:
+                clear_new = True         # verse, lege invoer bij openen
         elif clicked and trig == "vtf-new-cancel":
-            new_adding = False
+            new_adding, clear_new = False, True
         elif clicked and trig == "vtf-new-save":
             err = ais_db.fleet_insert({
                 "name": nv_name, "imo": nv_imo, "mmsi": nv_mmsi,
@@ -520,6 +533,7 @@ def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
                     f"{(nv_name or '').strip()} added to the fleet "
                     f"(IMO {(nv_imo or '').strip()}). The aisstream collector "
                     f"picks up its MMSI within 5 minutes.", True, False)
+                clear_new = True
     except (ais_db.AisDbError, sv_api.SvApiError) as exc:
         banner, ok = str(exc), False
     except Exception as exc:  # never kill the page
@@ -554,11 +568,14 @@ def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
             can_edit=can_edit)
     except Exception as exc:
         return (_banner(str(exc), ok=False), "", None, None, None, False,
-                {"display": "none"}, [], [], _ADD_BTN_STYLE)
+                {"display": "none"}, [], [], _ADD_BTN_STYLE,
+                *[dash.no_update] * 10)
     form_style = {"display": "block"} if (new_adding and can_edit) else {"display": "none"}
     add_btn_style = _ADD_BTN_STYLE if can_edit else {"display": "none"}
+    # tien nieuw-velden: legen wanneer clear_new, anders ongemoeid laten
+    new_vals = (["" ] * 10 if clear_new else [dash.no_update] * 10)
     return (table, counter, _banner(banner, ok), new_pending, new_editing,
-            new_adding, form_style, types, regions, add_btn_style)
+            new_adding, form_style, types, regions, add_btn_style, *new_vals)
 
 
 @callback(Output("vtf-sort", "data"),
