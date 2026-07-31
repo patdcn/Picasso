@@ -308,6 +308,7 @@ layout = html.Div(className="full-width-page", children=[
     dcc.Store(id="vas-form-open", data=False),
     dcc.Store(id="vas-draw-open", data=False),
     dcc.Store(id="vas-draw-seed", data=None),   # geometry to preload on edit
+    dcc.Store(id="vas-draw-clearn", data=0),    # monotonic clear-all counter
     dcc.Loading(html.Div(id="vas-content"), type="default"),
 ])
 
@@ -326,7 +327,8 @@ layout = html.Div(className="full-width-page", children=[
     Output("vas-draw-context", "children"),
     Output("vas-draw-map", "center"),
     Output("vas-draw-map", "zoom"),
-    Output("vas-draw-edit", "geojson"),
+    Output("vas-draw-edit", "editToolbar"),
+    Output("vas-draw-clearn", "data"),
     Output("vas-f-name", "value"),
     Output("vas-f-cat", "value"),
     Output("vas-f-region", "value"),
@@ -356,12 +358,13 @@ layout = html.Div(className="full-width-page", children=[
     State("vas-pending-delete", "data"),
     State("vas-editing", "data"),
     State("vas-form-open", "data"),
+    State("vas-draw-clearn", "data"),
 )
 def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
              _e, _d, _dc, _dx,
              f_name, f_cat, f_region, f_operator, f_lat, f_lon, f_coords,
              f_country, f_code,
-             pending, editing, form_open):
+             pending, editing, form_open, clear_n):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
     can_edit = auth.may_edit_params(auth.current_user(), PAGE_PATH)
@@ -372,8 +375,7 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
     ref_children = dash.no_update       # reference shape shown under drawing
     map_center = dash.no_update
     map_zoom = dash.no_update
-    clear_drawn = dash.no_update         # empty FC wipes the EditControl layer
-    _EMPTY = {"type": "FeatureCollection", "features": []}
+    clear_drawn = dash.no_update         # editToolbar "clear all" payload
 
     _MUT = ("vas-edit", "vas-del", "vas-del-confirm")
     try:
@@ -414,7 +416,8 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
                                                               "")]
                     ref_children = _reference_layer(gtype, geometry)
                     map_center, map_zoom = _geom_centroid_zoom(gtype, geometry)
-                    clear_drawn = _EMPTY
+                    clear_n = (clear_n or 0) + 1
+                    clear_drawn = {"action": "clear all", "n_clicks": clear_n}
                     new_editing, new_open = str(aid), True
         elif clicked and trig == "vas-add-open":
             new_open = not new_open
@@ -422,11 +425,13 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
                 new_editing = None
                 form_vals = ["", None, "", "", "", "", "", "", ""]
                 ref_children = []
-                clear_drawn = _EMPTY
+                clear_n = (clear_n or 0) + 1
+                clear_drawn = {"action": "clear all", "n_clicks": clear_n}
         elif clicked and trig == "vas-f-cancel":
             new_open, new_editing = False, None
             ref_children = []
-            clear_drawn = _EMPTY
+            clear_n = (clear_n or 0) + 1
+            clear_drawn = {"action": "clear all", "n_clicks": clear_n}
         elif clicked and trig == "vas-f-save":
             name = (f_name or "").strip()
             if not name or not f_cat:
@@ -460,7 +465,8 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
                               f"under '{asset_db.CATEGORIES[f_cat]['label']}'.")
                 new_open, new_editing = False, None
                 ref_children = []          # wis de referentie-mal
-                clear_drawn = _EMPTY       # wis de getekende laag
+                clear_n = (clear_n or 0) + 1
+                clear_drawn = {"action": "clear all", "n_clicks": clear_n}   # wis de getekende laag
     except ValueError as exc:
         banner, ok, new_open = str(exc), False, True
     except (ais_db.AisDbError,) as exc:
@@ -477,13 +483,13 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
         return (_banner(str(exc), ok=False), "", None, None, None, False,
                 {"display": "none"}, "New asset", [], [], dash.no_update,
                 dash.no_update, dash.no_update, dash.no_update,
-                *[dash.no_update] * 9)
+                dash.no_update, *[dash.no_update] * 9)
 
     style = {"display": "block"} if new_open else {"display": "none"}
     title = "Edit asset" if new_editing else "New asset"
     return (table, counter, _banner(banner, ok), new_pending, new_editing,
             new_open, style, title, region_opts, country_opts, ref_children,
-            map_center, map_zoom, clear_drawn, *form_vals)
+            map_center, map_zoom, clear_drawn, clear_n, *form_vals)
 
 
 def _reference_layer(gtype, geometry):
