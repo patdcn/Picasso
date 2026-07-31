@@ -232,7 +232,25 @@ layout = html.Div(className="full-width-page", children=[
                    style={"height": "340px", "width": "100%",
                           "marginTop": "8px", "borderRadius": "8px"},
                    children=[
-                       dl.TileLayer(),
+                       dl.LayersControl(position="topleft", children=[
+                           dl.BaseLayer(dl.TileLayer(), name="OpenStreetMap",
+                                        checked=True),
+                           dl.BaseLayer(
+                               dl.TileLayer(
+                                   url="https://server.arcgisonline.com/ArcGIS/"
+                                       "rest/services/Ocean/World_Ocean_Base/"
+                                       "MapServer/tile/{z}/{y}/{x}",
+                                   attribution="Esri Ocean"),
+                               name="Esri Ocean", checked=False),
+                           dl.Overlay(
+                               dl.TileLayer(
+                                   url="https://tiles.openseamap.org/seamark/"
+                                       "{z}/{x}/{y}.png",
+                                   attribution="© OpenSeaMap"),
+                               name="Seamarks", checked=True),
+                           dl.Overlay(dl.LayerGroup(id="vas-draw-context"),
+                                      name="Existing assets", checked=True),
+                       ]),
                        dl.FeatureGroup(id="vas-draw-fg", children=[
                            dl.EditControl(
                                id="vas-draw-edit",
@@ -244,10 +262,11 @@ layout = html.Div(className="full-width-page", children=[
                        ]),
                    ]),
             html.Div("Draw a polygon, route or point; it fills the "
-                     "geometry field above. When editing an existing "
-                     "asset, drawing a new shape replaces it (the current "
-                     "geometry stays in the text field until you do). Use "
-                     "the trash tool to clear a mistake.",
+                     "geometry field above. Toggle Seamarks or Esri Ocean "
+                     "as backdrop via the layers control (top-left). When "
+                     "editing, the existing shape is loaded for adjustment; "
+                     "if it does not appear, the text field still holds it. "
+                     "Use the trash tool to clear.",
                      style={"color": MUTED, "fontSize": "0.72rem",
                             "marginTop": "4px"}),
         ]),
@@ -282,6 +301,7 @@ layout = html.Div(className="full-width-page", children=[
     Output("vas-form-title", "children"),
     Output("vas-fregion", "options"),
     Output("vas-fcountry", "options"),
+    Output("vas-draw-edit", "geojson"),
     Output("vas-f-name", "value"),
     Output("vas-f-cat", "value"),
     Output("vas-f-region", "value"),
@@ -324,6 +344,7 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
     new_pending, new_editing = None, editing
     new_open = bool(form_open) and can_edit
     form_vals = [dash.no_update] * 9
+    draw_seed = dash.no_update          # FeatureCollection to (pre)load, or []
 
     _MUT = ("vas-edit", "vas-del", "vas-del-confirm")
     try:
@@ -362,14 +383,20 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
                                  lat, lon, coords, country or "",
                                  locode or (_props or {}).get("wpi_number",
                                                               "")]
+                    draw_seed = {"type": "FeatureCollection", "features": [
+                        {"type": "Feature", "properties": {},
+                         "geometry": {"type": gtype,
+                                      "coordinates": geometry["coordinates"]}}]}
                     new_editing, new_open = str(aid), True
         elif clicked and trig == "vas-add-open":
             new_open = not new_open
             if new_open:
                 new_editing = None
                 form_vals = ["", None, "", "", "", "", "", "", ""]
+                draw_seed = {"type": "FeatureCollection", "features": []}
         elif clicked and trig == "vas-f-cancel":
             new_open, new_editing = False, None
+            draw_seed = {"type": "FeatureCollection", "features": []}
         elif clicked and trig == "vas-f-save":
             name = (f_name or "").strip()
             if not name or not f_cat:
@@ -416,13 +443,14 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
         country_opts = asset_db.countries()
     except Exception as exc:
         return (_banner(str(exc), ok=False), "", None, None, None, False,
-                {"display": "none"}, "New asset", [], [],
+                {"display": "none"}, "New asset", [], [], dash.no_update,
                 *[dash.no_update] * 9)
 
     style = {"display": "block"} if new_open else {"display": "none"}
     title = "Edit asset" if new_editing else "New asset"
     return (table, counter, _banner(banner, ok), new_pending, new_editing,
-            new_open, style, title, region_opts, country_opts, *form_vals)
+            new_open, style, title, region_opts, country_opts, draw_seed,
+            *form_vals)
 
 
 # --- draw-on-map panel -------------------------------------------------------
@@ -450,10 +478,17 @@ def _toggle_draw(n, is_open):
     Output("vas-f-coords", "value", allow_duplicate=True),
     Output("vas-draw-hint", "children"),
     Input("vas-draw-edit", "geojson"),
+    State("vas-draw-edit", "action"),
     State("vas-draw-open", "data"),
     prevent_initial_call=True,
 )
-def _drawn_to_coords(fc, is_open):
+def _drawn_to_coords(fc, action, is_open):
+    # Only react to genuine user drawing/editing, not to the seed that the
+    # main callback writes into `geojson` when opening the form for edit.
+    # A user draw/edit/delete sets EditControl.action; a programmatic
+    # geojson-set does not.
+    if not action:
+        return dash.no_update, dash.no_update
     if not is_open or not fc:
         return dash.no_update, dash.no_update
     feats = (fc or {}).get("features") or []
