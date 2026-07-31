@@ -326,6 +326,7 @@ layout = html.Div(className="full-width-page", children=[
     Output("vas-draw-context", "children"),
     Output("vas-draw-map", "center"),
     Output("vas-draw-map", "zoom"),
+    Output("vas-draw-edit", "geojson"),
     Output("vas-f-name", "value"),
     Output("vas-f-cat", "value"),
     Output("vas-f-region", "value"),
@@ -371,6 +372,8 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
     ref_children = dash.no_update       # reference shape shown under drawing
     map_center = dash.no_update
     map_zoom = dash.no_update
+    clear_drawn = dash.no_update         # empty FC wipes the EditControl layer
+    _EMPTY = {"type": "FeatureCollection", "features": []}
 
     _MUT = ("vas-edit", "vas-del", "vas-del-confirm")
     try:
@@ -411,6 +414,7 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
                                                               "")]
                     ref_children = _reference_layer(gtype, geometry)
                     map_center, map_zoom = _geom_centroid_zoom(gtype, geometry)
+                    clear_drawn = _EMPTY
                     new_editing, new_open = str(aid), True
         elif clicked and trig == "vas-add-open":
             new_open = not new_open
@@ -418,9 +422,11 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
                 new_editing = None
                 form_vals = ["", None, "", "", "", "", "", "", ""]
                 ref_children = []
+                clear_drawn = _EMPTY
         elif clicked and trig == "vas-f-cancel":
             new_open, new_editing = False, None
             ref_children = []
+            clear_drawn = _EMPTY
         elif clicked and trig == "vas-f-save":
             name = (f_name or "").strip()
             if not name or not f_cat:
@@ -453,6 +459,8 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
                     banner = (f"{name} added - visible on the Tracker maps "
                               f"under '{asset_db.CATEGORIES[f_cat]['label']}'.")
                 new_open, new_editing = False, None
+                ref_children = []          # wis de referentie-mal
+                clear_drawn = _EMPTY       # wis de getekende laag
     except ValueError as exc:
         banner, ok, new_open = str(exc), False, True
     except (ais_db.AisDbError,) as exc:
@@ -468,13 +476,14 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
     except Exception as exc:
         return (_banner(str(exc), ok=False), "", None, None, None, False,
                 {"display": "none"}, "New asset", [], [], dash.no_update,
-                dash.no_update, dash.no_update, *[dash.no_update] * 9)
+                dash.no_update, dash.no_update, dash.no_update,
+                *[dash.no_update] * 9)
 
     style = {"display": "block"} if new_open else {"display": "none"}
     title = "Edit asset" if new_editing else "New asset"
     return (table, counter, _banner(banner, ok), new_pending, new_editing,
             new_open, style, title, region_opts, country_opts, ref_children,
-            map_center, map_zoom, *form_vals)
+            map_center, map_zoom, clear_drawn, *form_vals)
 
 
 def _reference_layer(gtype, geometry):
