@@ -236,6 +236,23 @@ _NAV_LABELS = {0: "Underway (engine)", 1: "At anchor", 2: "Not under command",
                8: "Underway (sailing)", 15: "Undefined"}
 
 
+# Destination hyperlink target. VesselFinder's public /ports page is
+# searchable by UN/LOCODE; {loc} is substituted with the vessel's reported
+# destination LOCODE. Change this single line to point elsewhere if needed.
+PORT_LINK_TEMPLATE = "https://www.vesselfinder.com/ports?name={loc}"
+
+_INFO_CARD_H = 330       # vaste max-hoogte van de info-card (px)
+
+
+def _looks_like_locode(dest):
+    """AIS destination is a UN/LOCODE when it's 5 chars, letters, first two
+    a country code. Free-text destinations (e.g. 'ABERDEEN') are not linked."""
+    if not dest:
+        return False
+    d = dest.strip().upper()
+    return len(d) == 5 and d.isalpha()
+
+
 def _info_row(label, value):
     return html.Div([
         html.Span(label, style={"color": "#64748b", "fontSize": "0.64rem",
@@ -263,6 +280,20 @@ def _fmt_age(ts):
     return f"{secs // 86400} d ago"
 
 
+def _destination_value(dest):
+    """Plain text, or a hyperlink to the VesselFinder port page when the
+    destination is a UN/LOCODE."""
+    if not dest:
+        return "\u2014"
+    if _looks_like_locode(dest):
+        return html.A(dest,
+                      href=PORT_LINK_TEMPLATE.format(loc=dest.strip().upper()),
+                      target="_blank", rel="noopener noreferrer",
+                      style={"color": TEAL, "textDecoration": "underline",
+                             "cursor": "pointer"})
+    return dest
+
+
 def _info_card(info):
     """SeaVantage-style latest-AIS card, shown above the legend when a
     vessel is selected."""
@@ -283,7 +314,7 @@ def _info_card(info):
         _info_row("Course", num(info.get("cog"), " \u00b0")),
         _info_row("True heading", num(info.get("heading"), " \u00b0")),
         _info_row("Draught", num(info.get("draught"), " m", 1)),
-        _info_row("Destination", info.get("destination") or "\u2014"),
+        _info_row("Destination", _destination_value(info.get("destination"))),
         _info_row("Reported ETA", info.get("eta") or "\u2014"),
         _info_row("Call sign", info.get("callsign") or "\u2014"),
         _info_row("Type", info.get("vessel_type") or "\u2014"),
@@ -296,12 +327,12 @@ def _info_card(info):
     if info.get("imo"):
         rows.append(_info_row("IMO", str(info["imo"])))
 
-    style = {"position": "absolute", "left": "10px", "top": "10px",
+    style = {"position": "absolute", "left": "52px", "bottom": "10px",
              "zIndex": 1000, "background": "rgba(255,255,255,0.97)",
              "border": f"1px solid {LINE}", "borderRadius": "8px",
              "padding": "8px 11px", "width": "248px",
              "boxShadow": "0 2px 10px rgba(0,0,0,0.18)",
-             "maxHeight": f"calc({MAP_HEIGHT} - 30px)", "overflowY": "auto"}
+             "maxHeight": f"{_INFO_CARD_H}px", "overflowY": "auto"}
     header = html.Div([
         html.Span("Latest AIS information",
                   style={"fontWeight": "700", "fontSize": "0.74rem",
@@ -578,8 +609,11 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
         info_style, info_children = _info_card(info)
     else:
         info_style, info_children = {"display": "none"}, []
-    close_style = ({"position": "absolute", "left": "238px", "top": "12px",
-                    "zIndex": 1001, "border": "none", "background": "white",
+    # card-top zit op bottom(10) + hoogte(330) = 340px vanaf de kaart-onderkant.
+    # Sluitknop net binnen de rechterbovenhoek van de card.
+    close_style = ({"position": "absolute", "left": "278px",
+                    "bottom": f"{10 + _INFO_CARD_H - 24}px", "zIndex": 1001,
+                    "border": "none", "background": "white",
                     "cursor": "pointer", "color": "#94a3b8",
                     "fontSize": "0.78rem", "borderRadius": "4px",
                     "padding": "1px 5px",
