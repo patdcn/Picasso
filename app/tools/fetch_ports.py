@@ -55,18 +55,44 @@ NOMINATIM = os.environ.get("NOMINATIM_URL",
 HEADERS = {"User-Agent": "DCN-Picasso-portal/1.0 (engineering@dcndiving)"}
 
 
+MIN_SPAN_DEG = 0.002        # ~200 m: anything smaller is a building, not a port
+
+
+def _bbox_span(gj):
+    """(lon-span, lat-span) of a geometry's bounding box."""
+    def walk(coords):
+        for c in coords:
+            if isinstance(c[0], (int, float)):
+                yield c
+            else:
+                yield from walk(c)
+    lons, lats = zip(*((c[0], c[1]) for c in walk(gj["coordinates"])))
+    return (max(lons) - min(lons)), (max(lats) - min(lats))
+
+
 def lookup(query):
-    """Best polygon for a query, or None. Prefers results that actually
-    carry a Polygon/MultiPolygon (not a point pin)."""
+    """Best polygon for a query, or None. Among all hits carrying a
+    Polygon/MultiPolygon, the LARGEST bounding box wins - Nominatim happily
+    returns a pub called 'Grand Harbour' before the harbour itself. Tiny
+    footprints (< ~200 m) are rejected outright."""
     r = requests.get(NOMINATIM, headers=HEADERS, timeout=60, params={
-        "q": query, "format": "jsonv2", "limit": 5,
+        "q": query, "format": "jsonv2", "limit": 10,
         "polygon_geojson": 1, "extratags": 0})
     r.raise_for_status()
+    best, best_area = None, 0.0
     for hit in r.json():
         gj = hit.get("geojson") or {}
-        if gj.get("type") in ("Polygon", "MultiPolygon"):
-            return gj
-    return None
+        if gj.get("type") not in ("Polygon", "MultiPolygon"):
+            continue
+        try:
+            w, h = _bbox_span(gj)
+        except (KeyError, ValueError, TypeError):
+            continue
+        if w < MIN_SPAN_DEG and h < MIN_SPAN_DEG:
+            continue
+        if w * h > best_area:
+            best, best_area = gj, w * h
+    return best
 
 
 def main():

@@ -417,7 +417,7 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
                     map_viewport = {"center": _c, "zoom": _z,
                                     "transition": "flyTo"}
                     clear_n = (clear_n or 0) + 1
-                    clear_drawn = {"action": "clear all", "n_clicks": clear_n}
+                    clear_drawn = {"action": "clear all", "mode": "remove", "n_clicks": clear_n}
                     new_editing, new_open = str(aid), True
         elif clicked and trig == "vas-add-open":
             new_open = not new_open
@@ -426,12 +426,12 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
                 form_vals = ["", None, "", "", "", "", "", "", ""]
                 ref_children = []
                 clear_n = (clear_n or 0) + 1
-                clear_drawn = {"action": "clear all", "n_clicks": clear_n}
+                clear_drawn = {"action": "clear all", "mode": "remove", "n_clicks": clear_n}
         elif clicked and trig == "vas-f-cancel":
             new_open, new_editing = False, None
             ref_children = []
             clear_n = (clear_n or 0) + 1
-            clear_drawn = {"action": "clear all", "n_clicks": clear_n}
+            clear_drawn = {"action": "clear all", "mode": "remove", "n_clicks": clear_n}
         elif clicked and trig == "vas-f-save":
             name = (f_name or "").strip()
             if not name or not f_cat:
@@ -466,7 +466,7 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
                 new_open, new_editing = False, None
                 ref_children = []          # wis de referentie-mal
                 clear_n = (clear_n or 0) + 1
-                clear_drawn = {"action": "clear all", "n_clicks": clear_n}   # wis de getekende laag
+                clear_drawn = {"action": "clear all", "mode": "remove", "n_clicks": clear_n}   # wis de getekende laag
     except ValueError as exc:
         banner, ok, new_open = str(exc), False, True
     except (ais_db.AisDbError,) as exc:
