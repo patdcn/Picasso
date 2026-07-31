@@ -531,8 +531,9 @@ def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
             else:
                 banner, ok, new_adding = (
                     f"{(nv_name or '').strip()} added to the fleet "
-                    f"(IMO {(nv_imo or '').strip()}). The aisstream collector "
-                    f"picks up its MMSI within 5 minutes.", True, False)
+                    f"(IMO {(nv_imo or '').strip()}). Positions appear once "
+                    f"the vessel is registered in the SeaVantage workspace "
+                    f"and the next 15-min poll runs.", True, False)
                 clear_new = True
     except (ais_db.AisDbError, sv_api.SvApiError) as exc:
         banner, ok = str(exc), False

@@ -5,7 +5,7 @@
 #
 # Required Dokploy environment variables for this project:
 #   POSTGRES_PASSWORD   database password (generate a strong one)
-#   AISSTREAM_KEY       aisstream.io API key
+#   SV_USER / SV_PASSWORD / SV_BASE_URL   SeaVantage API credentials
 #
 # The portal (picasso project) later reaches the DB over dokploy-network at
 # host "ais-db", DSN: postgresql://ais:<password>@ais-db:5432/ais
@@ -34,26 +34,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-
-  ais-collector:
-    build:
-      context: .
-      dockerfile: collector/Dockerfile
-    container_name: ais-collector
-    restart: unless-stopped
-    environment:
-      AIS_DSN: postgresql://ais:${POSTGRES_PASSWORD}@ais-db:5432/ais
-      AISSTREAM_KEY: ${AISSTREAM_KEY}
-      SAMPLE_SECONDS: "1800"   # 30 min downsample window
-      ROTATE_SECONDS: "300"    # MMSI chunk rotation (aisstream 50-MMSI cap)
-      FLEET_REFRESH: "300"
-      LATEST_THROTTLE: "60"
-      SPEED_GATE_KN: "50"
-    depends_on:
-      ais-db:
-        condition: service_healthy
-    networks:
-      - dokploy-network
 
   ais-sv-poller:
     build:

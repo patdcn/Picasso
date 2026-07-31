@@ -1,15 +1,21 @@
 # AIS Vessel Tracker — infrastructure (ZIP 1)
 
 Separate Dokploy Compose project. A picasso portal redeploy never touches
-the database or interrupts the collector.
+the database or interrupts the SeaVantage poller.
 
 ## Components
 
 | Service | Rol |
 |---|---|
 | `ais-db` | TimescaleDB (pg17), volume `ais_pgdata`, alleen intern netwerk |
-| `ais-collector` | Daemon: aisstream websocket → downsample 30 min → `positions` + `latest` |
+| `ais-sv-poller` | Daemon: SeaVantage fleet snapshot elke 15 min → `positions` + `latest` |
 | `ais-backup` | Nightly `pg_dump -Fc` om 03:00 UTC → `/data/backups` op `picasso_data` (14 d rotatie) |
+
+> **AIS-bron:** enkel SeaVantage (satelliet + terrestrisch, 15-min poll). De
+> voormalige `ais-collector` (aisstream websocket) is uitgefaseerd; de map
+> `ais/collector/` blijft in de repo als vangnet maar wordt niet meer
+> gedeployed. Historische aisstream-posities blijven in `positions`
+> (source-tag `aisstream`) — data is heilig.
 
 Schema: `fleet` (keyed op IMO), `positions` (hypertable, index op mmsi+ts,
 dedupe-index op mmsi+ts+source), `latest` (1 rij per vessel), `positions_hourly`
@@ -21,10 +27,12 @@ dedupe-index op mmsi+ts+source), `latest` (1 rij per vessel), `positions_hourly`
    compose path `ais/docker-compose.yml`, autodeploy aan.
 2. **Environment** in Dokploy voor dit project:
    - `POSTGRES_PASSWORD` = sterk wachtwoord (genereer, bewaar in je vault)
-   - `AISSTREAM_KEY` = jouw aisstream.io API key
+   - `SV_USER` / `SV_PASSWORD` = SeaVantage API-account
+   - `SV_BASE_URL` = SeaVantage API-host incl. `/api`
+   - `SV_CATEGORY_ID` = (optioneel) één fleet-categorie
 3. Deploy. Bij eerste start (leeg volume) draait `init/01_schema.sql`
    automatisch. Check `ais-db` logs op `create_hypertable` zonder errors.
-4. **Seed** — Dokploy terminal op `ais-collector`:
+4. **Seed** — Dokploy terminal op `ais-sv-poller`:
    ```
    python seed/seed_fleet.py
    ```
