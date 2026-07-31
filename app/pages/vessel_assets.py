@@ -53,6 +53,28 @@ _CAT_OPTIONS = [{"label": m["label"], "value": k}
                 for k, m in asset_db.CATEGORIES.items()]
 
 
+def _geom_centroid_zoom(gtype, geometry):
+    """Rough centroid + a sensible zoom for a geometry, to frame it on the
+    draw map."""
+    def pts(coords):
+        # a coordinate pair is [num, num]; recurse only into nesting
+        if coords and isinstance(coords[0], (int, float)):
+            yield coords
+            return
+        for c in coords:
+            yield from pts(c)
+    try:
+        xs = list(pts(geometry["coordinates"]))
+        lons = [p[0] for p in xs]; lats = [p[1] for p in xs]
+        center = [sum(lats) / len(lats), sum(lons) / len(lons)]
+        span = max(max(lons) - min(lons), max(lats) - min(lats), 0.001)
+        # crude: smaller span -> higher zoom
+        zoom = 6 if span > 2 else 8 if span > 0.3 else 11 if span > 0.03 else 13
+        return center, zoom
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return [52.45, 4.6], 8
+
+
 def _geom_summary(geom_type, geometry):
     try:
         if geom_type == "Point":
@@ -301,7 +323,9 @@ layout = html.Div(className="full-width-page", children=[
     Output("vas-form-title", "children"),
     Output("vas-fregion", "options"),
     Output("vas-fcountry", "options"),
-    Output("vas-draw-edit", "geojson"),
+    Output("vas-draw-context", "children"),
+    Output("vas-draw-map", "center"),
+    Output("vas-draw-map", "zoom"),
     Output("vas-f-name", "value"),
     Output("vas-f-cat", "value"),
     Output("vas-f-region", "value"),
@@ -344,7 +368,9 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
     new_pending, new_editing = None, editing
     new_open = bool(form_open) and can_edit
     form_vals = [dash.no_update] * 9
-    draw_seed = dash.no_update          # FeatureCollection to (pre)load, or []
+    ref_children = dash.no_update       # reference shape shown under drawing
+    map_center = dash.no_update
+    map_zoom = dash.no_update
 
     _MUT = ("vas-edit", "vas-del", "vas-del-confirm")
     try:
@@ -383,20 +409,18 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
                                  lat, lon, coords, country or "",
                                  locode or (_props or {}).get("wpi_number",
                                                               "")]
-                    draw_seed = {"type": "FeatureCollection", "features": [
-                        {"type": "Feature", "properties": {},
-                         "geometry": {"type": gtype,
-                                      "coordinates": geometry["coordinates"]}}]}
+                    ref_children = _reference_layer(gtype, geometry)
+                    map_center, map_zoom = _geom_centroid_zoom(gtype, geometry)
                     new_editing, new_open = str(aid), True
         elif clicked and trig == "vas-add-open":
             new_open = not new_open
             if new_open:
                 new_editing = None
                 form_vals = ["", None, "", "", "", "", "", "", ""]
-                draw_seed = {"type": "FeatureCollection", "features": []}
+                ref_children = []
         elif clicked and trig == "vas-f-cancel":
             new_open, new_editing = False, None
-            draw_seed = {"type": "FeatureCollection", "features": []}
+            ref_children = []
         elif clicked and trig == "vas-f-save":
             name = (f_name or "").strip()
             if not name or not f_cat:
@@ -444,13 +468,49 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
     except Exception as exc:
         return (_banner(str(exc), ok=False), "", None, None, None, False,
                 {"display": "none"}, "New asset", [], [], dash.no_update,
-                *[dash.no_update] * 9)
+                dash.no_update, dash.no_update, *[dash.no_update] * 9)
 
     style = {"display": "block"} if new_open else {"display": "none"}
     title = "Edit asset" if new_editing else "New asset"
     return (table, counter, _banner(banner, ok), new_pending, new_editing,
-            new_open, style, title, region_opts, country_opts, draw_seed,
-            *form_vals)
+            new_open, style, title, region_opts, country_opts, ref_children,
+            map_center, map_zoom, *form_vals)
+
+
+def _reference_layer(gtype, geometry):
+    """The asset's current shape, shown as a dashed highlight on the draw
+    map so the user can trace or adjust over it (EditControl.geojson is
+    read-only, so the original points are not draggable - this is the
+    visible guide)."""
+    ref = "#dc2626"
+    tip = dl.Tooltip("current shape (reference)")
+    if gtype == "Point":
+        lon, lat = geometry["coordinates"][:2]
+        return [dl.CircleMarker(center=[lat, lon], radius=8, color=ref,
+                                weight=2, fillColor=ref, fillOpacity=0.3,
+                                interactive=False, children=tip)]
+    if gtype in ("LineString", "MultiLineString"):
+        lines = ([geometry["coordinates"]] if gtype == "LineString"
+                 else geometry["coordinates"])
+        out = []
+        for line in lines:
+            out.append(dl.Polyline(positions=[[c[1], c[0]] for c in line],
+                                   color=ref, weight=3, opacity=0.7,
+                                   dashArray="6 6", interactive=False,
+                                   children=tip))
+        return out
+    if gtype in ("Polygon", "MultiPolygon"):
+        polys = ([geometry["coordinates"]] if gtype == "Polygon"
+                 else geometry["coordinates"])
+        out = []
+        for rings in polys:
+            if rings:
+                out.append(dl.Polygon(
+                    positions=[[c[1], c[0]] for c in rings[0]], color=ref,
+                    weight=2, opacity=0.8, fillColor=ref, fillOpacity=0.1,
+                    dashArray="6 6", interactive=False, children=tip))
+        return out
+    return []
 
 
 # --- draw-on-map panel -------------------------------------------------------
