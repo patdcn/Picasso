@@ -230,30 +230,6 @@ def _type_chips(rows, typefilter):
     return chips
 
 
-def _seamarks_toggle():
-    """Small layer button, top-right on the map, toggling the OpenSeaMap
-    seamark overlay on/off."""
-    return html.Div(
-        html.Button([html.Span("\u2693 ", style={"fontSize": "0.9rem"}),
-                     "Seamarks"], id="vtt-seamarks-btn", n_clicks=0,
-                    title="Toggle sea marks (buoys, lights, cables)",
-                    style={"padding": "5px 9px", "fontSize": "0.72rem",
-                           "border": f"1px solid {LINE}", "borderRadius": "6px",
-                           "background": "white", "cursor": "pointer",
-                           "color": "#475569", "fontWeight": "600",
-                           "boxShadow": "0 1px 4px rgba(0,0,0,0.15)"}),
-        style={"position": "absolute", "top": "10px", "right": "10px",
-               "zIndex": 1000})
-
-
-def _seamarks_tile(on):
-    if not on:
-        return []
-    return [dl.TileLayer(
-        url="https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",
-        attribution="© OpenSeaMap", opacity=1.0)]
-
-
 _NAV_LABELS = {0: "Underway (engine)", 1: "At anchor", 2: "Not under command",
                3: "Restricted manoeuvrability", 4: "Constrained by draught",
                5: "Moored", 6: "Aground", 7: "Fishing",
@@ -262,12 +238,12 @@ _NAV_LABELS = {0: "Underway (engine)", 1: "At anchor", 2: "Not under command",
 
 def _info_row(label, value):
     return html.Div([
-        html.Span(label, style={"color": "#64748b", "fontSize": "0.72rem",
-                                "flex": "0 0 118px"}),
-        html.Span(value, style={"fontSize": "0.76rem", "fontWeight": "600",
+        html.Span(label, style={"color": "#64748b", "fontSize": "0.64rem",
+                                "flex": "0 0 100px"}),
+        html.Span(value, style={"fontSize": "0.68rem", "fontWeight": "600",
                                 "color": "#0f172a"}),
-    ], style={"display": "flex", "alignItems": "baseline", "gap": "8px",
-              "padding": "2px 0"})
+    ], style={"display": "flex", "alignItems": "baseline", "gap": "6px",
+              "padding": "1px 0"})
 
 
 def _fmt_age(ts):
@@ -320,22 +296,22 @@ def _info_card(info):
     if info.get("imo"):
         rows.append(_info_row("IMO", str(info["imo"])))
 
-    style = {"position": "absolute", "left": "10px", "bottom": "220px",
+    style = {"position": "absolute", "left": "10px", "top": "10px",
              "zIndex": 1000, "background": "rgba(255,255,255,0.97)",
-             "border": f"1px solid {LINE}", "borderRadius": "10px",
-             "padding": "10px 14px", "width": "300px",
+             "border": f"1px solid {LINE}", "borderRadius": "8px",
+             "padding": "8px 11px", "width": "248px",
              "boxShadow": "0 2px 10px rgba(0,0,0,0.18)",
-             "maxHeight": f"calc({MAP_HEIGHT} - 260px)", "overflowY": "auto"}
+             "maxHeight": f"calc({MAP_HEIGHT} - 30px)", "overflowY": "auto"}
     header = html.Div([
         html.Span("Latest AIS information",
-                  style={"fontWeight": "700", "fontSize": "0.82rem",
+                  style={"fontWeight": "700", "fontSize": "0.74rem",
                          "flex": "1 1 auto"}),
     ], style={"display": "flex", "alignItems": "center",
-              "borderBottom": f"1px solid {LINE}", "paddingBottom": "6px",
-              "marginBottom": "4px"})
+              "borderBottom": f"1px solid {LINE}", "paddingBottom": "4px",
+              "marginBottom": "3px"})
     name = html.Div(info.get("name", ""),
-                    style={"fontWeight": "700", "fontSize": "0.9rem",
-                           "color": TEAL, "margin": "2px 0 6px"})
+                    style={"fontWeight": "700", "fontSize": "0.8rem",
+                           "color": TEAL, "margin": "1px 0 4px"})
     return style, [header, name, *rows]
 
 
@@ -407,7 +383,6 @@ layout = html.Div(className="full-width-page", children=[
     ], style={"marginBottom": "8px"}),
     dcc.Interval(id="vtt-tick", interval=900_000, n_intervals=0),  # 15 min kiosk refresh
     dcc.Store(id="vtt-selected", data=None),
-    dcc.Store(id="vtt-seamarks-on", data=False),
     dcc.Store(id="vtt-typefilter", data=None),
     dcc.Store(id="vtt-collapsed", data=[]),
     dcc.Store(id="vtt-overlays", data=map_overlays.default_state()),
@@ -433,13 +408,11 @@ layout = html.Div(className="full-width-page", children=[
                    children=[
                        dl.TileLayer(url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
                                     attribution="© OpenStreetMap contributors"),
-                       dl.LayerGroup(id="vtt-seamarks-layer"),
                        *[dl.LayerGroup(id={"type": "vtt-ovl-layer",
                                               "key": o["key"]})
                          for o in map_overlays.OVERLAYS],
                        dl.LayerGroup(id="vtt-layer"),
                    ]),
-            _seamarks_toggle(),
             html.Div(id="vtt-info", style={"display": "none"}),
             html.Button("\u2715", id="vtt-info-close", n_clicks=0,
                         title="Close",
@@ -605,11 +578,11 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
         info_style, info_children = _info_card(info)
     else:
         info_style, info_children = {"display": "none"}, []
-    close_style = ({"position": "absolute", "left": "292px",
-                    "bottom": f"calc({MAP_HEIGHT} - 250px)", "zIndex": 1001,
-                    "border": "none", "background": "white", "cursor": "pointer",
-                    "color": "#94a3b8", "fontSize": "0.85rem",
-                    "borderRadius": "4px", "padding": "2px 6px",
+    close_style = ({"position": "absolute", "left": "238px", "top": "12px",
+                    "zIndex": 1001, "border": "none", "background": "white",
+                    "cursor": "pointer", "color": "#94a3b8",
+                    "fontSize": "0.78rem", "borderRadius": "4px",
+                    "padding": "1px 5px",
                     "boxShadow": "0 1px 4px rgba(0,0,0,0.2)"}
                    if info_style.get("display") != "none"
                    else {"display": "none"})
@@ -702,24 +675,3 @@ def _overlays(_clicks, state):
     return layers, styles, labels, state
 
 
-# --- seamarks layer toggle ---------------------------------------------------
-@callback(
-    Output("vtt-seamarks-layer", "children"),
-    Output("vtt-seamarks-btn", "style"),
-    Output("vtt-seamarks-on", "data"),
-    Input("vtt-seamarks-btn", "n_clicks"),
-    State("vtt-seamarks-on", "data"),
-    prevent_initial_call=True,
-)
-def _toggle_seamarks(_n, is_on):
-    is_on = not bool(is_on)
-    base = {"padding": "5px 9px", "fontSize": "0.72rem",
-            "borderRadius": "6px", "cursor": "pointer", "fontWeight": "600",
-            "boxShadow": "0 1px 4px rgba(0,0,0,0.15)"}
-    if is_on:
-        style = {**base, "background": TEAL, "color": "white",
-                 "border": f"1px solid {TEAL}"}
-    else:
-        style = {**base, "background": "white", "color": "#475569",
-                 "border": f"1px solid {LINE}"}
-    return _seamarks_tile(is_on), style, is_on
