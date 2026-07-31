@@ -239,7 +239,7 @@ _NAV_LABELS = {0: "Underway (engine)", 1: "At anchor", 2: "Not under command",
 # Destination hyperlink target. VesselFinder's public /ports page is
 # searchable by UN/LOCODE; {loc} is substituted with the vessel's reported
 # destination LOCODE. Change this single line to point elsewhere if needed.
-PORT_LINK_TEMPLATE = "https://www.vesselfinder.com/ports?name={loc}"
+PORT_LINK_TEMPLATE = "https://www.vesselfinder.com/ports/{loc}"
 
 _INFO_CARD_H = 330       # vaste max-hoogte van de info-card (px)
 
@@ -327,7 +327,7 @@ def _info_card(info):
     if info.get("imo"):
         rows.append(_info_row("IMO", str(info["imo"])))
 
-    style = {"position": "absolute", "left": "52px", "bottom": "10px",
+    style = {"position": "absolute", "right": "10px", "bottom": "10px",
              "zIndex": 1000, "background": "rgba(255,255,255,0.97)",
              "border": f"1px solid {LINE}", "borderRadius": "8px",
              "padding": "8px 11px", "width": "248px",
@@ -611,7 +611,7 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
         info_style, info_children = {"display": "none"}, []
     # card-top zit op bottom(10) + hoogte(330) = 340px vanaf de kaart-onderkant.
     # Sluitknop net binnen de rechterbovenhoek van de card.
-    close_style = ({"position": "absolute", "left": "278px",
+    close_style = ({"position": "absolute", "right": "16px",
                     "bottom": f"{10 + _INFO_CARD_H - 24}px", "zIndex": 1001,
                     "border": "none", "background": "white",
                     "cursor": "pointer", "color": "#94a3b8",
