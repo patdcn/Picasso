@@ -325,8 +325,7 @@ layout = html.Div(className="full-width-page", children=[
     Output("vas-fregion", "options"),
     Output("vas-fcountry", "options"),
     Output("vas-draw-context", "children"),
-    Output("vas-draw-map", "center"),
-    Output("vas-draw-map", "zoom"),
+    Output("vas-draw-map", "viewport"),
     Output("vas-draw-edit", "editToolbar"),
     Output("vas-draw-clearn", "data"),
     Output("vas-f-name", "value"),
@@ -373,8 +372,7 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
     new_open = bool(form_open) and can_edit
     form_vals = [dash.no_update] * 9
     ref_children = dash.no_update       # reference shape shown under drawing
-    map_center = dash.no_update
-    map_zoom = dash.no_update
+    map_viewport = dash.no_update
     clear_drawn = dash.no_update         # editToolbar "clear all" payload
 
     _MUT = ("vas-edit", "vas-del", "vas-del-confirm")
@@ -415,7 +413,9 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
                                  locode or (_props or {}).get("wpi_number",
                                                               "")]
                     ref_children = _reference_layer(gtype, geometry)
-                    map_center, map_zoom = _geom_centroid_zoom(gtype, geometry)
+                    _c, _z = _geom_centroid_zoom(gtype, geometry)
+                    map_viewport = {"center": _c, "zoom": _z,
+                                    "transition": "flyTo"}
                     clear_n = (clear_n or 0) + 1
                     clear_drawn = {"action": "clear all", "n_clicks": clear_n}
                     new_editing, new_open = str(aid), True
@@ -482,14 +482,14 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
     except Exception as exc:
         return (_banner(str(exc), ok=False), "", None, None, None, False,
                 {"display": "none"}, "New asset", [], [], dash.no_update,
-                dash.no_update, dash.no_update, dash.no_update,
+                dash.no_update, dash.no_update,
                 dash.no_update, *[dash.no_update] * 9)
 
     style = {"display": "block"} if new_open else {"display": "none"}
     title = "Edit asset" if new_editing else "New asset"
     return (table, counter, _banner(banner, ok), new_pending, new_editing,
             new_open, style, title, region_opts, country_opts, ref_children,
-            map_center, map_zoom, clear_drawn, clear_n, *form_vals)
+            map_viewport, clear_drawn, clear_n, *form_vals)
 
 
 def _reference_layer(gtype, geometry):
