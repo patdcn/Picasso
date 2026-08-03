@@ -208,6 +208,23 @@ def region_from_position(lat, lon):
     return "Asia"
 
 
+def fleet_backfill_mmsi():
+    """Fill fleet.mmsi from the SeaVantage mapping (sv_ship) for vessels
+    that were added by IMO only. The tracker joins latest<->fleet on MMSI,
+    so a NULL fleet.mmsi hides the vessel's type/name from the map pages
+    even though SeaVantage already told us the MMSI. Fills NULLs only,
+    never overwrites, and skips an MMSI already claimed by another fleet
+    row (fleet.mmsi is UNIQUE). Returns the number of rows filled."""
+    rows = q("""UPDATE fleet f SET mmsi = s.mmsi
+                FROM sv_ship s
+                WHERE s.imo = f.imo AND f.mmsi IS NULL
+                  AND s.mmsi IS NOT NULL AND s.mmsi > 0
+                  AND NOT EXISTS (SELECT 1 FROM fleet f2
+                                  WHERE f2.mmsi = s.mmsi)
+                RETURNING f.imo""")
+    return len(rows or [])
+
+
 def fleet_auto_update_regions():
     """Refresh fleet.region from each vessel's last known position.
     Returns the number of vessels whose region changed."""

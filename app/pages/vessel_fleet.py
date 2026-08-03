@@ -555,6 +555,10 @@ def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
             pass    # SV onbereikbaar mag de pagina nooit blokkeren
 
     try:
+        n_filled = ais_db.fleet_backfill_mmsi()
+        if n_filled and banner is None:
+            banner, ok = (f"Filled MMSI for {n_filled} vessel(s) from the "
+                          f"SeaVantage registration.", True)
         n_regions = ais_db.fleet_auto_update_regions()
         n_dims = ais_db.fleet_auto_update_dims()
         if (n_regions or n_dims) and banner is None:
