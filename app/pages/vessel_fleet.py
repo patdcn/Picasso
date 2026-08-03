@@ -361,6 +361,8 @@ layout = html.Div(className="full-width-page", children=[
         html.Button("+ Add vessel", id="vtf-add-open", n_clicks=0,
                     style=_ADD_BTN_STYLE),
         html.Button("Refresh", id="vtf-refresh", n_clicks=0,
+                    title="Reload and sync registrations with the "
+                          "SeaVantage workspace",
                     style={**_BTN, "padding": "6px 14px", "marginLeft": "8px"}),
         dcc.Input(id="vtf-search", value="", debounce=True, type="text",
                   placeholder="Search name / owner / notes\u2026",
@@ -540,7 +542,11 @@ def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
     except Exception as exc:  # never kill the page
         banner, ok = f"Unexpected error: {exc}", False
 
-    if trig in (None, "vtf-refresh"):
+    # Workspace-sync ONLY on the explicit Refresh button. On page load the
+    # table renders straight from the local DB (kept fresh by the 15-min
+    # poller); the previous behaviour blocked first paint for up to 30 s on
+    # a slow SeaVantage response.
+    if trig == "vtf-refresh":
         try:
             sync_msg = _sync_with_workspace()
             if sync_msg and banner is None:
