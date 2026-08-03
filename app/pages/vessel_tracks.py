@@ -253,6 +253,65 @@ def _looks_like_locode(dest):
     return len(d) == 5 and d.isalpha()
 
 
+_EARTH_NM = 3440.065        # earth radius in nautical miles
+_EARTH_KM = 6371.0088       # earth radius in km
+
+
+def _haversine_leg(lat1, lon1, lat2, lon2, radius):
+    from math import radians, sin, cos, asin, sqrt
+    p1, p2 = radians(lat1), radians(lat2)
+    dp = radians(lat2 - lat1)
+    dl = radians(lon2 - lon1)
+    a = sin(dp / 2) ** 2 + cos(p1) * cos(p2) * sin(dl / 2) ** 2
+    return 2 * radius * asin(sqrt(a))
+
+
+def _line_length(coords):
+    """Total great-circle length of a [[lon,lat],...] line, in (NM, km)."""
+    nm = km = 0.0
+    for (lon1, lat1), (lon2, lat2) in zip(coords, coords[1:]):
+        nm += _haversine_leg(lat1, lon1, lat2, lon2, _EARTH_NM)
+        km += _haversine_leg(lat1, lon1, lat2, lon2, _EARTH_KM)
+    return nm, km
+
+
+def _measure_card(features):
+    """Info-corner card summarising drawn measure lines."""
+    lines = []
+    for f in (features or []):
+        g = (f or {}).get("geometry") or {}
+        if g.get("type") == "LineString" and len(g.get("coordinates", [])) >= 2:
+            lines.append(g["coordinates"])
+    if not lines:
+        return {"display": "none"}, []
+    total_nm = total_km = 0.0
+    rows = []
+    for i, coords in enumerate(lines, 1):
+        nm, km = _line_length(coords)
+        total_nm += nm
+        total_km += km
+        rows.append(html.Div(
+            f"Line {i}: {nm:.2f} NM  ·  {km:.2f} km",
+            style={"fontSize": "0.72rem", "padding": "1px 0"}))
+    if len(lines) > 1:
+        rows.append(html.Div(
+            f"Total: {total_nm:.2f} NM  ·  {total_km:.2f} km",
+            style={"fontSize": "0.74rem", "fontWeight": "700",
+                   "color": TEAL, "borderTop": f"1px solid {LINE}",
+                   "marginTop": "3px", "paddingTop": "3px"}))
+    style = {"position": "absolute", "right": "10px", "bottom": "10px",
+             "zIndex": 1000, "background": "rgba(255,255,255,0.97)",
+             "border": f"1px solid {LINE}", "borderRadius": "8px",
+             "padding": "8px 11px", "width": "210px",
+             "boxShadow": "0 2px 10px rgba(0,0,0,0.18)"}
+    header = html.Div(
+        html.Span("Measured distance",
+                  style={"fontWeight": "700", "fontSize": "0.74rem"}),
+        style={"borderBottom": f"1px solid {LINE}", "paddingBottom": "4px",
+               "marginBottom": "4px"})
+    return style, [header, *rows]
+
+
 def _info_row(label, value):
     return html.Div([
         html.Span(label, style={"color": "#64748b", "fontSize": "0.64rem",
@@ -414,6 +473,8 @@ layout = html.Div(className="full-width-page", children=[
     ], style={"marginBottom": "8px"}),
     dcc.Interval(id="vtt-tick", interval=900_000, n_intervals=0),  # 15 min kiosk refresh
     dcc.Store(id="vtt-selected", data=None),
+    dcc.Store(id="vtt-measure-on", data=False),
+    dcc.Store(id="vtt-measure-clearn", data=0),
     dcc.Store(id="vtt-typefilter", data=None),
     dcc.Store(id="vtt-collapsed", data=[]),
     dcc.Store(id="vtt-overlays", data=map_overlays.default_state()),
@@ -443,7 +504,37 @@ layout = html.Div(className="full-width-page", children=[
                                               "key": o["key"]})
                          for o in map_overlays.OVERLAYS],
                        dl.LayerGroup(id="vtt-layer"),
-                   ]),
+                       dl.FeatureGroup(id="vtt-measure-fg", children=[
+                           dl.EditControl(
+                               id="vtt-measure-edit",
+                               position="topright",
+                               draw={"polyline": True, "polygon": False,
+                                     "rectangle": False, "circle": False,
+                                     "marker": False, "circlemarker": False},
+                               edit={"edit": False, "remove": True}),
+                       ]),
+                   ], eventHandlers={"mousemove": {"variable": "vtMeasure.onMove"}}),
+            html.Button("\U0001f4cf Measure", id="vtt-measure-btn",
+                        n_clicks=0, title="Draw a line to measure distance",
+                        style={"position": "absolute", "top": "10px",
+                               "right": "10px", "zIndex": 1000,
+                               "padding": "5px 9px", "fontSize": "0.72rem",
+                               "border": f"1px solid {LINE}",
+                               "borderRadius": "6px", "background": "white",
+                               "cursor": "pointer", "color": "#475569",
+                               "fontWeight": "600",
+                               "boxShadow": "0 1px 4px rgba(0,0,0,0.15)"}),
+            html.Div(id="vtt-hovercoord",
+                     style={"position": "absolute", "bottom": "6px",
+                            "left": "50%", "transform": "translateX(-50%)",
+                            "zIndex": 1000, "background": "rgba(255,255,255,0.9)",
+                            "border": f"1px solid {LINE}", "borderRadius": "5px",
+                            "padding": "2px 8px", "fontSize": "0.68rem",
+                            "fontFamily": "monospace", "color": "#334155",
+                            "pointerEvents": "none"}),
+            html.Div(id="vtt-measure-card", style={"display": "none"}),
+            html.Button("clear", id="vtt-measure-clear", n_clicks=0,
+                        style={"display": "none"}),
             html.Div(id="vtt-info", style={"display": "none"}),
             html.Button("\u2715", id="vtt-info-close", n_clicks=0,
                         title="Close",
@@ -580,8 +671,13 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
 
     if new_selected is None:
         layer = _vessel_markers(rows)
-        # re-fit on initial load, deselect and filter change - not on refresh
-        if rows and (trig is None or not is_refresh or filter_changed):
+        # Re-fit to all vessels ONLY on initial load or a filter change.
+        # A deselect (clicking the map / sidebar to go back) keeps the
+        # current view - the user stays zoomed where they were.
+        deselect_triggers = ("vtt-map", "vtt-info-close")
+        was_deselect = trig in deselect_triggers or (
+            isinstance(trig, dict) and trig.get("type") == "vtt-veslsel")
+        if rows and (trig is None or filter_changed) and not was_deselect:
             bounds = _pad_bounds(
                 [[min(r[3] for r in rows), min(r[4] for r in rows)],
                  [max(r[3] for r in rows), max(r[4] for r in rows)]])
@@ -709,3 +805,85 @@ def _overlays(_clicks, state):
     return layers, styles, labels, state
 
 
+
+
+
+# --- measure tool -----------------------------------------------------------
+@callback(
+    Output("vtt-measure-btn", "style"),
+    Output("vtt-measure-on", "data"),
+    Output("vtt-measure-edit", "draw"),
+    Output("vtt-measure-edit", "editToolbar"),
+    Output("vtt-measure-clearn", "data"),
+    Output("vtt-measure-card", "style", allow_duplicate=True),
+    Output("vtt-measure-card", "children", allow_duplicate=True),
+    Input("vtt-measure-btn", "n_clicks"),
+    State("vtt-measure-on", "data"),
+    State("vtt-measure-clearn", "data"),
+    prevent_initial_call=True,
+)
+def _toggle_measure(_n, is_on, clearn):
+    is_on = not bool(is_on)
+    base = {"position": "absolute", "top": "10px", "right": "10px",
+            "zIndex": 1000, "padding": "5px 9px", "fontSize": "0.72rem",
+            "borderRadius": "6px", "cursor": "pointer", "fontWeight": "600",
+            "boxShadow": "0 1px 4px rgba(0,0,0,0.15)"}
+    if is_on:
+        btn = {**base, "background": TEAL, "color": "white",
+               "border": f"1px solid {TEAL}"}
+        draw = {"polyline": True, "polygon": False, "rectangle": False,
+                "circle": False, "marker": False, "circlemarker": False}
+        return (btn, True, draw, dash.no_update, dash.no_update,
+                dash.no_update, dash.no_update)
+    # turning OFF: disable drawing, clear drawn lines + card
+    btn = {**base, "background": "white", "color": "#475569",
+           "border": f"1px solid {LINE}"}
+    draw = {"polyline": False, "polygon": False, "rectangle": False,
+            "circle": False, "marker": False, "circlemarker": False}
+    clearn = (clearn or 0) + 1
+    clear = {"action": "clear all", "mode": "remove", "n_clicks": clearn}
+    return (btn, False, draw, clear, clearn, {"display": "none"}, [])
+    # (clear-knop verbergt zich via _measure_result bij lege card)
+
+
+_CLEAR_BTN_ON = {"position": "absolute", "right": "16px", "bottom": "150px",
+                 "zIndex": 1001, "border": "none", "background": "white",
+                 "cursor": "pointer", "color": TEAL, "fontSize": "0.68rem",
+                 "textDecoration": "underline", "borderRadius": "4px",
+                 "padding": "1px 5px",
+                 "boxShadow": "0 1px 4px rgba(0,0,0,0.2)"}
+
+
+@callback(
+    Output("vtt-measure-card", "style"),
+    Output("vtt-measure-card", "children"),
+    Output("vtt-measure-clear", "style"),
+    Input("vtt-measure-edit", "geojson"),
+    Input("vtt-measure-edit", "action"),
+    State("vtt-measure-on", "data"),
+    prevent_initial_call=True,
+)
+def _measure_result(fc, _action, is_on):
+    if not is_on:
+        return dash.no_update, dash.no_update, dash.no_update
+    feats = (fc or {}).get("features") or []
+    style, children = _measure_card(feats)
+    clear_style = (_CLEAR_BTN_ON if style.get("display") != "none"
+                   else {"display": "none"})
+    return style, children, clear_style
+
+
+@callback(
+    Output("vtt-measure-edit", "editToolbar", allow_duplicate=True),
+    Output("vtt-measure-clearn", "data", allow_duplicate=True),
+    Output("vtt-measure-card", "style", allow_duplicate=True),
+    Output("vtt-measure-card", "children", allow_duplicate=True),
+    Output("vtt-measure-clear", "style", allow_duplicate=True),
+    Input("vtt-measure-clear", "n_clicks"),
+    State("vtt-measure-clearn", "data"),
+    prevent_initial_call=True,
+)
+def _measure_clear(_n, clearn):
+    clearn = (clearn or 0) + 1
+    clear = {"action": "clear all", "mode": "remove", "n_clicks": clearn}
+    return clear, clearn, {"display": "none"}, [], {"display": "none"}
