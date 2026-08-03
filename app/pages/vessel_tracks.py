@@ -275,6 +275,14 @@ def _line_length(coords):
     return nm, km
 
 
+_CLEAR_BTN_ON = {"position": "absolute", "right": "16px", "bottom": "150px",
+                 "zIndex": 1001, "border": "none", "background": "white",
+                 "cursor": "pointer", "color": TEAL, "fontSize": "0.68rem",
+                 "textDecoration": "underline", "borderRadius": "4px",
+                 "padding": "1px 5px",
+                 "boxShadow": "0 1px 4px rgba(0,0,0,0.2)"}
+
+
 def _measure_card(features):
     """Info-corner card summarising drawn measure lines."""
     lines = []
@@ -473,7 +481,6 @@ layout = html.Div(className="full-width-page", children=[
     ], style={"marginBottom": "8px"}),
     dcc.Interval(id="vtt-tick", interval=900_000, n_intervals=0),  # 15 min kiosk refresh
     dcc.Store(id="vtt-selected", data=None),
-    dcc.Store(id="vtt-measure-on", data=False),
     dcc.Store(id="vtt-measure-clearn", data=0),
     dcc.Store(id="vtt-typefilter", data=None),
     dcc.Store(id="vtt-collapsed", data=[]),
@@ -513,17 +520,18 @@ layout = html.Div(className="full-width-page", children=[
                                      "marker": False, "circlemarker": False},
                                edit={"edit": False, "remove": True}),
                        ]),
+                       # draw-props zijn STATISCH; de Leaflet.Draw polyline-knop
+                       # staat permanent rechtsboven (zelfde patroon als de
+                       # werkende Map Features kaart). Geen draw-prop toggling.
                    ], eventHandlers={"mousemove": {"variable": "vtMeasure.onMove"}}),
-            html.Button("\U0001f4cf Measure", id="vtt-measure-btn",
-                        n_clicks=0, title="Draw a line to measure distance",
-                        style={"position": "absolute", "top": "10px",
-                               "right": "10px", "zIndex": 1000,
-                               "padding": "5px 9px", "fontSize": "0.72rem",
-                               "border": f"1px solid {LINE}",
-                               "borderRadius": "6px", "background": "white",
-                               "cursor": "pointer", "color": "#475569",
-                               "fontWeight": "600",
-                               "boxShadow": "0 1px 4px rgba(0,0,0,0.15)"}),
+            html.Div("\U0001f4cf Draw a line \u2192 distance",
+                     style={"position": "absolute", "top": "10px",
+                            "right": "52px", "zIndex": 1000,
+                            "padding": "4px 8px", "fontSize": "0.68rem",
+                            "border": f"1px solid {LINE}",
+                            "borderRadius": "6px",
+                            "background": "rgba(255,255,255,0.9)",
+                            "color": "#475569", "pointerEvents": "none"}),
             html.Div(id="vtt-hovercoord",
                      style={"position": "absolute", "bottom": "6px",
                             "left": "50%", "transform": "translateX(-50%)",
@@ -808,64 +816,15 @@ def _overlays(_clicks, state):
 
 
 
-# --- measure tool -----------------------------------------------------------
-@callback(
-    Output("vtt-measure-btn", "style"),
-    Output("vtt-measure-on", "data"),
-    Output("vtt-measure-edit", "draw"),
-    Output("vtt-measure-edit", "editToolbar"),
-    Output("vtt-measure-clearn", "data"),
-    Output("vtt-measure-card", "style", allow_duplicate=True),
-    Output("vtt-measure-card", "children", allow_duplicate=True),
-    Input("vtt-measure-btn", "n_clicks"),
-    State("vtt-measure-on", "data"),
-    State("vtt-measure-clearn", "data"),
-    prevent_initial_call=True,
-)
-def _toggle_measure(_n, is_on, clearn):
-    is_on = not bool(is_on)
-    base = {"position": "absolute", "top": "10px", "right": "10px",
-            "zIndex": 1000, "padding": "5px 9px", "fontSize": "0.72rem",
-            "borderRadius": "6px", "cursor": "pointer", "fontWeight": "600",
-            "boxShadow": "0 1px 4px rgba(0,0,0,0.15)"}
-    if is_on:
-        btn = {**base, "background": TEAL, "color": "white",
-               "border": f"1px solid {TEAL}"}
-        draw = {"polyline": True, "polygon": False, "rectangle": False,
-                "circle": False, "marker": False, "circlemarker": False}
-        return (btn, True, draw, dash.no_update, dash.no_update,
-                dash.no_update, dash.no_update)
-    # turning OFF: disable drawing, clear drawn lines + card
-    btn = {**base, "background": "white", "color": "#475569",
-           "border": f"1px solid {LINE}"}
-    draw = {"polyline": False, "polygon": False, "rectangle": False,
-            "circle": False, "marker": False, "circlemarker": False}
-    clearn = (clearn or 0) + 1
-    clear = {"action": "clear all", "mode": "remove", "n_clicks": clearn}
-    return (btn, False, draw, clear, clearn, {"display": "none"}, [])
-    # (clear-knop verbergt zich via _measure_result bij lege card)
-
-
-_CLEAR_BTN_ON = {"position": "absolute", "right": "16px", "bottom": "150px",
-                 "zIndex": 1001, "border": "none", "background": "white",
-                 "cursor": "pointer", "color": TEAL, "fontSize": "0.68rem",
-                 "textDecoration": "underline", "borderRadius": "4px",
-                 "padding": "1px 5px",
-                 "boxShadow": "0 1px 4px rgba(0,0,0,0.2)"}
-
-
 @callback(
     Output("vtt-measure-card", "style"),
     Output("vtt-measure-card", "children"),
     Output("vtt-measure-clear", "style"),
     Input("vtt-measure-edit", "geojson"),
     Input("vtt-measure-edit", "action"),
-    State("vtt-measure-on", "data"),
     prevent_initial_call=True,
 )
-def _measure_result(fc, _action, is_on):
-    if not is_on:
-        return dash.no_update, dash.no_update, dash.no_update
+def _measure_result(fc, _action):
     feats = (fc or {}).get("features") or []
     style, children = _measure_card(feats)
     clear_style = (_CLEAR_BTN_ON if style.get("display") != "none"
