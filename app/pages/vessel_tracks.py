@@ -486,6 +486,7 @@ layout = html.Div(className="full-width-page", children=[
     ], style={"marginBottom": "8px"}),
     dcc.Interval(id="vtt-tick", interval=900_000, n_intervals=0),  # 15 min kiosk refresh
     dcc.Store(id="vtt-selected", data=None),
+    dcc.Store(id="vtt-measure-drawing", data=False),
     dcc.Store(id="vtt-typefilter", data=None),
     dcc.Store(id="vtt-collapsed", data=[]),
     dcc.Store(id="vtt-overlays", data=map_overlays.default_state()),
@@ -603,10 +604,11 @@ layout = html.Div(className="full-width-page", children=[
     State("vtt-typefilter", "data"),
     State("vtt-collapsed", "data"),
     State("vtt-col", "style"),
+    State("vtt-measure-drawing", "data"),
 )
 def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
             _sels, _chips, _grps,
-            selected, typefilter, collapsed, col_style):
+            selected, typefilter, collapsed, col_style, measure_drawing):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
     is_refresh = trig in (None, "vtt-tick")
@@ -641,6 +643,10 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
 
     if trig == "vtt-info-close":
         new_selected = None
+    elif trig == "vtt-map" and measure_drawing:
+        # A map click while the measure tool is in drawing mode is a vertex
+        # click, not a deselect - keep the vessel and its track.
+        new_selected = selected
     else:
         new_selected = _resolve_selection(trig, clicked, selected)
 
@@ -695,11 +701,11 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
                        if sel_row else (None, None, None))
         layer, bounds = _track_layer(mmsi, name, points, hdg, cg, ln)
         if bounds is not None and not is_refresh:
-            # Fit the whole track; cap zoom so a short/stationary track does
-            # not zoom in absurdly far - the track is the max zoom extent.
+            # Fit the whole track tightly so it fills the view. Small padding,
+            # maxZoom high enough that a compact track still zooms right in.
             viewport = {"bounds": _pad_bounds(bounds),
                         "transition": "flyToBounds",
-                        "options": {"padding": [40, 40], "maxZoom": 14}}
+                        "options": {"padding": [25, 25], "maxZoom": 16}}
         subtitle = (f"{name} — {len(points)} points, last 30 days · " + subtitle)
 
     if new_selected:
@@ -826,3 +832,22 @@ def _measure_result(fc, _action):
     return style, children
 
 
+
+
+
+# --- measure drawing-mode tracker -------------------------------------------
+# Tells _render whether the measure tool is actively drawing, so a map click
+# that places a vertex is not mistaken for a deselect.
+@callback(
+    Output("vtt-measure-drawing", "data"),
+    Input("vtt-measure-edit", "action"),
+    prevent_initial_call=True,
+)
+def _measure_drawing(action):
+    a = action or {}
+    atype = a.get("type") if isinstance(a, dict) else None
+    if atype == "drawstart":
+        return True
+    if atype in ("drawstop", "draw:created", "draw:deleted"):
+        return False
+    return dash.no_update
