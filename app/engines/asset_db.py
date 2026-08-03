@@ -19,7 +19,7 @@ from app.engines.ais_db import AisDbError, q
 CATEGORIES = {
     "platform":      {"label": "Platforms / Jackets", "kind": "point",
                       "color": "#374151"},
-    "well":          {"label": "Subsea Wells", "kind": "point",
+    "well":          {"label": "Well / Sidetap", "kind": "point",
                       "color": "#eab308"},
     "power_cable":   {"label": "Power Cables", "kind": "line",
                       "color": "#2563eb", "dash": "6 6"},
