@@ -595,7 +595,6 @@ layout = html.Div(className="full-width-page", children=[
     Input("vtt-col-toggle2", "n_clicks"),
     Input("vtt-map", "n_clicks"),
     Input("vtt-info-close", "n_clicks"),
-    State("vtt-measure-edit", "geojson"),
     Input({"type": "vtt-dot", "mmsi": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-sel", "mmsi": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-tf", "val": dash.ALL}, "n_clicks"),
@@ -607,7 +606,7 @@ layout = html.Div(className="full-width-page", children=[
 )
 def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
             _sels, _chips, _grps,
-            measure_fc, selected, typefilter, collapsed, col_style):
+            selected, typefilter, collapsed, col_style):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
     is_refresh = trig in (None, "vtt-tick")
@@ -640,18 +639,8 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
         filter_changed = new_filter != typefilter
         typefilter = new_filter
 
-    # If the measure tool has lines drawn, a click on the map is almost
-    # certainly the user drawing/finishing a line - do NOT let it deselect
-    # the vessel and wipe the track.
-    # A vessel click (vtt-sel / vtt-dot) ALWAYS resolves normally - selection
-    # must never be blocked. Only a bare map click (which would deselect) is
-    # suppressed while finished measure lines are present, so drawing/adjusting
-    # a line does not wipe the vessel track.
-    measure_has_lines = bool(_measure_features(measure_fc))
     if trig == "vtt-info-close":
         new_selected = None
-    elif trig == "vtt-map" and measure_has_lines:
-        new_selected = selected            # keep vessel + track, ignore deselect
     else:
         new_selected = _resolve_selection(trig, clicked, selected)
 
@@ -710,7 +699,7 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
             # not zoom in absurdly far - the track is the max zoom extent.
             viewport = {"bounds": _pad_bounds(bounds),
                         "transition": "flyToBounds",
-                        "options": {"padding": [40, 40], "maxZoom": 12}}
+                        "options": {"padding": [40, 40], "maxZoom": 14}}
         subtitle = (f"{name} — {len(points)} points, last 30 days · " + subtitle)
 
     if new_selected:
