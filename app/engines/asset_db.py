@@ -127,6 +127,71 @@ def list_assets(category=None, region=None, search=None, country=None):
     return q(sql, params or None)
 
 
+# Whitelisted sort keys for the admin table. User input never reaches the
+# SQL directly - unknown keys fall back to the default.
+LIST_SORTS = {
+    "cat":          "category, name",
+    "name":         "name",
+    "updated_desc": "updated_at DESC",
+    "operator":     "operator NULLS LAST, name",
+    "region":       "region NULLS LAST, name",
+    "country":      "country NULLS LAST, name",
+    "source":       "source, name",
+}
+
+
+def list_assets_summary(category=None, region=None, search=None, country=None,
+                        sort="cat", page=1, page_size=150):
+    """Slim listing for the admin table. Unlike list_assets this ships NO
+    geometry or properties payload - the point-count summary is computed in
+    SQL (pipelines/telecom routes hold thousands of coordinates that the
+    table only ever turned into a counter). Sorted via the LIST_SORTS
+    whitelist and paginated. Returns (rows, total): rows are
+    (id, category, name, operator, region, country, un_locode, geom_type,
+     npts, pt_lat, pt_lon, source, updated_at)."""
+    order = LIST_SORTS.get(sort) or LIST_SORTS["cat"]
+    sql = """SELECT id, category, name, operator, region, country,
+                    un_locode, geom_type,
+                    CASE geom_type
+                      WHEN 'Point' THEN 1
+                      WHEN 'LineString' THEN
+                           jsonb_array_length(geometry->'coordinates')
+                      WHEN 'MultiLineString' THEN
+                           (SELECT COALESCE(sum(
+                                jsonb_array_length(seg)), 0)::int
+                            FROM jsonb_array_elements(
+                                geometry->'coordinates') seg)
+                      WHEN 'Polygon' THEN
+                           jsonb_array_length(geometry->'coordinates'->0)
+                      WHEN 'MultiPolygon' THEN
+                           jsonb_array_length(geometry->'coordinates')
+                      ELSE 0
+                    END,
+                    CASE WHEN geom_type='Point'
+                         THEN (geometry->'coordinates'->>1)::float END,
+                    CASE WHEN geom_type='Point'
+                         THEN (geometry->'coordinates'->>0)::float END,
+                    source, updated_at,
+                    count(*) OVER () AS total_rows
+             FROM map_asset WHERE active"""
+    params = []
+    if category:
+        sql += " AND category=%s"; params.append(category)
+    if region:
+        sql += " AND region=%s"; params.append(region)
+    if country:
+        sql += " AND country=%s"; params.append(country)
+    if search:
+        sql += " AND (name ILIKE %s OR operator ILIKE %s)"
+        params += [f"%{search}%", f"%{search}%"]
+    sql += f" ORDER BY {order} LIMIT %s OFFSET %s"
+    page = max(1, int(page or 1))
+    params += [page_size, (page - 1) * page_size]
+    rows = q(sql, params)
+    total = rows[0][-1] if rows else 0
+    return [r[:-1] for r in rows], total
+
+
 def assets_for_map(category):
     return q("""SELECT name, operator, region, country, un_locode,
                        geom_type, geometry, properties

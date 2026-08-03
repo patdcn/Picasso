@@ -93,16 +93,43 @@ def _geom_summary(geom_type, geometry):
     return geom_type
 
 
+_PAGE_SIZE = 150
+
+
+def _geom_summary_slim(gtype, npts, pt_lat, pt_lon):
+    """Same summaries as _geom_summary, but from the SQL-computed counts -
+    no geometry payload needed."""
+    if gtype == "Point" and pt_lat is not None:
+        return f"{pt_lat:.4f}, {pt_lon:.4f}"
+    if gtype in ("LineString", "MultiLineString"):
+        return f"route · {npts} pts"
+    if gtype == "Polygon":
+        return f"shape · {npts} pts"
+    if gtype == "MultiPolygon":
+        return f"shape · {npts} parts"
+    return gtype
+
+
 def _build_table(pending_delete, can_edit, search, fcat, fregion,
-                 fcountry=None):
-    rows = asset_db.list_assets(category=fcat or None, region=fregion or None,
-                                search=search or None,
-                                country=fcountry or None)
+                 fcountry=None, sort="cat", page=1):
+    page = max(1, int(page or 1))
+    kw = dict(category=fcat or None, region=fregion or None,
+              search=search or None, country=fcountry or None,
+              sort=sort or "cat", page_size=_PAGE_SIZE)
+    rows, total = asset_db.list_assets_summary(page=page, **kw)
+    if not rows and page > 1:
+        # Beyond the last page (filter narrowed the set, or Next past the
+        # end). An empty page carries no window-count, so fetch page 1 for
+        # the total, then land on the real last page.
+        rows, total = asset_db.list_assets_summary(page=1, **kw)
+        page = max(1, -(-total // _PAGE_SIZE))
+        if page > 1:
+            rows, total = asset_db.list_assets_summary(page=page, **kw)
     headers = ["Name", "Category", "Region", "Country", "Geometry",
                "Operator", "Source", "Updated", "Action"]
     body = []
     for (aid, cat, name, operator, region, country, locode, gtype,
-         geometry, _props, source, updated) in rows:
+         npts, pt_lat, pt_lon, source, updated) in rows:
         meta = asset_db.CATEGORIES.get(cat, {"label": cat, "color": MUTED})
         if not can_edit:
             action = html.Span("\u2014", style={"color": "#c0c5cc"},
@@ -133,7 +160,8 @@ def _build_table(pending_delete, can_edit, search, fcat, fregion,
             html.Td(region or "\u2014", style=_CELL),
             html.Td(country or "\u2014", style=_CELL,
                     title=f"UN/LOCODE: {locode}" if locode else None),
-            html.Td(_geom_summary(gtype, geometry), style=_CELL),
+            html.Td(_geom_summary_slim(gtype, npts, pt_lat, pt_lon),
+                    style=_CELL),
             html.Td(operator or "\u2014",
                     style={**_CELL, "maxWidth": "200px", "overflow": "hidden",
                            "textOverflow": "ellipsis"}, title=operator),
@@ -152,8 +180,14 @@ def _build_table(pending_delete, can_edit, search, fcat, fregion,
                    style={"borderCollapse": "collapse", "width": "100%"}),
         style={"maxHeight": "62vh", "overflow": "auto",
                "border": f"1px solid {LINE}", "borderRadius": "8px"})
-    counter = f"{len(rows)} assets shown"
-    return table, counter
+    pages = max(1, -(-total // _PAGE_SIZE))
+    if total <= _PAGE_SIZE:
+        counter = f"{total} assets shown"
+    else:
+        start = (page - 1) * _PAGE_SIZE + 1
+        counter = (f"{start}\u2013{start + len(rows) - 1} of {total} assets"
+                   f" \u00b7 page {page}/{pages}")
+    return table, counter, page
 
 
 def _banner(msg, ok=True):
@@ -197,6 +231,23 @@ layout = html.Div(className="full-width-page", children=[
                      style={"width": "150px", "display": "inline-block",
                             "verticalAlign": "middle", "marginLeft": "8px",
                             "fontSize": "0.8rem"}),
+        dcc.Dropdown(id="vas-fsort", clearable=False, value="cat",
+                     options=[
+                         {"label": "Sort: category", "value": "cat"},
+                         {"label": "Sort: name", "value": "name"},
+                         {"label": "Sort: last updated", "value": "updated_desc"},
+                         {"label": "Sort: operator", "value": "operator"},
+                         {"label": "Sort: region", "value": "region"},
+                         {"label": "Sort: country", "value": "country"},
+                         {"label": "Sort: source", "value": "source"},
+                     ],
+                     style={"width": "170px", "display": "inline-block",
+                            "verticalAlign": "middle", "marginLeft": "8px",
+                            "fontSize": "0.8rem"}),
+        html.Button("\u2039 Prev", id="vas-pg-prev", n_clicks=0,
+                    style={**_BTN, "marginLeft": "14px"}),
+        html.Button("Next \u203a", id="vas-pg-next", n_clicks=0,
+                    style={**_BTN, "marginLeft": "5px"}),
         html.Span(id="vas-counter",
                   style={"marginLeft": "14px", "color": MUTED}),
     ], style={"margin": "6px 0 4px", "display": "flex",
@@ -308,6 +359,7 @@ layout = html.Div(className="full-width-page", children=[
     dcc.Store(id="vas-form-open", data=False),
     dcc.Store(id="vas-draw-open", data=False),
     dcc.Store(id="vas-draw-seed", data=None),   # geometry to preload on edit
+    dcc.Store(id="vas-page", data=1),
     dcc.Store(id="vas-draw-clearn", data=0),    # monotonic clear-all counter
     dcc.Loading(html.Div(id="vas-content"), type="default"),
 ])
@@ -337,6 +389,7 @@ layout = html.Div(className="full-width-page", children=[
     Output("vas-f-coords", "value"),
     Output("vas-f-country", "value"),
     Output("vas-f-code", "value"),
+    Output("vas-page", "data"),
     Input("vas-refresh", "n_clicks"),
     Input("vas-add-open", "n_clicks"),
     Input("vas-f-save", "n_clicks"),
@@ -349,6 +402,9 @@ layout = html.Div(className="full-width-page", children=[
     Input({"type": "vas-del", "aid": dash.ALL}, "n_clicks"),
     Input({"type": "vas-del-confirm", "aid": dash.ALL}, "n_clicks"),
     Input({"type": "vas-del-cancel", "aid": dash.ALL}, "n_clicks"),
+    Input("vas-fsort", "value"),
+    Input("vas-pg-prev", "n_clicks"),
+    Input("vas-pg-next", "n_clicks"),
     State("vas-f-name", "value"), State("vas-f-cat", "value"),
     State("vas-f-region", "value"), State("vas-f-operator", "value"),
     State("vas-f-lat", "value"), State("vas-f-lon", "value"),
@@ -358,12 +414,13 @@ layout = html.Div(className="full-width-page", children=[
     State("vas-editing", "data"),
     State("vas-form-open", "data"),
     State("vas-draw-clearn", "data"),
+    State("vas-page", "data"),
 )
 def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
-             _e, _d, _dc, _dx,
+             _e, _d, _dc, _dx, fsort, _pgp, _pgn,
              f_name, f_cat, f_region, f_operator, f_lat, f_lon, f_coords,
              f_country, f_code,
-             pending, editing, form_open, clear_n):
+             pending, editing, form_open, clear_n, page):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
     can_edit = auth.may_edit_params(auth.current_user(), PAGE_PATH)
@@ -475,21 +532,32 @@ def _actions(_r, _ao, _fs, _fc, search, fcat, fregion, fcountry,
         banner, ok = f"Unexpected error: {exc}", False
 
     try:
-        table, counter = _build_table(new_pending, can_edit, search, fcat,
-                                      fregion, fcountry)
+        # paging: filters/sort/refresh restart at page 1; prev/next step;
+        # every other action (save, delete, edit) stays on the current page.
+        page = max(1, int(page or 1))
+        if trig in ("vas-search", "vas-fcat", "vas-fregion", "vas-fcountry",
+                    "vas-fsort", "vas-refresh"):
+            page = 1
+        elif trig == "vas-pg-prev":
+            page = max(1, page - 1)
+        elif trig == "vas-pg-next":
+            page = page + 1
+        table, counter, page = _build_table(new_pending, can_edit, search,
+                                            fcat, fregion, fcountry,
+                                            fsort, page)
         region_opts = asset_db.regions()
         country_opts = asset_db.countries()
     except Exception as exc:
         return (_banner(str(exc), ok=False), "", None, None, None, False,
                 {"display": "none"}, "New asset", [], [], dash.no_update,
                 dash.no_update, dash.no_update,
-                dash.no_update, *[dash.no_update] * 9)
+                dash.no_update, *[dash.no_update] * 9, dash.no_update)
 
     style = {"display": "block"} if new_open else {"display": "none"}
     title = "Edit asset" if new_editing else "New asset"
     return (table, counter, _banner(banner, ok), new_pending, new_editing,
             new_open, style, title, region_opts, country_opts, ref_children,
-            map_viewport, clear_drawn, clear_n, *form_vals)
+            map_viewport, clear_drawn, clear_n, *form_vals, page)
 
 
 def _reference_layer(gtype, geometry):
