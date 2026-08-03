@@ -518,20 +518,12 @@ layout = html.Div(className="full-width-page", children=[
                                draw={"polyline": True, "polygon": False,
                                      "rectangle": False, "circle": False,
                                      "marker": False, "circlemarker": False},
-                               edit={"edit": False, "remove": True}),
+                               edit={"edit": True, "remove": True}),
                        ]),
                        # draw-props zijn STATISCH; de Leaflet.Draw polyline-knop
                        # staat permanent rechtsboven (zelfde patroon als de
                        # werkende Map Features kaart). Geen draw-prop toggling.
                    ], eventHandlers={"mousemove": {"variable": "vtMeasure.onMove"}}),
-            html.Div("\U0001f4cf Draw a line \u2192 distance",
-                     style={"position": "absolute", "top": "10px",
-                            "right": "52px", "zIndex": 1000,
-                            "padding": "4px 8px", "fontSize": "0.68rem",
-                            "border": f"1px solid {LINE}",
-                            "borderRadius": "6px",
-                            "background": "rgba(255,255,255,0.9)",
-                            "color": "#475569", "pointerEvents": "none"}),
             html.Div(id="vtt-hovercoord",
                      style={"position": "absolute", "bottom": "6px",
                             "left": "50%", "transform": "translateX(-50%)",
@@ -649,11 +641,15 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
     # If the measure tool has lines drawn, a click on the map is almost
     # certainly the user drawing/finishing a line - do NOT let it deselect
     # the vessel and wipe the track.
-    measure_active = bool((measure_fc or {}).get("features"))
+    # A vessel click (vtt-sel / vtt-dot) ALWAYS resolves normally - selection
+    # must never be blocked. Only a bare map click (which would deselect) is
+    # suppressed while finished measure lines are present, so drawing/adjusting
+    # a line does not wipe the vessel track.
+    measure_has_lines = bool((measure_fc or {}).get("features"))
     if trig == "vtt-info-close":
         new_selected = None
-    elif trig == "vtt-map" and measure_active:
-        new_selected = selected            # keep vessel + track while drawing
+    elif trig == "vtt-map" and measure_has_lines:
+        new_selected = selected            # keep vessel + track, ignore deselect
     else:
         new_selected = _resolve_selection(trig, clicked, selected)
 
