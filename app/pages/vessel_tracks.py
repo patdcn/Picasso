@@ -266,6 +266,19 @@ def _haversine_leg(lat1, lon1, lat2, lon2, radius):
     return 2 * radius * asin(sqrt(a))
 
 
+def _measure_features(fc):
+    """EditControl.geojson may arrive as a FeatureCollection dict, a bare
+    list of features, or None depending on state. Return a list of features
+    in all cases."""
+    if not fc:
+        return []
+    if isinstance(fc, dict):
+        return fc.get("features") or []
+    if isinstance(fc, list):
+        return fc
+    return []
+
+
 def _line_length(coords):
     """Total great-circle length of a [[lon,lat],...] line, in (NM, km)."""
     nm = km = 0.0
@@ -273,14 +286,6 @@ def _line_length(coords):
         nm += _haversine_leg(lat1, lon1, lat2, lon2, _EARTH_NM)
         km += _haversine_leg(lat1, lon1, lat2, lon2, _EARTH_KM)
     return nm, km
-
-
-_CLEAR_BTN_ON = {"position": "absolute", "right": "16px", "bottom": "150px",
-                 "zIndex": 1001, "border": "none", "background": "white",
-                 "cursor": "pointer", "color": TEAL, "fontSize": "0.68rem",
-                 "textDecoration": "underline", "borderRadius": "4px",
-                 "padding": "1px 5px",
-                 "boxShadow": "0 1px 4px rgba(0,0,0,0.2)"}
 
 
 def _measure_card(features):
@@ -481,7 +486,6 @@ layout = html.Div(className="full-width-page", children=[
     ], style={"marginBottom": "8px"}),
     dcc.Interval(id="vtt-tick", interval=900_000, n_intervals=0),  # 15 min kiosk refresh
     dcc.Store(id="vtt-selected", data=None),
-    dcc.Store(id="vtt-measure-clearn", data=0),
     dcc.Store(id="vtt-typefilter", data=None),
     dcc.Store(id="vtt-collapsed", data=[]),
     dcc.Store(id="vtt-overlays", data=map_overlays.default_state()),
@@ -533,8 +537,6 @@ layout = html.Div(className="full-width-page", children=[
                             "fontFamily": "monospace", "color": "#334155",
                             "pointerEvents": "none"}),
             html.Div(id="vtt-measure-card", style={"display": "none"}),
-            html.Button("clear", id="vtt-measure-clear", n_clicks=0,
-                        style={"display": "none"}),
             html.Div(id="vtt-info", style={"display": "none"}),
             html.Button("\u2715", id="vtt-info-close", n_clicks=0,
                         title="Close",
@@ -645,7 +647,7 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
     # must never be blocked. Only a bare map click (which would deselect) is
     # suppressed while finished measure lines are present, so drawing/adjusting
     # a line does not wipe the vessel track.
-    measure_has_lines = bool((measure_fc or {}).get("features"))
+    measure_has_lines = bool(_measure_features(measure_fc))
     if trig == "vtt-info-close":
         new_selected = None
     elif trig == "vtt-map" and measure_has_lines:
@@ -825,30 +827,13 @@ def _overlays(_clicks, state):
 @callback(
     Output("vtt-measure-card", "style"),
     Output("vtt-measure-card", "children"),
-    Output("vtt-measure-clear", "style"),
     Input("vtt-measure-edit", "geojson"),
     Input("vtt-measure-edit", "action"),
     prevent_initial_call=True,
 )
 def _measure_result(fc, _action):
-    feats = (fc or {}).get("features") or []
+    feats = _measure_features(fc)
     style, children = _measure_card(feats)
-    clear_style = (_CLEAR_BTN_ON if style.get("display") != "none"
-                   else {"display": "none"})
-    return style, children, clear_style
+    return style, children
 
 
-@callback(
-    Output("vtt-measure-edit", "editToolbar", allow_duplicate=True),
-    Output("vtt-measure-clearn", "data", allow_duplicate=True),
-    Output("vtt-measure-card", "style", allow_duplicate=True),
-    Output("vtt-measure-card", "children", allow_duplicate=True),
-    Output("vtt-measure-clear", "style", allow_duplicate=True),
-    Input("vtt-measure-clear", "n_clicks"),
-    State("vtt-measure-clearn", "data"),
-    prevent_initial_call=True,
-)
-def _measure_clear(_n, clearn):
-    clearn = (clearn or 0) + 1
-    clear = {"action": "clear all", "mode": "remove", "n_clicks": clearn}
-    return clear, clearn, {"display": "none"}, [], {"display": "none"}
