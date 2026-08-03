@@ -486,7 +486,7 @@ layout = html.Div(className="full-width-page", children=[
     ], style={"marginBottom": "8px"}),
     dcc.Interval(id="vtt-tick", interval=900_000, n_intervals=0),  # 15 min kiosk refresh
     dcc.Store(id="vtt-selected", data=None),
-    dcc.Store(id="vtt-measure-drawing", data=False),
+    dcc.Store(id="vtt-mapclick", data=None),
     dcc.Store(id="vtt-typefilter", data=None),
     dcc.Store(id="vtt-collapsed", data=[]),
     dcc.Store(id="vtt-overlays", data=map_overlays.default_state()),
@@ -507,6 +507,7 @@ layout = html.Div(className="full-width-page", children=[
         html.Div([
             dl.Map(id="vtt-map", preferCanvas=True,
                    center=[30, 10], zoom=3, n_clicks=0,
+                   zoomSnap=0.25,
                    style={"width": "100%", "height": MAP_HEIGHT,
                           "borderRadius": "8px", "border": f"1px solid {LINE}"},
                    children=[
@@ -528,7 +529,15 @@ layout = html.Div(className="full-width-page", children=[
                        # draw-props zijn STATISCH; de Leaflet.Draw polyline-knop
                        # staat permanent rechtsboven (zelfde patroon als de
                        # werkende Map Features kaart). Geen draw-prop toggling.
-                   ], eventHandlers={"mousemove": {"variable": "vtMeasure.onMove"}}),
+                   ], eventHandlers={
+                       "mousemove": {"variable": "vtMeasure.onMove"},
+                       "draw:drawstart": {"variable": "vtMeasure.onModeStart"},
+                       "draw:drawstop": {"variable": "vtMeasure.onModeStop"},
+                       "draw:editstart": {"variable": "vtMeasure.onModeStart"},
+                       "draw:editstop": {"variable": "vtMeasure.onModeStop"},
+                       "draw:deletestart": {"variable": "vtMeasure.onModeStart"},
+                       "draw:deletestop": {"variable": "vtMeasure.onModeStop"},
+                   }),
             html.Div(id="vtt-hovercoord",
                      style={"position": "absolute", "bottom": "6px",
                             "left": "50%", "transform": "translateX(-50%)",
@@ -594,7 +603,7 @@ layout = html.Div(className="full-width-page", children=[
     Input("vtt-search", "value"),
     Input("vtt-col-toggle", "n_clicks"),
     Input("vtt-col-toggle2", "n_clicks"),
-    Input("vtt-map", "n_clicks"),
+    Input("vtt-mapclick", "data"),
     Input("vtt-info-close", "n_clicks"),
     Input({"type": "vtt-dot", "mmsi": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-sel", "mmsi": dash.ALL}, "n_clicks"),
@@ -604,11 +613,10 @@ layout = html.Div(className="full-width-page", children=[
     State("vtt-typefilter", "data"),
     State("vtt-collapsed", "data"),
     State("vtt-col", "style"),
-    State("vtt-measure-drawing", "data"),
 )
 def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
             _sels, _chips, _grps,
-            selected, typefilter, collapsed, col_style, measure_drawing):
+            selected, typefilter, collapsed, col_style):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
     is_refresh = trig in (None, "vtt-tick")
@@ -643,10 +651,6 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
 
     if trig == "vtt-info-close":
         new_selected = None
-    elif trig == "vtt-map" and measure_drawing:
-        # A map click while the measure tool is in drawing mode is a vertex
-        # click, not a deselect - keep the vessel and its track.
-        new_selected = selected
     else:
         new_selected = _resolve_selection(trig, clicked, selected)
 
@@ -683,7 +687,7 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
         # Re-fit to all vessels ONLY on initial load or a filter change.
         # A deselect (clicking the map / sidebar to go back) keeps the
         # current view - the user stays zoomed where they were.
-        deselect_triggers = ("vtt-map", "vtt-info-close")
+        deselect_triggers = ("vtt-mapclick", "vtt-info-close")
         was_deselect = trig in deselect_triggers or (
             isinstance(trig, dict) and trig.get("type") == "vtt-veslsel")
         if rows and (trig is None or filter_changed) and not was_deselect:
@@ -737,7 +741,7 @@ def _resolve_selection(trig, clicked, current):
     keep on refresh."""
     if not clicked:
         return current
-    if trig == "vtt-map":
+    if trig == "vtt-mapclick":
         return None
     if isinstance(trig, dict) and trig.get("type") in ("vtt-dot", "vtt-sel"):
         mmsi = trig.get("mmsi")
@@ -835,19 +839,24 @@ def _measure_result(fc, _action):
 
 
 
-# --- measure drawing-mode tracker -------------------------------------------
-# Tells _render whether the measure tool is actively drawing, so a map click
-# that places a vertex is not mistaken for a deselect.
-@callback(
-    Output("vtt-measure-drawing", "data"),
-    Input("vtt-measure-edit", "action"),
+
+
+# Map clicks are filtered client-side before they can deselect: while the
+# measure tool is drawing/editing/deleting, or when the click landed on a
+# marker, track line or drawn shape, the click is swallowed. Only a genuine
+# empty-sea click reaches _render as a deselect.
+clientside_callback(
+    """
+    function(n) {
+        if (!n) { return window.dash_clientside.no_update; }
+        var m = window.vtMeasure || {};
+        if (m.drawing || m.clickOnFeature) {
+            return window.dash_clientside.no_update;
+        }
+        return n;
+    }
+    """,
+    Output("vtt-mapclick", "data"),
+    Input("vtt-map", "n_clicks"),
     prevent_initial_call=True,
 )
-def _measure_drawing(action):
-    a = action or {}
-    atype = a.get("type") if isinstance(a, dict) else None
-    if atype == "drawstart":
-        return True
-    if atype in ("drawstop", "draw:created", "draw:deleted"):
-        return False
-    return dash.no_update
