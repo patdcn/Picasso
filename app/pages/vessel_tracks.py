@@ -601,6 +601,7 @@ layout = html.Div(className="full-width-page", children=[
     Input("vtt-col-toggle2", "n_clicks"),
     Input("vtt-map", "n_clicks"),
     Input("vtt-info-close", "n_clicks"),
+    State("vtt-measure-edit", "geojson"),
     Input({"type": "vtt-dot", "mmsi": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-sel", "mmsi": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-tf", "val": dash.ALL}, "n_clicks"),
@@ -611,7 +612,8 @@ layout = html.Div(className="full-width-page", children=[
     State("vtt-col", "style"),
 )
 def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
-            _sels, _chips, _grps, selected, typefilter, collapsed, col_style):
+            _sels, _chips, _grps,
+            measure_fc, selected, typefilter, collapsed, col_style):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
     is_refresh = trig in (None, "vtt-tick")
@@ -644,8 +646,14 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
         filter_changed = new_filter != typefilter
         typefilter = new_filter
 
+    # If the measure tool has lines drawn, a click on the map is almost
+    # certainly the user drawing/finishing a line - do NOT let it deselect
+    # the vessel and wipe the track.
+    measure_active = bool((measure_fc or {}).get("features"))
     if trig == "vtt-info-close":
         new_selected = None
+    elif trig == "vtt-map" and measure_active:
+        new_selected = selected            # keep vessel + track while drawing
     else:
         new_selected = _resolve_selection(trig, clicked, selected)
 
@@ -700,9 +708,11 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
                        if sel_row else (None, None, None))
         layer, bounds = _track_layer(mmsi, name, points, hdg, cg, ln)
         if bounds is not None and not is_refresh:
+            # Fit the whole track; cap zoom so a short/stationary track does
+            # not zoom in absurdly far - the track is the max zoom extent.
             viewport = {"bounds": _pad_bounds(bounds),
                         "transition": "flyToBounds",
-                        "options": {"padding": [40, 40]}}
+                        "options": {"padding": [40, 40], "maxZoom": 12}}
         subtitle = (f"{name} — {len(points)} points, last 30 days · " + subtitle)
 
     if new_selected:
