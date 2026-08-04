@@ -149,7 +149,7 @@ _QC_PY_SORTS = {
 
 
 def _positions_qc_chain(mmsi=None, t_from=None, t_to=None, source=None,
-                        threshold_kn=30.0, suspect_only=False,
+                        threshold_kn=30.0, suspect_only=False, bbox=None,
                         sort="ts_desc", page=1, page_size=200):
     """Chain-mode listing (see _chain_flags). Fetches the ordered fixes
     for the filter window, runs the per-vessel chain in Python and pages
@@ -185,6 +185,10 @@ def _positions_qc_chain(mmsi=None, t_from=None, t_to=None, source=None,
         i = j
     if suspect_only:
         rows = [r for r in rows if r[11]]
+    if bbox:
+        la0, la1, lo0, lo1 = bbox
+        rows = [r for r in rows
+                if la0 <= r[3] <= la1 and lo0 <= r[4] <= lo1]
     key, rev = _QC_PY_SORTS.get(sort) or _QC_PY_SORTS["ts_desc"]
     rows.sort(key=key, reverse=rev)
     total = len(rows)
@@ -211,7 +215,7 @@ def qc_sources():
 
 def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
                  threshold_kn=30.0, suspect_only=False, mode="chain",
-                 sort="ts_desc", page=1, page_size=200):
+                 bbox=None, sort="ts_desc", page=1, page_size=200):
     """Paged QC listing of raw position fixes. Each row carries distance,
     time gap and implied speed versus the vessel's PREVIOUS fix inside the
     filter window (equirectangular approx). A row is flagged SUSPECT via
@@ -234,14 +238,17 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
     and exit of a multi-fix excursion (satellite gaps dilute implied
     speeds, and sequences look calm inside - deleting the flagged entry
     re-exposes the next corrupt fix, so a sequence peels off row by row).
-    suspect_only filters to flagged rows. Sort via QC_SORTS whitelist.
+    suspect_only filters to flagged rows. bbox=(lat_min, lat_max, lon_min,
+    lon_max) limits the LISTING to the map viewport - flags are always
+    computed over the full filtered set first, so zooming the map can
+    never change the verdict. Sort via QC_SORTS whitelist.
     Returns (rows, total): rows are (ts, mmsi, name, lat, lon, sog,
     nav_status, source, dist_nm, dt_min, impl_kn, suspect)."""
     if mode == "chain":
         return _positions_qc_chain(mmsi=mmsi, t_from=t_from, t_to=t_to,
                                    source=source, threshold_kn=threshold_kn,
-                                   suspect_only=suspect_only, sort=sort,
-                                   page=page, page_size=page_size)
+                                   suspect_only=suspect_only, bbox=bbox,
+                                   sort=sort, page=page, page_size=page_size)
     order = QC_SORTS.get(sort) or QC_SORTS["ts_desc"]
     thr = float(threshold_kn or 30.0)
     any_mode = "TRUE" if mode == "any" else "FALSE"
@@ -312,8 +319,15 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
                dist_nm, dt_min, impl_kn, suspect,
                count(*) OVER () AS total_rows
         FROM flagged"""
+    outer = []
     if suspect_only:
-        sql += " WHERE suspect"
+        outer.append("suspect")
+    if bbox:
+        outer.append("lat BETWEEN %s AND %s AND lon BETWEEN %s AND %s")
+        la0, la1, lo0, lo1 = bbox
+        params += [la0, la1, lo0, lo1]
+    if outer:
+        sql += " WHERE " + " AND ".join(outer)
     page = max(1, int(page or 1))
     sql += f" ORDER BY {order} LIMIT %s OFFSET %s"
     params += [page_size, (page - 1) * page_size]
