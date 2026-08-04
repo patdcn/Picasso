@@ -201,7 +201,7 @@ def _positions_qc_chain(mmsi=None, t_from=None, t_to=None, source=None,
     if source:
         where.append("p.source = %s"); params.append(source)
     raw = q(f"""SELECT p.ts, p.mmsi, f.name, p.lat, p.lon, p.sog,
-                       p.nav_status, p.source
+                       p.nav_status, p.source, p.cog, p.heading
                 FROM positions p LEFT JOIN fleet f ON f.mmsi = p.mmsi
                 WHERE {' AND '.join(where)}
                 ORDER BY p.mmsi, p.ts""", params)
@@ -215,7 +215,7 @@ def _positions_qc_chain(mmsi=None, t_from=None, t_to=None, source=None,
         flags = _chain_flags([(r[0], r[3], r[4]) for r in group], thr)
         for r, (susp, d, dt, v) in zip(group, flags):
             rows.append((r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7],
-                         d, dt, v, susp))
+                         d, dt, v, susp, r[8], r[9]))
         i = j
     if suspect_only:
         rows = [r for r in rows if r[11]]
@@ -277,7 +277,7 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
     computed over the full filtered set first, so zooming the map can
     never change the verdict. Sort via QC_SORTS whitelist.
     Returns (rows, total): rows are (ts, mmsi, name, lat, lon, sog,
-    nav_status, source, dist_nm, dt_min, impl_kn, suspect)."""
+    nav_status, source, dist_nm, dt_min, impl_kn, suspect, cog, heading)."""
     if mode == "chain":
         return _positions_qc_chain(mmsi=mmsi, t_from=t_from, t_to=t_to,
                                    source=source, threshold_kn=threshold_kn,
@@ -298,6 +298,7 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
     sql = f"""
         WITH base AS (
             SELECT p.ts, p.mmsi, p.lat, p.lon, p.sog, p.nav_status, p.source,
+                   p.cog, p.heading,
                    lag(p.ts)   OVER w AS pts,
                    lag(p.lat)  OVER w AS plat,
                    lag(p.lon)  OVER w AS plon,
@@ -334,7 +335,7 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
             FROM base b LEFT JOIN fleet f ON f.mmsi = b.mmsi
         ), final AS (
             SELECT ts, mmsi, name, lat, lon, sog, nav_status, source,
-                   dist_nm, dt_min,
+                   cog, heading, dist_nm, dt_min,
                    CASE WHEN dt_min > 0 THEN dist_nm / (dt_min / 60.0)
                    END AS impl_in,
                    CASE WHEN ndt_min > 0 THEN ndist_nm / (ndt_min / 60.0)
@@ -342,7 +343,7 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
             FROM calc
         ), flagged AS (
             SELECT ts, mmsi, name, lat, lon, sog, nav_status, source,
-                   dist_nm, dt_min, impl_in AS impl_kn,
+                   cog, heading, dist_nm, dt_min, impl_in AS impl_kn,
                    CASE
                      WHEN {any_mode}
                           THEN (COALESCE(impl_in, 0) > {thr}
@@ -356,7 +357,7 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
             FROM final
         )
         SELECT ts, mmsi, name, lat, lon, sog, nav_status, source,
-               dist_nm, dt_min, impl_kn, suspect,
+               dist_nm, dt_min, impl_kn, suspect, cog, heading,
                count(*) OVER () AS total_rows
         FROM flagged"""
     outer = []

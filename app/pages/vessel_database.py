@@ -168,13 +168,18 @@ def _parse_rid(rid):
     return int(mmsi), datetime.fromisoformat(ts), source
 
 
-def _qc_table(rows, can_edit, pending, threshold):
+def _qc_table(rows, can_edit, pending, threshold, allcols=False):
+    extra = (["MMSI", "COG", "Hdg", "Nav status", "Source"]
+             if allcols else [])
     headers = (["Sel"] if can_edit else []) + [
-        "Time (UTC)", "Vessel", "Lat", "Lon", "SOG",
+        "Time (UTC)", "Vessel", "Lat", "Lon", "SOG"] + extra + [
         "\u0394 prev", "\u0394t", "Implied", "Action"]
     body = []
-    for (ts, mmsi, name, lat, lon, sog, nav, source,
-         dist_nm, dt_min, impl_kn, suspect) in rows:
+    for row in rows:
+        (ts, mmsi, name, lat, lon, sog, nav, source,
+         dist_nm, dt_min, impl_kn, suspect) = row[:12]
+        cog = row[12] if len(row) > 12 else None
+        heading = row[13] if len(row) > 13 else None
         rid = _rid(mmsi, ts, source)
         if can_edit:
             if pending == rid:
@@ -210,6 +215,16 @@ def _qc_table(rows, can_edit, pending, threshold):
             html.Td(f"{lon:.5f}", style={**_CELL, **hl}),
             html.Td(f"{sog:.1f}" if sog is not None else "—",
                     style={**_CELL, **hl}),
+        ] + ([
+            html.Td(str(mmsi), style={**_CELL, **hl, "color": MUTED}),
+            html.Td(f"{cog:.0f}\u00b0" if cog is not None else "—",
+                    style={**_CELL, **hl}),
+            html.Td(f"{heading:.0f}\u00b0"
+                    if heading is not None and heading != 511 else "—",
+                    style={**_CELL, **hl}),
+            html.Td(ais_db.nav_status_label(nav), style={**_CELL, **hl}),
+            html.Td(source, style={**_CELL, **hl, "color": MUTED}),
+        ] if allcols else []) + [
             html.Td(f"{dist_nm:,.1f} NM" if dist_nm is not None else "—",
                     style={**_CELL, **hl}),
             html.Td(f"{dt_min:,.0f} min" if dt_min is not None else "—",
@@ -226,7 +241,7 @@ def _qc_table(rows, can_edit, pending, threshold):
 
 
 def _build_qc(vessel, d_from, d_to, source, suspect_on, kn, sort, mode,
-              page, can_edit, pending, bbox=None):
+              page, can_edit, pending, bbox=None, allcols=False):
     t_from = datetime.fromisoformat(d_from) if d_from else None
     t_to = (datetime.fromisoformat(d_to) + timedelta(days=1)) if d_to else None
     kn = float(kn) if kn not in (None, "") else 30.0
@@ -249,7 +264,8 @@ def _build_qc(vessel, d_from, d_to, source, suspect_on, kn, sort, mode,
         start = (page - 1) * _PAGE_SIZE + 1
         counter = (f"{start}\u2013{start + len(rows) - 1} of {total:,} fixes"
                    f" \u00b7 page {page}/{pages}")
-    return _qc_table(rows, can_edit, pending, kn), counter, page
+    return (_qc_table(rows, can_edit, pending, kn, allcols=allcols),
+            counter, page)
 
 
 _MAP_MAX_MARKERS = 1500     # boven dit aantal: accepted-punten uitdunnen
@@ -357,12 +373,6 @@ def layout():
                                     end_date=today.isoformat(),
                                     style={"marginLeft": "10px",
                                            "verticalAlign": "middle"}),
-                dcc.Dropdown(id="vtdb-source", placeholder="Source",
-                             clearable=True,
-                             style={"width": "140px", "fontSize": "0.82rem",
-                                    "display": "inline-block",
-                                    "verticalAlign": "middle",
-                                    "marginLeft": "10px"}),
                 dcc.Dropdown(id="vtdb-sort", clearable=False, value="ts_desc",
                              options=[
                                  {"label": "Sort: newest first",
@@ -419,6 +429,13 @@ def layout():
                 html.Span("kn implied speed", style={"color": MUTED,
                                                      "fontSize": "0.8rem",
                                                      "marginLeft": "6px"}),
+                dcc.Checklist(id="vtdb-allcols",
+                              options=[{"label": " show all data",
+                                        "value": "on"}],
+                              value=[],
+                              style={"display": "inline-block",
+                                     "fontSize": "0.85rem",
+                                     "marginLeft": "14px"}),
                 dcc.Checklist(id="vtdb-viewfilter",
                               options=[{"label": " limit table to map view",
                                         "value": "on"}],
@@ -596,7 +613,6 @@ def _backup_download(n, name):
     Output("vtdb-pending", "data"),
     Output("vtdb-stamp", "children"),
     Output("vtdb-vessel", "options"),
-    Output("vtdb-source", "options"),
     Output("vtdb-map-layer", "children"),
     Output("vtdb-map", "viewport"),
     Output("vtdb-map-hint", "style"),
@@ -608,7 +624,7 @@ def _backup_download(n, name):
     Input("vtdb-vessel", "value"),
     Input("vtdb-dates", "start_date"),
     Input("vtdb-dates", "end_date"),
-    Input("vtdb-source", "value"),
+    Input("vtdb-allcols", "value"),
     Input("vtdb-suspect", "value"),
     Input("vtdb-kn", "value"),
     Input("vtdb-sort", "value"),
@@ -628,10 +644,11 @@ def _backup_download(n, name):
     State({"type": "vtdb-chk", "rid": dash.ALL}, "value"),
     State("vtdb-bulk", "data"),
 )
-def _qc(_r, vessel, d_from, d_to, source, suspect, kn, sort, mode,
+def _qc(_r, vessel, d_from, d_to, allcols, suspect, kn, sort, mode,
         _pp, _pn, _d, _dc, _dx, viewfilter, map_bounds,
         _ds, _dsc, _dsx, page, pending, _chk, bulk):
     trig = ctx.triggered_id
+    source = None                     # bronfilter is uit de UI verwijderd
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
     stamp = "updated " + datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
     user = auth.current_user()
@@ -656,7 +673,7 @@ def _qc(_r, vessel, d_from, d_to, source, suspect, kn, sort, mode,
     # Pending bulk-confirm survives triggers that don't invalidate the
     # selection (map bounds, paging, per-row delete flow). It is cleared by
     # Cancel, by execution, and by any filter change further below.
-    _RESET_BULK = ("vtdb-vessel", "vtdb-dates", "vtdb-source", "vtdb-suspect",
+    _RESET_BULK = ("vtdb-vessel", "vtdb-dates", "vtdb-suspect",
                    "vtdb-kn", "vtdb-sort", "vtdb-mode", "vtdb-refresh",
                    "vtdb-viewfilter", "vtdb-delselx", "vtdb-delselc",
                    "vtdb-delsel")
@@ -702,7 +719,7 @@ def _qc(_r, vessel, d_from, d_to, source, suspect, kn, sort, mode,
             new_pending = None
 
     page = max(1, int(page or 1))
-    if trig in ("vtdb-vessel", "vtdb-dates", "vtdb-source", "vtdb-suspect",
+    if trig in ("vtdb-vessel", "vtdb-dates", "vtdb-suspect",
                 "vtdb-kn", "vtdb-sort", "vtdb-mode", "vtdb-refresh",
                 "vtdb-viewfilter", "vtdb-map"):
         page = 1
@@ -715,16 +732,16 @@ def _qc(_r, vessel, d_from, d_to, source, suspect, kn, sort, mode,
     try:
         v_opts = [{"label": name, "value": str(mmsi)}
                   for mmsi, name in ais_db.qc_vessels()]
-        s_opts = [{"label": s, "value": s} for s in ais_db.qc_sources()]
         bbox = (_parse_bounds(map_bounds)
                 if (viewfilter and map_bounds) else None)
         table, counter, page = _build_qc(vessel, d_from, d_to, source,
                                          bool(suspect), kn, sort, mode, page,
-                                         can_edit, new_pending, bbox=bbox)
+                                         can_edit, new_pending, bbox=bbox,
+                                         allcols=bool(allcols))
         if bbox:
             counter = f"{counter} \u00b7 map view"
         _MAP_SCOPE = (None, "vtdb-refresh", "vtdb-vessel", "vtdb-dates",
-                      "vtdb-source", "vtdb-kn", "vtdb-mode")
+                      "vtdb-kn", "vtdb-mode")
         deleted_now = (trig == "vtdb-delselc"
                        or (isinstance(trig, dict)
                            and trig.get("type") == "vtdb-delc"))
@@ -743,14 +760,14 @@ def _qc(_r, vessel, d_from, d_to, source, suspect, kn, sort, mode,
             # bounds/paginering/sort/selectie: kaart blijft onaangeroerd
             map_children = map_viewport = hint_style = no_update
     except ais_db.AisDbError as exc:
-        return (_error_card(exc), "", None, page, None, stamp, [], [],
+        return (_error_card(exc), "", None, page, None, stamp, [],
                 [], no_update, no_update, None, "", {"display": "none"},
                 {"display": "none"})
     except Exception as exc:  # never kill the page
         return (_error_card(f"Unexpected error: {exc}"), "", None, page,
-                None, stamp, [], [], [], no_update, no_update, None, "",
+                None, stamp, [], [], no_update, no_update, None, "",
                 {"display": "none"}, {"display": "none"})
 
     return (table, counter, _banner(banner, ok), page, new_pending, stamp,
-            v_opts, s_opts, map_children, map_viewport, hint_style,
+            v_opts, map_children, map_viewport, hint_style,
             new_bulk, bulk_label, bulk_c_style, bulk_x_style)
