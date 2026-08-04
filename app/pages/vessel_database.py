@@ -18,6 +18,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import dash
+import dash_leaflet as dl
 from dash import html, dcc, Input, Output, State, callback, ctx, no_update
 
 from app import auth
@@ -112,8 +113,8 @@ def _parse_rid(rid):
 
 
 def _qc_table(rows, can_edit, pending, threshold):
-    headers = ["Time (UTC)", "Vessel", "MMSI", "Lat", "Lon", "SOG",
-               "\u0394 prev", "\u0394t", "Implied", "Source", "Action"]
+    headers = ["Time (UTC)", "Vessel", "Lat", "Lon", "SOG",
+               "\u0394 prev", "\u0394t", "Implied", "Action"]
     body = []
     for (ts, mmsi, name, lat, lon, sog, nav, source,
          dist_nm, dt_min, impl_kn, suspect) in rows:
@@ -141,7 +142,6 @@ def _qc_table(rows, can_edit, pending, threshold):
         body.append(html.Tr([
             html.Td(_fmt_ts(ts), style={**_CELL, **hl}),
             html.Td(name or "—", style={**_CELL, **hl}),
-            html.Td(str(mmsi), style={**_CELL, **hl, "color": MUTED}),
             html.Td(f"{lat:.5f}", style={**_CELL, **hl}),
             html.Td(f"{lon:.5f}", style={**_CELL, **hl}),
             html.Td(f"{sog:.1f}" if sog is not None else "—",
@@ -154,7 +154,6 @@ def _qc_table(rows, can_edit, pending, threshold):
                     style={**_CELL, **hl,
                            **({"color": RED, "fontWeight": "700"}
                               if suspect else {})}),
-            html.Td(source, style={**_CELL, **hl, "color": MUTED}),
             html.Td(action, style={**_CELL, **hl}),
         ]))
     head = html.Tr([html.Th(h, style=_TH) for h in headers])
@@ -187,6 +186,79 @@ def _build_qc(vessel, d_from, d_to, source, suspect_on, kn, sort, mode,
         counter = (f"{start}\u2013{start + len(rows) - 1} of {total:,} fixes"
                    f" \u00b7 page {page}/{pages}")
     return _qc_table(rows, can_edit, pending, kn), counter, page
+
+
+_MAP_MAX_MARKERS = 1500     # boven dit aantal: accepted-punten uitdunnen
+_MAP_LABEL_LIMIT = 150      # permanente tijdlabels zolang de set klein is
+
+
+def _pad_bounds(bounds, pad=0.02):
+    (a, b), (c, d) = bounds
+    if abs(c - a) < 2 * pad and abs(d - b) < 2 * pad:
+        return [[a - pad, b - pad], [c + pad, d + pad]]
+    return bounds
+
+
+def _build_map(vessel, d_from, d_to, source, kn, mode):
+    """Track map for the QC verdict: teal line through ACCEPTED fixes,
+    red markers on rejected ones (with time + implied speed), fitted to
+    the whole set. Only rendered when a vessel filter is active."""
+    hint_on = {"position": "absolute", "top": "12px", "left": "54px",
+               "zIndex": 1000, "padding": "6px 12px",
+               "borderRadius": "8px", "background": "rgba(255,255,255,0.92)",
+               "border": f"1px solid {LINE}", "color": MUTED,
+               "fontSize": "0.82rem"}
+    if not vessel:
+        return [], no_update, hint_on
+    t_from = datetime.fromisoformat(d_from) if d_from else None
+    t_to = (datetime.fromisoformat(d_to) + timedelta(days=1)) if d_to else None
+    rows, _tot = ais_db.positions_qc(
+        mmsi=vessel, t_from=t_from, t_to=t_to, source=source or None,
+        threshold_kn=float(kn) if kn not in (None, "") else 30.0,
+        mode=(mode if mode in ("chain", "spike", "any") else "chain"),
+        sort="ts", page=1, page_size=200000)
+    if not rows:
+        hint_on["children"] = "No fixes in the selected range."
+        return [], no_update, {**hint_on}
+    accepted = [r for r in rows if not r[11]]
+    suspects = [r for r in rows if r[11]]
+    # uitdunnen van accepted-markers bij enorme sets (lijn blijft volledig)
+    step = max(1, -(-len(accepted) // _MAP_MAX_MARKERS))
+    shown_accepted = accepted[::step]
+    permanent = (len(shown_accepted) + len(suspects)) <= _MAP_LABEL_LIMIT
+    children = []
+    if len(accepted) >= 2:
+        children.append(dl.Polyline(
+            positions=[[r[3], r[4]] for r in accepted],
+            color=TEAL, weight=2, opacity=0.85))
+    for r in shown_accepted:
+        label = r[0].strftime("%d-%m %H:%M")
+        children.append(dl.CircleMarker(
+            center=[r[3], r[4]], radius=3, color=TEAL, fillColor=TEAL,
+            fillOpacity=0.9, weight=1,
+            children=[dl.Tooltip(label, permanent=permanent,
+                                 direction="top")]))
+    for r in suspects:
+        impl = f" \u00b7 {r[10]:,.0f} kn" if r[10] is not None else ""
+        label = r[0].strftime("%d-%m %H:%M") + impl
+        children.append(dl.CircleMarker(
+            center=[r[3], r[4]], radius=6, color=RED, fillColor=RED,
+            fillOpacity=0.85, weight=2,
+            children=[dl.Tooltip(label, permanent=True,
+                                 direction="top")]))
+    lats = [r[3] for r in rows]
+    lons = [r[4] for r in rows]
+    viewport = {"bounds": _pad_bounds([[min(lats), min(lons)],
+                                       [max(lats), max(lons)]]),
+                "transition": "flyToBounds",
+                "options": {"padding": [25, 25], "maxZoom": 15}}
+    note = ""
+    if step > 1:
+        note = (f"Showing 1/{step} of accepted fixes as dots "
+                f"(all {len(suspects)} suspects shown, line complete).")
+    hint = ({**hint_on, "children": note} if note
+            else {"display": "none"})
+    return children, viewport, hint
 
 
 def layout():
@@ -295,10 +367,44 @@ def layout():
                    "alignItems": "center", "flexWrap": "wrap"},
         ),
         html.Div(id="vtdb-banner"),
-        html.Div(id="vtdb-qc",
-                 style={"maxHeight": "560px", "overflow": "auto",
-                        "border": f"1px solid {LINE}",
-                        "borderRadius": "8px"}),
+        html.Div(
+            [
+                html.Div(id="vtdb-qc",
+                         style={"flex": "1 1 54%", "minWidth": "540px",
+                                "maxHeight": "620px", "overflow": "auto",
+                                "border": f"1px solid {LINE}",
+                                "borderRadius": "8px"}),
+                html.Div(
+                    [
+                        dl.Map(id="vtdb-map", zoomSnap=0.25,
+                               center=[29, 49], zoom=6,
+                               style={"width": "100%", "height": "620px",
+                                      "borderRadius": "8px",
+                                      "border": f"1px solid {LINE}"},
+                               children=[
+                                   dl.TileLayer(),
+                                   dl.LayerGroup(id="vtdb-map-layer"),
+                               ]),
+                        html.Div("Filter on a vessel to see its track "
+                                 "with the QC verdict per fix.",
+                                 id="vtdb-map-hint",
+                                 style={"position": "absolute",
+                                        "top": "12px", "left": "54px",
+                                        "zIndex": 1000,
+                                        "padding": "6px 12px",
+                                        "borderRadius": "8px",
+                                        "background":
+                                            "rgba(255,255,255,0.92)",
+                                        "border": f"1px solid {LINE}",
+                                        "color": MUTED,
+                                        "fontSize": "0.82rem"}),
+                    ],
+                    style={"flex": "1 1 46%", "minWidth": "420px",
+                           "position": "relative"}),
+            ],
+            style={"display": "flex", "gap": "12px",
+                   "alignItems": "flex-start", "width": "100%",
+                   "flexWrap": "wrap"}),
         dcc.Store(id="vtdb-page", data=1),
         dcc.Store(id="vtdb-pending", data=None),
         dcc.Interval(id="vtdb-tick", interval=60_000, n_intervals=0),
@@ -386,6 +492,9 @@ def _backup_download(n, name):
     Output("vtdb-stamp", "children"),
     Output("vtdb-vessel", "options"),
     Output("vtdb-source", "options"),
+    Output("vtdb-map-layer", "children"),
+    Output("vtdb-map", "viewport"),
+    Output("vtdb-map-hint", "style"),
     Input("vtdb-refresh", "n_clicks"),
     Input("vtdb-vessel", "value"),
     Input("vtdb-dates", "start_date"),
@@ -454,11 +563,14 @@ def _qc(_r, vessel, d_from, d_to, source, suspect, kn, sort, mode,
         table, counter, page = _build_qc(vessel, d_from, d_to, source,
                                          bool(suspect), kn, sort, mode, page,
                                          can_edit, new_pending)
+        map_children, map_viewport, hint_style = _build_map(
+            vessel, d_from, d_to, source, kn, mode)
     except ais_db.AisDbError as exc:
-        return (_error_card(exc), "", None, page, None, stamp, [], [])
+        return (_error_card(exc), "", None, page, None, stamp, [], [],
+                [], no_update, no_update)
     except Exception as exc:  # never kill the page
         return (_error_card(f"Unexpected error: {exc}"), "", None, page,
-                None, stamp, [], [])
+                None, stamp, [], [], [], no_update, no_update)
 
     return (table, counter, _banner(banner, ok), page, new_pending, stamp,
-            v_opts, s_opts)
+            v_opts, s_opts, map_children, map_viewport, hint_style)
