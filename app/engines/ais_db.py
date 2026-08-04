@@ -68,7 +68,13 @@ def _eq_dist_nm(lat1, lon1, lat2, lon2):
                             + (math.cos(mid) * (lon2 - lon1)) ** 2)
 
 
-_CHAIN_ASSOC_NM = 10.0     # reject fixes near a just-rejected fix
+_CHAIN_ASSOC_NM = 10.0        # reject fixes near a just-rejected fix...
+_CHAIN_ASSOC_FLOOR_NM = 20.0  # ...but only when far from the anchor.
+# Without the floor the association cascades along a genuine transit: one
+# rejected mini-glitch near the cluster, and every subsequent real fix
+# (3-4 NM from its rejected predecessor) chains into rejection. The rule
+# is meant for time-diluted fixes sitting OUT at a bogus excursion
+# location - hence the far-from-anchor requirement.
 
 
 def _chain_flags(fixes, thr):
@@ -78,9 +84,11 @@ def _chain_flags(fixes, thr):
     excursion of internally-consistent corrupt fixes is rejected fix by
     fix against the same trusted reference. Two robustness additions:
     the anchor seeds at the first mutually-plausible PAIR (a corrupt
-    first fix cannot poison the chain), and a fix within
-    _CHAIN_ASSOC_NM of a just-rejected fix is rejected by association
-    (long excursions dilute the speed-vs-anchor as time passes).
+    first fix cannot poison the chain), and a fix that sits FAR from the
+    anchor (> _CHAIN_ASSOC_FLOOR_NM) yet within _CHAIN_ASSOC_NM of a
+    just-rejected fix is rejected by association (long excursions dilute
+    the speed-vs-anchor as time passes; the far-from-anchor floor stops
+    the association from cascading along a genuine transit).
     fixes: list of (ts, lat, lon); returns list of
     (suspect, dist_nm_vs_anchor, dt_min_vs_anchor, impl_kn_vs_anchor)."""
     n = len(fixes)
@@ -113,6 +121,7 @@ def _chain_flags(fixes, thr):
     for i in range(seed + 1, n):
         d, dt, v = leg(anchor, fixes[i])
         assoc = (last_rejected is not None
+                 and d is not None and d > _CHAIN_ASSOC_FLOOR_NM
                  and _eq_dist_nm(last_rejected[1], last_rejected[2],
                                  fixes[i][1], fixes[i][2]) < _CHAIN_ASSOC_NM)
         if (v is not None and v > thr) or assoc:
