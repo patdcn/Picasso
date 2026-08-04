@@ -77,7 +77,7 @@ def qc_sources():
 
 
 def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
-                 threshold_kn=60.0, suspect_only=False,
+                 threshold_kn=30.0, suspect_only=False, mode="spike",
                  sort="ts_desc", page=1, page_size=200):
     """Paged QC listing of raw position fixes. Each row carries distance,
     time gap and implied speed versus the vessel's PREVIOUS fix inside the
@@ -94,11 +94,18 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
     is locally undecidable; judge by the coordinate clusters. (2) Two
     consecutive corrupt fixes at the same wrong spot look calm in between;
     the implied-speed sort is the safety net there.
+    mode selects the flag rule: "spike" (default) requires BOTH legs over
+    the threshold - one isolated glitch marks exactly one row; "any"
+    flags every fix touching a single too-fast leg, which marks the entry
+    and exit of a multi-fix excursion (satellite gaps dilute implied
+    speeds, and sequences look calm inside - deleting the flagged entry
+    re-exposes the next corrupt fix, so a sequence peels off row by row).
     suspect_only filters to flagged rows. Sort via QC_SORTS whitelist.
     Returns (rows, total): rows are (ts, mmsi, name, lat, lon, sog,
     nav_status, source, dist_nm, dt_min, impl_kn, suspect)."""
     order = QC_SORTS.get(sort) or QC_SORTS["ts_desc"]
-    thr = float(threshold_kn or 60.0)
+    thr = float(threshold_kn or 30.0)
+    any_mode = "TRUE" if mode == "any" else "FALSE"
     where, params = ["TRUE"], []
     if t_from is not None:
         where.append("p.ts >= %s"); params.append(t_from)
@@ -151,6 +158,9 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
             SELECT ts, mmsi, name, lat, lon, sog, nav_status, source,
                    dist_nm, dt_min, impl_in AS impl_kn,
                    CASE
+                     WHEN {any_mode}
+                          THEN (COALESCE(impl_in, 0) > {thr}
+                                OR COALESCE(impl_out, 0) > {thr})
                      WHEN impl_in IS NOT NULL AND impl_out IS NOT NULL
                           THEN (impl_in > {thr} AND impl_out > {thr})
                      WHEN impl_in IS NOT NULL THEN impl_in > {thr}

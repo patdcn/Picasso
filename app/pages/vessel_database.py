@@ -162,14 +162,15 @@ def _qc_table(rows, can_edit, pending, threshold):
                       style={"borderCollapse": "collapse", "width": "100%"})
 
 
-def _build_qc(vessel, d_from, d_to, source, suspect_on, kn, sort, page,
-              can_edit, pending):
+def _build_qc(vessel, d_from, d_to, source, suspect_on, kn, sort, mode,
+              page, can_edit, pending):
     t_from = datetime.fromisoformat(d_from) if d_from else None
     t_to = (datetime.fromisoformat(d_to) + timedelta(days=1)) if d_to else None
-    kn = float(kn) if kn not in (None, "") else 60.0
+    kn = float(kn) if kn not in (None, "") else 30.0
     kw = dict(mmsi=vessel or None, t_from=t_from, t_to=t_to,
               source=source or None,
               threshold_kn=kn, suspect_only=bool(suspect_on),
+              mode=("any" if mode == "any" else "spike"),
               sort=sort or "ts_desc", page_size=_PAGE_SIZE)
     page = max(1, int(page or 1))
     rows, total = ais_db.positions_qc(page=page, **kw)
@@ -256,10 +257,21 @@ def layout():
                               value=[],
                               style={"display": "inline-block",
                                      "fontSize": "0.85rem"}),
+                dcc.Dropdown(id="vtdb-mode", clearable=False, value="spike",
+                             options=[
+                                 {"label": "spike (one-off glitch)",
+                                  "value": "spike"},
+                                 {"label": "any fast leg (excursions)",
+                                  "value": "any"},
+                             ],
+                             style={"width": "195px", "fontSize": "0.8rem",
+                                    "display": "inline-block",
+                                    "verticalAlign": "middle",
+                                    "marginLeft": "10px"}),
                 html.Span("threshold", style={"color": MUTED,
                                               "fontSize": "0.8rem",
                                               "marginLeft": "12px"}),
-                dcc.Input(id="vtdb-kn", type="number", value=60, min=1,
+                dcc.Input(id="vtdb-kn", type="number", value=30, min=1,
                           style={"width": "70px", "marginLeft": "6px",
                                  "padding": "3px 6px", "fontSize": "0.82rem"}),
                 html.Span("kn implied speed", style={"color": MUTED,
@@ -379,6 +391,7 @@ def _backup_download(n, name):
     Input("vtdb-suspect", "value"),
     Input("vtdb-kn", "value"),
     Input("vtdb-sort", "value"),
+    Input("vtdb-mode", "value"),
     Input("vtdb-prev", "n_clicks"),
     Input("vtdb-next", "n_clicks"),
     Input({"type": "vtdb-del", "rid": dash.ALL}, "n_clicks"),
@@ -387,7 +400,7 @@ def _backup_download(n, name):
     State("vtdb-page", "data"),
     State("vtdb-pending", "data"),
 )
-def _qc(_r, vessel, d_from, d_to, source, suspect, kn, sort,
+def _qc(_r, vessel, d_from, d_to, source, suspect, kn, sort, mode,
         _pp, _pn, _d, _dc, _dx, page, pending):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
@@ -423,7 +436,7 @@ def _qc(_r, vessel, d_from, d_to, source, suspect, kn, sort,
 
     page = max(1, int(page or 1))
     if trig in ("vtdb-vessel", "vtdb-dates", "vtdb-source", "vtdb-suspect",
-                "vtdb-kn", "vtdb-sort", "vtdb-refresh"):
+                "vtdb-kn", "vtdb-sort", "vtdb-mode", "vtdb-refresh"):
         page = 1
         new_pending = None
     elif trig == "vtdb-prev":
@@ -436,7 +449,7 @@ def _qc(_r, vessel, d_from, d_to, source, suspect, kn, sort,
                   for mmsi, name in ais_db.qc_vessels()]
         s_opts = [{"label": s, "value": s} for s in ais_db.qc_sources()]
         table, counter, page = _build_qc(vessel, d_from, d_to, source,
-                                         bool(suspect), kn, sort, page,
+                                         bool(suspect), kn, sort, mode, page,
                                          can_edit, new_pending)
     except ais_db.AisDbError as exc:
         return (_error_card(exc), "", None, page, None, stamp, [], [])
