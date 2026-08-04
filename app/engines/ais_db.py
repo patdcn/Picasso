@@ -70,6 +70,8 @@ def _eq_dist_nm(lat1, lon1, lat2, lon2):
 
 _CHAIN_ASSOC_NM = 10.0        # reject fixes near a just-rejected fix...
 _CHAIN_ASSOC_FLOOR_NM = 20.0  # ...but only when far from the anchor.
+_CHAIN_REANCHOR_H = 6.0       # re-anchor: rejected run proves itself after
+_CHAIN_REANCHOR_K = 8         # >= 6 h AND >= 8 internally-consistent fixes.
 # Without the floor the association cascades along a genuine transit: one
 # rejected mini-glitch near the cluster, and every subsequent real fix
 # (3-4 NM from its rejected predecessor) chains into rejection. The rule
@@ -89,6 +91,15 @@ def _chain_flags(fixes, thr):
     just-rejected fix is rejected by association (long excursions dilute
     the speed-vs-anchor as time passes; the far-from-anchor floor stops
     the association from cascading along a genuine transit).
+    RE-ANCHORING: when a rejected run is internally consistent (every leg
+    between consecutive rejected fixes plausible) and sustains for
+    >= _CHAIN_REANCHOR_H hours AND >= _CHAIN_REANCHOR_K fixes, the vessel
+    evidently really relocated (e.g. it reappeared far away after an AIS
+    gap, making the arrival leg look impossible) - the chain re-anchors on
+    the new cluster and retroactively clears the run, keeping only the
+    FIRST fix of the run marked as the unexplained jump. A corrupt
+    excursion (short, returns to the old cluster) never meets the
+    criteria and stays fully marked.
     fixes: list of (ts, lat, lon); returns list of
     (suspect, dist_nm_vs_anchor, dt_min_vs_anchor, impl_kn_vs_anchor)."""
     n = len(fixes)
@@ -118,6 +129,7 @@ def _chain_flags(fixes, thr):
     anchor = fixes[seed]
     out[seed] = (False, None, None, None)
     last_rejected = None
+    run = []                       # indices van de lopende verworpen reeks
     for i in range(seed + 1, n):
         d, dt, v = leg(anchor, fixes[i])
         assoc = (last_rejected is not None
@@ -126,11 +138,30 @@ def _chain_flags(fixes, thr):
                                  fixes[i][1], fixes[i][2]) < _CHAIN_ASSOC_NM)
         if (v is not None and v > thr) or assoc:
             out[i] = (True, d, dt, v)
+            # hoort deze fix consistent bij de lopende run?
+            if run:
+                _rd, _rdt, rv = leg(fixes[run[-1]], fixes[i])
+                consistent = ((rv is not None and rv <= thr)
+                              or _rd < _CHAIN_ASSOC_NM)
+                if not consistent:
+                    run = []       # wilde sprong binnen de reeks: run herstart
+            run.append(i)
             last_rejected = fixes[i]
+            # re-anchor: run bewijst zichzelf (duur + omvang)
+            span_h = ((fixes[i][0] - fixes[run[0]][0]).total_seconds()
+                      / 3600.0)
+            if len(run) >= _CHAIN_REANCHOR_K and span_h >= _CHAIN_REANCHOR_H:
+                for j in run[1:]:  # eerste fix = de onverklaarde sprong
+                    dj, dtj, vj = out[j][1], out[j][2], out[j][3]
+                    out[j] = (False, dj, dtj, vj)
+                anchor = fixes[i]
+                last_rejected = None
+                run = []
         else:
             out[i] = (False, d, dt, v)
             anchor = fixes[i]
             last_rejected = None
+            run = []
     return out
 
 
