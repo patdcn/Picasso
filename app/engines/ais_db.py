@@ -45,6 +45,110 @@ class AisDbError(RuntimeError):
     pass
 
 
+# ---------------------------------------------------------------------------
+# Position QC browser (Database page)
+
+QC_SORTS = {
+    "ts_desc":    "ts DESC",
+    "ts":         "ts",
+    "speed_desc": "impl_kn DESC NULLS LAST",
+    "dist_desc":  "dist_nm DESC NULLS LAST",
+    "vessel":     "name NULLS LAST, ts DESC",
+    "lat":        "lat", "lat_desc": "lat DESC",
+    "lon":        "lon", "lon_desc": "lon DESC",
+    "sog_desc":   "sog DESC NULLS LAST",
+}
+
+
+def qc_vessels():
+    """(mmsi, display-name) for every vessel with stored positions."""
+    return q("""SELECT p.mmsi,
+                       COALESCE(min(f.name), min(l.ship_name),
+                                p.mmsi::text) AS name
+                FROM (SELECT DISTINCT mmsi FROM positions) p
+                LEFT JOIN fleet f  ON f.mmsi = p.mmsi
+                LEFT JOIN latest l ON l.mmsi = p.mmsi
+                GROUP BY p.mmsi ORDER BY 2""")
+
+
+def qc_sources():
+    return [r[0] for r in q(
+        "SELECT DISTINCT source FROM positions ORDER BY 1")]
+
+
+def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
+                 suspect_kn=None, sort="ts_desc", page=1, page_size=200):
+    """Paged QC listing of raw position fixes. Each row carries the distance
+    and implied speed versus the vessel's PREVIOUS fix inside the same
+    filter window (equirectangular approx - plenty for outlier hunting: a
+    Gulf->Peru glitch implies thousands of knots). suspect_kn filters to
+    rows whose implied speed exceeds the threshold. Sort via QC_SORTS
+    whitelist. Returns (rows, total): rows are (ts, mmsi, name, lat, lon,
+    sog, nav_status, source, dist_nm, dt_min, impl_kn)."""
+    order = QC_SORTS.get(sort) or QC_SORTS["ts_desc"]
+    where, params = ["TRUE"], []
+    if t_from is not None:
+        where.append("p.ts >= %s"); params.append(t_from)
+    if t_to is not None:
+        where.append("p.ts < %s"); params.append(t_to)
+    if mmsi:
+        where.append("p.mmsi = %s"); params.append(int(mmsi))
+    if source:
+        where.append("p.source = %s"); params.append(source)
+    sql = f"""
+        WITH base AS (
+            SELECT p.ts, p.mmsi, p.lat, p.lon, p.sog, p.nav_status, p.source,
+                   lag(p.ts)  OVER w AS pts,
+                   lag(p.lat) OVER w AS plat,
+                   lag(p.lon) OVER w AS plon
+            FROM positions p
+            WHERE {' AND '.join(where)}
+            WINDOW w AS (PARTITION BY p.mmsi ORDER BY p.ts)
+        ), calc AS (
+            SELECT b.*, f.name,
+                   CASE WHEN b.pts IS NOT NULL THEN
+                       60.0 * sqrt(power(b.lat - b.plat, 2)
+                           + power(cos(radians((b.lat + b.plat) / 2.0))
+                                   * (b.lon - b.plon), 2))
+                   END AS dist_nm,
+                   CASE WHEN b.pts IS NOT NULL THEN
+                       EXTRACT(EPOCH FROM (b.ts - b.pts)) / 60.0
+                   END AS dt_min
+            FROM base b LEFT JOIN fleet f ON f.mmsi = b.mmsi
+        ), final AS (
+            SELECT ts, mmsi, name, lat, lon, sog, nav_status, source,
+                   dist_nm, dt_min,
+                   CASE WHEN dt_min > 0 THEN dist_nm / (dt_min / 60.0)
+                   END AS impl_kn
+            FROM calc
+        )
+        SELECT ts, mmsi, name, lat, lon, sog, nav_status, source,
+               dist_nm, dt_min, impl_kn, count(*) OVER () AS total_rows
+        FROM final"""
+    if suspect_kn is not None:
+        sql += " WHERE impl_kn > %s"; params.append(float(suspect_kn))
+    page = max(1, int(page or 1))
+    sql += f" ORDER BY {order} LIMIT %s OFFSET %s"
+    params += [page_size, (page - 1) * page_size]
+    rows = q(sql, params)
+    total = rows[0][-1] if rows else 0
+    return [r[:-1] for r in rows], total
+
+
+def position_delete(mmsi, ts, source):
+    """Delete one stored fix (QC cleanup of corrupt AIS decodes). If the
+    `latest` snapshot pointed at the deleted fix, rewind it to the newest
+    remaining position so the live map heals immediately."""
+    q("DELETE FROM positions WHERE mmsi=%s AND ts=%s AND source=%s",
+      (mmsi, ts, source))
+    q("""UPDATE latest SET ts=p.ts, lat=p.lat, lon=p.lon, sog=p.sog,
+                cog=p.cog, heading=p.heading, nav_status=p.nav_status
+         FROM (SELECT ts, lat, lon, sog, cog, heading, nav_status
+               FROM positions WHERE mmsi=%s
+               ORDER BY ts DESC LIMIT 1) p
+         WHERE latest.mmsi=%s AND latest.ts=%s""", (mmsi, mmsi, ts))
+
+
 def nav_status_label(code):
     if code is None:
         return "—"
