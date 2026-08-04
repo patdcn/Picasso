@@ -116,9 +116,8 @@ def _qc_table(rows, can_edit, pending, threshold):
                "\u0394 prev", "\u0394t", "Implied", "Source", "Action"]
     body = []
     for (ts, mmsi, name, lat, lon, sog, nav, source,
-         dist_nm, dt_min, impl_kn) in rows:
+         dist_nm, dt_min, impl_kn, suspect) in rows:
         rid = _rid(mmsi, ts, source)
-        suspect = impl_kn is not None and threshold and impl_kn > threshold
         if can_edit:
             if pending == rid:
                 action = html.Span([
@@ -170,7 +169,7 @@ def _build_qc(vessel, d_from, d_to, source, suspect_on, kn, sort, page,
     kn = float(kn) if kn not in (None, "") else 60.0
     kw = dict(mmsi=vessel or None, t_from=t_from, t_to=t_to,
               source=source or None,
-              suspect_kn=kn if suspect_on else None,
+              threshold_kn=kn, suspect_only=bool(suspect_on),
               sort=sort or "ts_desc", page_size=_PAGE_SIZE)
     page = max(1, int(page or 1))
     rows, total = ais_db.positions_qc(page=page, **kw)
@@ -195,8 +194,10 @@ def layout():
     [
         html.H3("Database"),
         html.P("Raw contents of the AIS positions table. Filter, sort and "
-               "hunt corrupt fixes with the implied-speed detector; "
-               "admins can delete faulty rows.",
+               "hunt corrupt fixes: a row is flagged suspect when the "
+               "implied speed both into and out of the fix exceeds the "
+               "threshold (spike rule), so one glitch marks exactly one "
+               "row. Admins can delete faulty rows.",
                style={"color": MUTED, "maxWidth": "760px"}),
         html.Div(
             [

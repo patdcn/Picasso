@@ -77,15 +77,28 @@ def qc_sources():
 
 
 def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
-                 suspect_kn=None, sort="ts_desc", page=1, page_size=200):
-    """Paged QC listing of raw position fixes. Each row carries the distance
-    and implied speed versus the vessel's PREVIOUS fix inside the same
-    filter window (equirectangular approx - plenty for outlier hunting: a
-    Gulf->Peru glitch implies thousands of knots). suspect_kn filters to
-    rows whose implied speed exceeds the threshold. Sort via QC_SORTS
-    whitelist. Returns (rows, total): rows are (ts, mmsi, name, lat, lon,
-    sog, nav_status, source, dist_nm, dt_min, impl_kn)."""
+                 threshold_kn=60.0, suspect_only=False,
+                 sort="ts_desc", page=1, page_size=200):
+    """Paged QC listing of raw position fixes. Each row carries distance,
+    time gap and implied speed versus the vessel's PREVIOUS fix inside the
+    filter window (equirectangular approx). A row is flagged SUSPECT via
+    the spike rule: implied speed both INTO the fix (vs previous) and OUT
+    of it (vs next) exceed threshold_kn - the classic outlier signature.
+    The good fix right after a glitch only has a suspect incoming leg and
+    is therefore NOT flagged, so one glitch marks exactly one row. At the
+    window edges (no prev or no next) the single known leg decides, so a
+    corrupt LAST fix - the one poisoning the live map - still flags.
+    Two limitations, both by the nature of local tests: (1) an
+    ALTERNATING zigzag (good/bad/good/bad) flags the whole disturbed
+    stretch, because the good fixes bounce too - which alternation is real
+    is locally undecidable; judge by the coordinate clusters. (2) Two
+    consecutive corrupt fixes at the same wrong spot look calm in between;
+    the implied-speed sort is the safety net there.
+    suspect_only filters to flagged rows. Sort via QC_SORTS whitelist.
+    Returns (rows, total): rows are (ts, mmsi, name, lat, lon, sog,
+    nav_status, source, dist_nm, dt_min, impl_kn, suspect)."""
     order = QC_SORTS.get(sort) or QC_SORTS["ts_desc"]
+    thr = float(threshold_kn or 60.0)
     where, params = ["TRUE"], []
     if t_from is not None:
         where.append("p.ts >= %s"); params.append(t_from)
@@ -98,9 +111,12 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
     sql = f"""
         WITH base AS (
             SELECT p.ts, p.mmsi, p.lat, p.lon, p.sog, p.nav_status, p.source,
-                   lag(p.ts)  OVER w AS pts,
-                   lag(p.lat) OVER w AS plat,
-                   lag(p.lon) OVER w AS plon
+                   lag(p.ts)   OVER w AS pts,
+                   lag(p.lat)  OVER w AS plat,
+                   lag(p.lon)  OVER w AS plon,
+                   lead(p.ts)  OVER w AS nts,
+                   lead(p.lat) OVER w AS nlat,
+                   lead(p.lon) OVER w AS nlon
             FROM positions p
             WHERE {' AND '.join(where)}
             WINDOW w AS (PARTITION BY p.mmsi ORDER BY p.ts)
@@ -113,20 +129,42 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
                    END AS dist_nm,
                    CASE WHEN b.pts IS NOT NULL THEN
                        EXTRACT(EPOCH FROM (b.ts - b.pts)) / 60.0
-                   END AS dt_min
+                   END AS dt_min,
+                   CASE WHEN b.nts IS NOT NULL THEN
+                       60.0 * sqrt(power(b.nlat - b.lat, 2)
+                           + power(cos(radians((b.nlat + b.lat) / 2.0))
+                                   * (b.nlon - b.lon), 2))
+                   END AS ndist_nm,
+                   CASE WHEN b.nts IS NOT NULL THEN
+                       EXTRACT(EPOCH FROM (b.nts - b.ts)) / 60.0
+                   END AS ndt_min
             FROM base b LEFT JOIN fleet f ON f.mmsi = b.mmsi
         ), final AS (
             SELECT ts, mmsi, name, lat, lon, sog, nav_status, source,
                    dist_nm, dt_min,
                    CASE WHEN dt_min > 0 THEN dist_nm / (dt_min / 60.0)
-                   END AS impl_kn
+                   END AS impl_in,
+                   CASE WHEN ndt_min > 0 THEN ndist_nm / (ndt_min / 60.0)
+                   END AS impl_out
             FROM calc
+        ), flagged AS (
+            SELECT ts, mmsi, name, lat, lon, sog, nav_status, source,
+                   dist_nm, dt_min, impl_in AS impl_kn,
+                   CASE
+                     WHEN impl_in IS NOT NULL AND impl_out IS NOT NULL
+                          THEN (impl_in > {thr} AND impl_out > {thr})
+                     WHEN impl_in IS NOT NULL THEN impl_in > {thr}
+                     WHEN impl_out IS NOT NULL THEN impl_out > {thr}
+                     ELSE FALSE
+                   END AS suspect
+            FROM final
         )
         SELECT ts, mmsi, name, lat, lon, sog, nav_status, source,
-               dist_nm, dt_min, impl_kn, count(*) OVER () AS total_rows
-        FROM final"""
-    if suspect_kn is not None:
-        sql += " WHERE impl_kn > %s"; params.append(float(suspect_kn))
+               dist_nm, dt_min, impl_kn, suspect,
+               count(*) OVER () AS total_rows
+        FROM flagged"""
+    if suspect_only:
+        sql += " WHERE suspect"
     page = max(1, int(page or 1))
     sql += f" ORDER BY {order} LIMIT %s OFFSET %s"
     params += [page_size, (page - 1) * page_size]
