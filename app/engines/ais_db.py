@@ -60,6 +60,130 @@ QC_SORTS = {
 }
 
 
+def _eq_dist_nm(lat1, lon1, lat2, lon2):
+    """Equirectangular distance in NM (plenty for gating)."""
+    import math
+    mid = math.radians((lat1 + lat2) / 2.0)
+    return 60.0 * math.sqrt((lat2 - lat1) ** 2
+                            + (math.cos(mid) * (lon2 - lon1)) ** 2)
+
+
+_CHAIN_ASSOC_NM = 10.0     # reject fixes near a just-rejected fix
+
+
+def _chain_flags(fixes, thr):
+    """Patrick's cluster-reference validation: every fix is gated against
+    the last ACCEPTED fix (the anchor), never against a possibly-corrupt
+    predecessor. A rejected fix does not advance the anchor, so a whole
+    excursion of internally-consistent corrupt fixes is rejected fix by
+    fix against the same trusted reference. Two robustness additions:
+    the anchor seeds at the first mutually-plausible PAIR (a corrupt
+    first fix cannot poison the chain), and a fix within
+    _CHAIN_ASSOC_NM of a just-rejected fix is rejected by association
+    (long excursions dilute the speed-vs-anchor as time passes).
+    fixes: list of (ts, lat, lon); returns list of
+    (suspect, dist_nm_vs_anchor, dt_min_vs_anchor, impl_kn_vs_anchor)."""
+    n = len(fixes)
+    out = [None] * n
+    if n == 0:
+        return out
+    if n == 1:
+        return [(False, None, None, None)]
+
+    def leg(a, b):
+        d = _eq_dist_nm(a[1], a[2], b[1], b[2])
+        dt = (b[0] - a[0]).total_seconds() / 60.0
+        v = d / (dt / 60.0) if dt > 0 else None
+        return d, dt, v
+
+    # seed: first consecutive pair with a plausible leg
+    seed = 0
+    for i in range(n - 1):
+        _d, _dt, v = leg(fixes[i], fixes[i + 1])
+        if v is not None and v <= thr:
+            seed = i
+            break
+    # fixes before the seed: gate retrospectively against the seed fix
+    for i in range(seed):
+        d, dt, v = leg(fixes[i], fixes[seed])
+        out[i] = (bool(v is not None and v > thr), d, dt, v)
+    anchor = fixes[seed]
+    out[seed] = (False, None, None, None)
+    last_rejected = None
+    for i in range(seed + 1, n):
+        d, dt, v = leg(anchor, fixes[i])
+        assoc = (last_rejected is not None
+                 and _eq_dist_nm(last_rejected[1], last_rejected[2],
+                                 fixes[i][1], fixes[i][2]) < _CHAIN_ASSOC_NM)
+        if (v is not None and v > thr) or assoc:
+            out[i] = (True, d, dt, v)
+            last_rejected = fixes[i]
+        else:
+            out[i] = (False, d, dt, v)
+            anchor = fixes[i]
+            last_rejected = None
+    return out
+
+
+_QC_PY_SORTS = {
+    "ts_desc":    (lambda r: r[0], True),
+    "ts":         (lambda r: r[0], False),
+    "speed_desc": (lambda r: (r[10] is not None, r[10]), True),
+    "dist_desc":  (lambda r: (r[8] is not None, r[8]), True),
+    "vessel":     (lambda r: (r[2] or "\uffff", r[0]), False),
+    "lat":        (lambda r: r[3], False),
+    "lat_desc":   (lambda r: r[3], True),
+    "lon":        (lambda r: r[4], False),
+    "lon_desc":   (lambda r: r[4], True),
+    "sog_desc":   (lambda r: (r[5] is not None, r[5]), True),
+}
+
+
+def _positions_qc_chain(mmsi=None, t_from=None, t_to=None, source=None,
+                        threshold_kn=30.0, suspect_only=False,
+                        sort="ts_desc", page=1, page_size=200):
+    """Chain-mode listing (see _chain_flags). Fetches the ordered fixes
+    for the filter window, runs the per-vessel chain in Python and pages
+    the result. dist/dt/implied columns are versus the ANCHOR at
+    evaluation time - for accepted fixes that is the previous accepted
+    fix, for rejected fixes the trusted reference they failed against."""
+    thr = float(threshold_kn or 30.0)
+    where, params = ["TRUE"], []
+    if t_from is not None:
+        where.append("p.ts >= %s"); params.append(t_from)
+    if t_to is not None:
+        where.append("p.ts < %s"); params.append(t_to)
+    if mmsi:
+        where.append("p.mmsi = %s"); params.append(int(mmsi))
+    if source:
+        where.append("p.source = %s"); params.append(source)
+    raw = q(f"""SELECT p.ts, p.mmsi, f.name, p.lat, p.lon, p.sog,
+                       p.nav_status, p.source
+                FROM positions p LEFT JOIN fleet f ON f.mmsi = p.mmsi
+                WHERE {' AND '.join(where)}
+                ORDER BY p.mmsi, p.ts""", params)
+    rows = []
+    i = 0
+    while i < len(raw):
+        j = i
+        while j < len(raw) and raw[j][1] == raw[i][1]:
+            j += 1
+        group = raw[i:j]
+        flags = _chain_flags([(r[0], r[3], r[4]) for r in group], thr)
+        for r, (susp, d, dt, v) in zip(group, flags):
+            rows.append((r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7],
+                         d, dt, v, susp))
+        i = j
+    if suspect_only:
+        rows = [r for r in rows if r[11]]
+    key, rev = _QC_PY_SORTS.get(sort) or _QC_PY_SORTS["ts_desc"]
+    rows.sort(key=key, reverse=rev)
+    total = len(rows)
+    page = max(1, int(page or 1))
+    start = (page - 1) * page_size
+    return rows[start:start + page_size], total
+
+
 def qc_vessels():
     """(mmsi, display-name) for every vessel with stored positions."""
     return q("""SELECT p.mmsi,
@@ -77,7 +201,7 @@ def qc_sources():
 
 
 def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
-                 threshold_kn=30.0, suspect_only=False, mode="spike",
+                 threshold_kn=30.0, suspect_only=False, mode="chain",
                  sort="ts_desc", page=1, page_size=200):
     """Paged QC listing of raw position fixes. Each row carries distance,
     time gap and implied speed versus the vessel's PREVIOUS fix inside the
@@ -94,7 +218,8 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
     is locally undecidable; judge by the coordinate clusters. (2) Two
     consecutive corrupt fixes at the same wrong spot look calm in between;
     the implied-speed sort is the safety net there.
-    mode selects the flag rule: "spike" (default) requires BOTH legs over
+    mode selects the flag rule: "chain" (default) gates every fix against
+    the last ACCEPTED fix - see _chain_flags; "spike" requires BOTH legs over
     the threshold - one isolated glitch marks exactly one row; "any"
     flags every fix touching a single too-fast leg, which marks the entry
     and exit of a multi-fix excursion (satellite gaps dilute implied
@@ -103,6 +228,11 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
     suspect_only filters to flagged rows. Sort via QC_SORTS whitelist.
     Returns (rows, total): rows are (ts, mmsi, name, lat, lon, sog,
     nav_status, source, dist_nm, dt_min, impl_kn, suspect)."""
+    if mode == "chain":
+        return _positions_qc_chain(mmsi=mmsi, t_from=t_from, t_to=t_to,
+                                   source=source, threshold_kn=threshold_kn,
+                                   suspect_only=suspect_only, sort=sort,
+                                   page=page, page_size=page_size)
     order = QC_SORTS.get(sort) or QC_SORTS["ts_desc"]
     thr = float(threshold_kn or 30.0)
     any_mode = "TRUE" if mode == "any" else "FALSE"

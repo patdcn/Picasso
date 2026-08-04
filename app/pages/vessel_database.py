@@ -170,7 +170,7 @@ def _build_qc(vessel, d_from, d_to, source, suspect_on, kn, sort, mode,
     kw = dict(mmsi=vessel or None, t_from=t_from, t_to=t_to,
               source=source or None,
               threshold_kn=kn, suspect_only=bool(suspect_on),
-              mode=("any" if mode == "any" else "spike"),
+              mode=(mode if mode in ("chain", "spike", "any") else "chain"),
               sort=sort or "ts_desc", page_size=_PAGE_SIZE)
     page = max(1, int(page or 1))
     rows, total = ais_db.positions_qc(page=page, **kw)
@@ -195,10 +195,11 @@ def layout():
     [
         html.H3("Database"),
         html.P("Raw contents of the AIS positions table. Filter, sort and "
-               "hunt corrupt fixes: a row is flagged suspect when the "
-               "implied speed both into and out of the fix exceeds the "
-               "threshold (spike rule), so one glitch marks exactly one "
-               "row. Admins can delete faulty rows.",
+               "hunt corrupt fixes. Default detection: chain mode - every "
+               "fix is gated against the last ACCEPTED fix, so a corrupt "
+               "excursion is rejected in full against the trusted cluster "
+               "instead of validating itself. Admins can delete faulty "
+               "rows.",
                style={"color": MUTED, "maxWidth": "760px"}),
         html.Div(
             [
@@ -257,8 +258,10 @@ def layout():
                               value=[],
                               style={"display": "inline-block",
                                      "fontSize": "0.85rem"}),
-                dcc.Dropdown(id="vtdb-mode", clearable=False, value="spike",
+                dcc.Dropdown(id="vtdb-mode", clearable=False, value="chain",
                              options=[
+                                 {"label": "chain (cluster reference)",
+                                  "value": "chain"},
                                  {"label": "spike (one-off glitch)",
                                   "value": "spike"},
                                  {"label": "any fast leg (excursions)",
