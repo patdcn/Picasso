@@ -632,8 +632,20 @@ def _qc(_r, vessel, d_from, d_to, source, suspect, kn, sort, mode,
     _BULK_ON = {**_BTN, "marginLeft": "5px", "color": "white",
                 "background": RED, "border": f"1px solid {RED}"}
     _BULK_X_ON = {**_BTN, "marginLeft": "5px"}
-    new_bulk, bulk_label = None, ""
-    bulk_c_style = bulk_x_style = {"display": "none"}
+    # Pending bulk-confirm survives triggers that don't invalidate the
+    # selection (map bounds, paging, per-row delete flow). It is cleared by
+    # Cancel, by execution, and by any filter change further below.
+    _RESET_BULK = ("vtdb-vessel", "vtdb-dates", "vtdb-source", "vtdb-suspect",
+                   "vtdb-kn", "vtdb-sort", "vtdb-mode", "vtdb-refresh",
+                   "vtdb-viewfilter", "vtdb-delselx", "vtdb-delselc",
+                   "vtdb-delsel")
+    if bulk and trig not in _RESET_BULK:
+        new_bulk = bulk
+        bulk_label = f"Confirm delete {len(bulk)}"
+        bulk_c_style, bulk_x_style = _BULK_ON, _BULK_X_ON
+    else:
+        new_bulk, bulk_label = None, ""
+        bulk_c_style = bulk_x_style = {"display": "none"}
 
     new_pending = pending
     if trig == "vtdb-delsel" and clicked and can_edit:
@@ -690,13 +702,25 @@ def _qc(_r, vessel, d_from, d_to, source, suspect, kn, sort, mode,
                                          can_edit, new_pending, bbox=bbox)
         if bbox:
             counter = f"{counter} \u00b7 map view"
-        if trig == "vtdb-map":
-            # alleen de tabel volgt de zoom; kaart + viewport blijven staan
-            map_children = map_viewport = no_update
-            hint_style = no_update
-        else:
+        _MAP_SCOPE = (None, "vtdb-refresh", "vtdb-vessel", "vtdb-dates",
+                      "vtdb-source", "vtdb-kn", "vtdb-mode")
+        deleted_now = (trig == "vtdb-delselc"
+                       or (isinstance(trig, dict)
+                           and trig.get("type") == "vtdb-delc"))
+        if trig in _MAP_SCOPE:
+            # data-scope veranderd: lagen + her-fit
             map_children, map_viewport, hint_style = _build_map(
                 vessel, d_from, d_to, source, kn, mode)
+        elif deleted_now:
+            # na een delete: lagen verversen maar NIET her-fitten, zodat de
+            # gebruiker ingezoomd blijft en er geen bounds-event afgaat dat
+            # de bulk-flow zou onderbreken
+            map_children, map_viewport, hint_style = _build_map(
+                vessel, d_from, d_to, source, kn, mode)
+            map_viewport = no_update
+        else:
+            # bounds/paginering/sort/selectie: kaart blijft onaangeroerd
+            map_children = map_viewport = hint_style = no_update
     except ais_db.AisDbError as exc:
         return (_error_card(exc), "", None, page, None, stamp, [], [],
                 [], no_update, no_update, None, "", {"display": "none"},
