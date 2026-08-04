@@ -105,6 +105,24 @@ def _banner(msg, ok=True):
         "color": "#166534" if ok else RED})
 
 
+def _unwrap_lons(latlons):
+    """Make a lat/lon sequence longitude-continuous across the
+    antimeridian: each point's lon is shifted by +-360 so it stays within
+    180 degrees of its predecessor. Leaflet renders lons beyond +-180
+    fine, and the polyline then takes the short hop instead of a lap
+    around the world."""
+    out, prev = [], None
+    for la, lo in latlons:
+        if prev is not None:
+            while lo - prev > 180.0:
+                lo -= 360.0
+            while lo - prev < -180.0:
+                lo += 360.0
+        out.append([la, lo])
+        prev = lo
+    return out
+
+
 def _parse_bounds(b):
     """dl.Map bounds [[south, west], [north, east]] -> normalised
     (lat_min, lat_max, lon_min, lon_max), or None."""
@@ -268,6 +286,9 @@ def _build_map(vessel, d_from, d_to, source, kn, mode):
         return [], no_update, {**hint_on}
     accepted = [r for r in rows if not r[11]]
     suspects = [r for r in rows if r[11]]
+    # doorlopende longitudes over de datumgrens (weergave-coords per rij)
+    uw = _unwrap_lons([[r[3], r[4]] for r in rows])
+    disp = {id(r): uw[i] for i, r in enumerate(rows)}
     # uitdunnen van accepted-markers bij enorme sets (lijn blijft volledig)
     step = max(1, -(-len(accepted) // _MAP_MAX_MARKERS))
     shown_accepted = accepted[::step]
@@ -275,12 +296,12 @@ def _build_map(vessel, d_from, d_to, source, kn, mode):
     children = []
     if len(accepted) >= 2:
         children.append(dl.Polyline(
-            positions=[[r[3], r[4]] for r in accepted],
+            positions=[disp[id(r)] for r in accepted],
             color=TEAL, weight=2, opacity=0.85))
     for r in shown_accepted:
         label = r[0].strftime("%d-%m %H:%M")
         children.append(dl.CircleMarker(
-            center=[r[3], r[4]], radius=3, color=TEAL, fillColor=TEAL,
+            center=disp[id(r)], radius=3, color=TEAL, fillColor=TEAL,
             fillOpacity=0.9, weight=1,
             children=[dl.Tooltip(label, permanent=permanent,
                                  direction="top")]))
@@ -288,12 +309,12 @@ def _build_map(vessel, d_from, d_to, source, kn, mode):
         impl = f" \u00b7 {r[10]:,.0f} kn" if r[10] is not None else ""
         label = r[0].strftime("%d-%m %H:%M") + impl
         children.append(dl.CircleMarker(
-            center=[r[3], r[4]], radius=6, color=RED, fillColor=RED,
+            center=disp[id(r)], radius=6, color=RED, fillColor=RED,
             fillOpacity=0.85, weight=2,
             children=[dl.Tooltip(label, permanent=True,
                                  direction="top")]))
-    lats = [r[3] for r in rows]
-    lons = [r[4] for r in rows]
+    lats = [p[0] for p in uw]
+    lons = [p[1] for p in uw]
     viewport = {"bounds": _pad_bounds([[min(lats), min(lons)],
                                        [max(lats), max(lons)]]),
                 "transition": "flyToBounds",

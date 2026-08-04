@@ -61,11 +61,14 @@ QC_SORTS = {
 
 
 def _eq_dist_nm(lat1, lon1, lat2, lon2):
-    """Equirectangular distance in NM (plenty for gating)."""
+    """Equirectangular distance in NM (plenty for gating). The longitude
+    difference is wrapped across the antimeridian: +179.9 -> -179.9 is a
+    0.2-degree hop, not a 359.8-degree lap around the globe."""
     import math
+    dlon = ((lon2 - lon1 + 180.0) % 360.0) - 180.0
     mid = math.radians((lat1 + lat2) / 2.0)
     return 60.0 * math.sqrt((lat2 - lat1) ** 2
-                            + (math.cos(mid) * (lon2 - lon1)) ** 2)
+                            + (math.cos(mid) * dlon) ** 2)
 
 
 _CHAIN_ASSOC_NM = 10.0        # reject fixes near a just-rejected fix...
@@ -309,7 +312,10 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
                    CASE WHEN b.pts IS NOT NULL THEN
                        60.0 * sqrt(power(b.lat - b.plat, 2)
                            + power(cos(radians((b.lat + b.plat) / 2.0))
-                                   * (b.lon - b.plon), 2))
+                                   * (b.lon - b.plon + 540.0
+                                      - floor((b.lon - b.plon + 540.0)
+                                              / 360.0) * 360.0
+                                      - 180.0), 2))
                    END AS dist_nm,
                    CASE WHEN b.pts IS NOT NULL THEN
                        EXTRACT(EPOCH FROM (b.ts - b.pts)) / 60.0
@@ -317,7 +323,10 @@ def positions_qc(mmsi=None, t_from=None, t_to=None, source=None,
                    CASE WHEN b.nts IS NOT NULL THEN
                        60.0 * sqrt(power(b.nlat - b.lat, 2)
                            + power(cos(radians((b.nlat + b.lat) / 2.0))
-                                   * (b.nlon - b.lon), 2))
+                                   * (b.nlon - b.lon + 540.0
+                                      - floor((b.nlon - b.lon + 540.0)
+                                              / 360.0) * 360.0
+                                      - 180.0), 2))
                    END AS ndist_nm,
                    CASE WHEN b.nts IS NOT NULL THEN
                        EXTRACT(EPOCH FROM (b.nts - b.ts)) / 60.0

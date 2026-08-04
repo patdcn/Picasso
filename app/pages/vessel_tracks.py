@@ -84,11 +84,26 @@ def _vessel_markers(rows):
     return out
 
 
+def _unwrap_lons(latlons):
+    """Longitude-continuous display coords across the antimeridian (the
+    Ever Shine Pacific crossing drew a line around the whole world)."""
+    out, prev = [], None
+    for la, lo in latlons:
+        if prev is not None:
+            while lo - prev > 180.0:
+                lo -= 360.0
+            while lo - prev < -180.0:
+                lo += 360.0
+        out.append([la, lo])
+        prev = lo
+    return out
+
+
 def _track_layer(mmsi, name, points, _hdg=None, _cog=None, _len=None):
     """Polyline + hoverable points for the selected vessel."""
     if not points:
         return [], None
-    latlons = [[p[1], p[2]] for p in points]
+    latlons = _unwrap_lons([[p[1], p[2]] for p in points])
     children = [
         dl.Polyline(positions=latlons, color=TEAL, weight=2.5,
                     opacity=0.85, interactive=False),
@@ -100,7 +115,8 @@ def _track_layer(mmsi, name, points, _hdg=None, _cog=None, _len=None):
                            pathOptions=dict(color=TEAL, fillOpacity=0.9,
                                             weight=1, stroke=True)))]),
     ]
-    for ts, lat, lon, sog, nav_status, source in points:
+    for (ts, lat, lon, sog, nav_status, source), (lat, lon) in zip(
+            points, latlons):
         tip = (f"{ts.strftime('%d-%m %H:%M')} UTC · "
                f"{f'{sog:.1f} kn' if sog is not None else '— kn'} · "
                f"{ais_db.nav_status_label(nav_status)} ({source})")
