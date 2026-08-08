@@ -816,8 +816,11 @@ _SPEC_FIELDS = ("deck_space_m2", "deck_strength_t_m2", "pob", "crane1_swl_t",
     Input("vtf-spec-cancel", "n_clicks"),
     State("vtf-spec-editing", "data"),
     *[State(f"vtf-sp-{f}", "value") for f in _SPEC_FIELDS],
-    prevent_initial_call=True,
 )
+# NB: no prevent_initial_call here. The Specs buttons are created dynamically
+# by the main table callback; prevent_initial_call suppresses clicks on such
+# late-added pattern components (known Dash gotcha). The `clicked` guard
+# below keeps the initial call harmless (panel stays hidden).
 def _spec_editor(_open, _save, _cancel, editing, *values):
     """Open / save / close the capability-spec editor. Runs independently
     from the main fleet callback; failures land in its own banner."""
