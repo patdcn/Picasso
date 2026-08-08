@@ -21,7 +21,7 @@ Full-width dash-leaflet map for the reception-room display:
 Base layer is plain OSM for now; the EMODnet/OpenSeaMap layer stack from
 the Copernicus page follows later.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import os
 
@@ -493,7 +493,16 @@ layout = html.Div(className="full-width-page", children=[
     html.Div([
         html.H3("Tracks", style={"margin": "0 12px 0 0", "display": "inline"}),
         html.Span(id="vtt-subtitle", style={"color": MUTED, "fontSize": "0.85rem"}),
-    ], style={"marginBottom": "8px"}),
+        html.Div(id="vtt-daterange-wrap", style={"display": "none"}, children=[
+            dcc.RangeSlider(
+                id="vtt-daterange", min=-90, max=0, step=1, value=[-30, 0],
+                marks={-90: "90d", -60: "60d", -30: "30d", -14: "14d",
+                       -7: "7d", 0: "now"},
+                allowCross=False,
+                tooltip={"placement": "bottom", "always_visible": False}),
+        ]),
+    ], style={"marginBottom": "8px", "display": "flex", "alignItems": "center",
+              "flexWrap": "wrap", "gap": "4px 14px"}),
     dcc.Interval(id="vtt-tick", interval=900_000, n_intervals=0),  # 15 min kiosk refresh
     # vessel-details modal: permanent in the layout (hidden); populated by
     # its own callback so the big map callback stays untouched
@@ -625,6 +634,7 @@ layout = html.Div(className="full-width-page", children=[
     Output("vtt-info", "children"),
     Output("vtt-info-close", "style"),
     Output("vtt-specs-request", "data"),
+    Output("vtt-daterange-wrap", "style"),
     Input("vtt-tick", "n_intervals"),
     Input("vtt-search", "value"),
     Input("vtt-col-toggle", "n_clicks"),
@@ -636,13 +646,14 @@ layout = html.Div(className="full-width-page", children=[
     Input({"type": "vtt-tf", "val": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-grp", "name": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-specs-open", "imo": dash.ALL}, "n_clicks"),
+    Input("vtt-daterange", "value"),
     State("vtt-selected", "data"),
     State("vtt-typefilter", "data"),
     State("vtt-collapsed", "data"),
     State("vtt-col", "style"),
 )
 def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
-            _sels, _chips, _grps, _specs,
+            _sels, _chips, _grps, _specs, daterange,
             selected, typefilter, collapsed, col_style):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
@@ -656,6 +667,8 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
         specs_request = {"imo": str(trig.get("imo")),
                          "n": ctx.triggered[0].get("value")}
     is_refresh = trig in (None, "vtt-tick") or is_spec_click
+    # a date-range change re-renders the track and refits the view (it is
+    # NOT a refresh), which is exactly what you want when scrubbing
 
     # vessel-column collapse (mirrors the main nav toggle behaviour)
     col_hidden = bool((col_style or {}).get("display") == "none")
@@ -690,14 +703,24 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
     else:
         new_selected = _resolve_selection(trig, clicked, selected)
 
+    d_from, d_to = _range_days(daterange)
     try:
-        all_rows = ais_db.latest_positions()
+        if d_to == 0:
+            # window ends now: use the real-time `latest` fixes (kiosk stays
+            # live; `positions` is downsampled) and age-filter client-side
+            cutoff = datetime.now(timezone.utc) - timedelta(days=d_from)
+            all_rows = [r for r in ais_db.latest_positions()
+                        if r[2] is not None and _as_utc(r[2]) >= cutoff]
+        else:
+            # window ends in the past: historical snapshot per vessel
+            all_rows = ais_db.positions_within(d_from, d_to)
     except ais_db.AisDbError as exc:
         empty = html.Div(str(exc), style={"color": "#b91c1c", "padding": "12px",
                                           "fontSize": "0.85rem"})
         return ([], empty, "Vessels", "", dash.no_update, new_selected,
                 [], typefilter, collapsed, col_style_out, reopen_style,
-                {"display": "none"}, [], {"display": "none"}, specs_request)
+                {"display": "none"}, [], {"display": "none"}, specs_request,
+                {"display": "none"})
 
     chips = _type_chips(all_rows, typefilter)
     rows = [r for r in all_rows
@@ -712,8 +735,10 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
     if new_selected not in mmsis:
         new_selected = None
 
-    subtitle = ("click a vessel for its 30-day track"
-                if new_selected is None else "click the map or the vessel to go back")
+    subtitle = (f"positions within {_range_label(daterange)} \u00b7 "
+                f"click a vessel for its track"
+                if new_selected is None
+                else "click the map or the vessel to go back")
     count = (f"Vessels ({len(rows)})" if typefilter is None
              else f"{typefilter} ({len(rows)} of {len(all_rows)})")
     viewport = dash.no_update
@@ -735,7 +760,7 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
     else:
         mmsi = int(new_selected)
         name = next((r[1] for r in rows if str(r[0]) == new_selected), new_selected)
-        points = ais_db.track(mmsi, days=30)
+        points = ais_db.track(mmsi, days=d_from, days_until=d_to)
         sel_row = next((r for r in rows if str(r[0]) == new_selected), None)
         hdg, cg, ln = ((sel_row[9], sel_row[10], sel_row[11])
                        if sel_row else (None, None, None))
@@ -746,7 +771,8 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
             viewport = {"bounds": _pad_bounds(bounds),
                         "transition": "flyToBounds",
                         "options": {"padding": [25, 25], "maxZoom": 16}}
-        subtitle = (f"{name} — {len(points)} points, last 30 days · " + subtitle)
+        subtitle = (f"{name} — {len(points)} points, {_range_label(daterange)}"
+                    f" · " + subtitle)
 
     if new_selected:
         try:
@@ -767,10 +793,37 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
                     "boxShadow": "0 1px 4px rgba(0,0,0,0.2)"}
                    if info_style.get("display") != "none"
                    else {"display": "none"})
+    range_style = {"width": "340px", "maxWidth": "55vw",
+                    "marginLeft": "auto"}
     return (layer, _vessel_list(rows, new_selected, collapsed), count,
             subtitle, viewport, new_selected, chips, typefilter, collapsed,
             col_style_out, reopen_style, info_style, info_children,
-            close_style, specs_request)
+            close_style, specs_request, range_style)
+
+
+def _as_utc(ts):
+    """positions/latest timestamps are tz-aware; defend against naive ones
+    (older rows) by assuming UTC."""
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=timezone.utc)
+    return ts
+
+
+def _range_days(value):
+    """RangeSlider value [-from, -to] (days ago) -> (days, days_until) for
+    ais_db.track. Defends against None / inverted input."""
+    try:
+        lo, hi = sorted(int(v) for v in (value or (-30, 0)))
+    except (TypeError, ValueError):
+        lo, hi = -30, 0
+    return (max(1, -lo), max(0, -hi))
+
+
+def _range_label(value):
+    d_from, d_to = _range_days(value)
+    if d_to == 0:
+        return f"last {d_from} days"
+    return f"{d_from}\u2013{d_to} days ago"
 
 
 def _resolve_selection(trig, clicked, current):

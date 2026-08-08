@@ -603,6 +603,32 @@ def latest_positions():
     )
 
 
+def positions_within(days, days_until):
+    """Historical fleet snapshot: each vessel's LAST fix inside the window
+    [now - days, now - days_until]. Same row shape as latest_positions().
+    Destination/length come from `latest` (voyage data is not stored per
+    position); the kinematics are the historical ones."""
+    return q(
+        """SELECT p.mmsi,
+                  COALESCE(f.name, initcap(lower(l.ship_name)),
+                           p.mmsi::text)                       AS name,
+                  p.ts, p.lat, p.lon, p.sog, p.nav_status,
+                  l.destination, f.vessel_type, p.heading, p.cog, l.length_m
+           FROM (
+               SELECT DISTINCT ON (mmsi)
+                      mmsi, ts, lat, lon, sog, nav_status, heading, cog
+               FROM positions
+               WHERE ts >= now() - make_interval(days => %s)
+                 AND ts <= now() - make_interval(days => %s)
+               ORDER BY mmsi, ts DESC
+           ) p
+           LEFT JOIN latest l ON l.mmsi = p.mmsi
+           LEFT JOIN fleet  f ON f.mmsi = p.mmsi
+           ORDER BY name""",
+        (days, days_until),
+    )
+
+
 def latest_info(mmsi):
     """All fields the map info-popup shows for one vessel: current fix,
     voyage data (destination/ETA/draught) and fleet metadata. Returns a
@@ -626,16 +652,19 @@ def latest_info(mmsi):
     return dict(zip(keys, r))
 
 
-def track(mmsi, days=30, max_points=1200):
-    """Track points for one vessel over the given window (both sources,
-    chronological). Thinned by striding to at most max_points, keeping the
-    first and last point."""
+def track(mmsi, days=30, days_until=0, max_points=1200):
+    """Track points for one vessel over the window [now - days, now -
+    days_until] (both sources, chronological). days_until=0 keeps the old
+    behaviour (window ends now). Thinned by striding to at most max_points,
+    keeping the first and last point."""
     rows = q(
         """SELECT ts, lat, lon, sog, nav_status, source
            FROM positions
-           WHERE mmsi=%s AND ts >= now() - make_interval(days => %s)
+           WHERE mmsi=%s
+             AND ts >= now() - make_interval(days => %s)
+             AND ts <= now() - make_interval(days => %s)
            ORDER BY ts""",
-        (mmsi, days),
+        (mmsi, days, days_until),
     )
     n = len(rows)
     if n <= max_points:
