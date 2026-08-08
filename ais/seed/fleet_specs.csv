@@ -1,0 +1,141 @@
+imo,name,built_year,deck_space_m2,deck_strength_t_m2,pob,crane1_swl_t,crane2_swl_t,sat_type,sat_divers,bell_config,rov_hangar,confidence,source_note
+1087134,ALTERA,,,,,,,none,,none,,medium,"N-Sea/Neptune shallow-water support - air dive support, no sat | sat/bell=none is certain (non-DSV); other fields unverified"
+9639842,ASTRO AURORA,2014,940,,105,150,,none,,none,,high,"Clarksons 06/2026: Astro Aurora 150t, 940 m2, POB 105, DP3, 2014 Sinopacific | sat=none (non-DSV)"
+8205620,ATLANTIC TONJER,1983,550,,105,50,,none,,none,0,high,"Clarksons 08/2026: Atlantic Tonjer 50t, 550 m2, POB 105 | sat=none (non-DSV)"
+9808613,African Pioneer,2023,1500,,120,400,,integrated,24,twin,2,high,"DCN DSV fleet sheet 08/2026 (Spinergie); deck: web source had 2200 | ex-Ultra Deep Matisse, MT6027 145m; 24-man twin bell twin 24-man SPHL, 400t Huisman 5200m, 2200 m2, 2 WROV hangars (design specs; verify as-delivered)"
+8521048,Akademik Tofiq Ismayilov,1986,800,,104,25,,integrated,12,single,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | Caspian DSV; SPHL 16 pers suggests 16-man system; bell config unverified
+9799604,Andy Warhol,2025,800,,120,150,,integrated,18,single,2,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | MT6023 107m sister of Van Gogh; 18-man 300m, 150t AHC 3000m, 2 WROV in hangars; bell config unconfirmed (design=single)"
+9624988,Athena,2013,1500,,120,150,,integrated,12,single,,high,"DCN DSV fleet sheet 08/2026 (Spinergie); c1: web source had 250 | ex-SBM Installer MT6024 double-deck; integrated 12-man 300m, 250t knuckle boom + 150t winch, DP3; bell config single assumed"
+9395800,Aureus,2007,700,,120,50,,integrated,15,single,1,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | ex-Ullswater (Hallin): 15-man sat, 50t crane, 700 m2, POB 125, moonpool, CROV WROV"
+9676280,BOKA SPEARFISH,2014,1300,,110,250,,none,,none,,high,"Clarksons 02/2026: Boka Spearfish 250t, 1300 m2, POB 110 (Vard 303; ROV not listed) | sat=none (non-DSV)"
+9165877,BOTNICA,1998,1000,,72,150,,none,,none,0,high,"Clarksons 12/2025: Botnica 150t, ~1000 m2 (sheets vary 670-1000), POB 72 | sat=none (non-DSV)"
+9629835,BOURBON EVOLUTION 802,2012,940,,105,150,40,none,,none,2,medium,"Bourbon Evolution 800-series MPSV: 100t AHC, 2 internal ROV hangars, POB ~94 (from class knowledge - verify) | sat/bell=none is certain (non-DSV); other fields unverified | UNO list: BE 800-series 150t AHC + 40t AHC, 940 m2, POB 105, DP3"
+9639804,BOURBON EVOLUTION 803,2013,940,,105,150,40,none,,none,2,medium,"Bourbon Evolution 800-series MPSV: 100t AHC, 2 internal ROV hangars, POB ~94 (from class knowledge - verify) | sat/bell=none is certain (non-DSV); other fields unverified | UNO list: BE 800-series config"
+9639816,BOURBON EVOLUTION 804,2013,940,,105,150,40,none,,none,2,medium,"Bourbon Evolution 800-series MPSV: 100t AHC, 2 internal ROV hangars, POB ~94 (from class knowledge - verify) | sat/bell=none is certain (non-DSV); other fields unverified | UNO list: BE 800-series config"
+9639830,BOURBON EVOLUTION 806,2013,940,,105,150,40,none,,none,2,medium,"Bourbon Evolution 800-series MPSV: 100t AHC, 2 internal ROV hangars, POB ~94 (from class knowledge - verify) | sat/bell=none is certain (non-DSV); other fields unverified | UNO list: BE 800-series config"
+9639854,BOURBON EVOLUTION 808,2014,940,,105,150,40,none,,none,2,medium,"Bourbon Evolution 800-series MPSV: 100t AHC, 2 internal ROV hangars, POB ~94 (from class knowledge - verify) | sat/bell=none is certain (non-DSV); other fields unverified | UNO list: BE 800-series config"
+9639878,BOURBON EVOLUTION 810,2014,940,,105,150,40,none,,none,2,medium,"Bourbon Evolution 800-series MPSV: 100t AHC, 2 internal ROV hangars, POB ~94 (from class knowledge - verify) | sat/bell=none is certain (non-DSV); other fields unverified | UNO list: BE 800-series config"
+9441221,Boka Atlantis,2011,1120,10,120,140,40,integrated,18,twin,1,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | Boskalis sheet: Drass 18-man twin bell 300m, TTS 140t AHC + 40t, 1120 m2 @ 10 t/m2, POB 120, Seaeye Cougar WROV"
+9441233,Boka Da Vinci,2011,1120,10,120,140,40,integrated,18,twin,1,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | Sister Boka Atlantis; Boskalis: twin bell 300m, 140t AHC + 40t, 1120 m2, POB 120"
+9187526,Boka Polaris,1998,700,5,104,150,10,integrated,18,twin,,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | Boskalis sheet: 18-man 300m, 2 bells, 150t Kenz AHC + 10t, 700 m2 @ 5 t/m2, POB 104+18 sat, 2 moonpools"
+9382815,Boka Topaz,2007,900,,105,150,,integrated,18,twin,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | ex-Bibby Topaz (ST 256L): 18-man twin bell 300m
+9309112,CCC Pioneer,2005,700,,112,100,,integrated,12,single,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | CCC Pioneer 83.5m DP2 DSV; sat capacity/bell unverified - check CCC fleet sheet
+9781190,Challenger,2017,800,,105,100,20,integrated,12,single,0,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | ex-Kreuz Challenger VARD 3 17; 12-man single bell 300m + SPHL, 100t AHC + 10/20t aux winch, POB 105; ROV-prepared (side launch, no hangar)"
+9524932,Constructor,2010,685,,80,100,,integrated,12,single,1,high,"DCN DSV fleet sheet 08/2026 (Spinergie); pob: web source had 70 | ex-Noordhoek Constructor; 12-man single bell 200m, 100t crane, 685 m2, POB 70, permanent WROV+obs"
+9479541,DEEP CYGNUS,2009,1400,,92,150,,none,,none,1,high,"Clarksons 08/2026: Deep Cygnus 150t, 1400 m2, 1x WROV, POB 92 | sat=none (non-DSV)"
+9255139,DEEP VISION,2002,720,,70,60,,none,,none,2,high,"Clarksons 02/2026: Deep Vision 60t, 720 m2, 2x WROV in hangars + 1 OBSROV, POB 70 | sat=none (non-DSV)"
+9648697,DINA STAR,2013,1060,,72,150,,none,,none,,high,"Clarksons 08/2026: Dina Star 150t, 1060 m2, POB 72 (2x DO WROV in 02/2026 sheet - charter-dependent) | sat=none (non-DSV)"
+8601513,DS MERMAID COMMANDER,1987,700,,90,60,,integrated,16,single,,high,"DCN DSV fleet sheet 08/2026 (Spinergie); bell: web source had twin | Mermaid AR: 16-man twin bell + SPHL, 60t crane, POB 90"
+9413822,Deep Arctic,2009,2100,10,120,250,,integrated,18,twin,2,high,"DCN DSV fleet sheet 08/2026 (Spinergie); pob: web source had 140; c1: web source had 400; divers: web source had 24 | ex-Skandi Arctic OSCV06L 156.9m; 24-man twin bell, 400t NOV crane 2000m wire, deck 10 t/m2, POB 140"
+9727833,Deep Discoverer,2019,1050,,120,250,,integrated,18,twin,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | Vard 2019; 18-man twin bell + 250t crane from memory - verify against TechnipFMC datasheet
+9729726,Deep Explorer,2016,1680,,150,400,,integrated,24,twin,2,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | Vard 156.7m; JFD 24-man twin bell 350m, 400t box boom, 1680 m2, POB 150, WROVs, DP3"
+9715660,EDDA FREYA,2016,2300,,140,400,,none,,none,2,high,"Clarksons 02/2026: Edda Freya 400t, 2300 m2, 2x WROV, POB 140, DP3 | sat=none (non-DSV)"
+9491422,EDT HERCULES,,,,,,,none,,none,,medium,EDT MPSV - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9491410,EDT JANE,,,,,,,none,,none,,medium,EDT MPSV - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9339428,EDT PROMETHEUS,2005,731,,74,110,,none,,none,0,high,"Clarksons 08/2026: EDT Prometheus 110t, 731 + 304 mezz, POB 74 | sat=none (non-DSV)"
+9019107,EDT Protea,1999,,,,,,integrated,12,single,,low,EDT Protea - permanent sat system per Boskalis charter reference; capacity unverified
+9639828,ELARA DALIMBAR 1,,,,,,,none,,none,,medium,Cargo/utility (Indonesia) - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9777307,ENERGY SAVANAH,2021,1100,,100,150,,none,,none,2,high,"Clarksons 08/2026: Energy Savanah 150t, 1100 m2, POB 100 | sat=none (non-DSV)"
+9777319,ENERGY SPHYNX,2021,1100,,100,150,,none,,none,,high,"Clarksons 08/2026: Energy Sphynx 150t, 1100 m2, POB 100 | sat=none (non-DSV)"
+9300386,EVER SHINE,,,,,,,none,,none,,medium,OSV - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9196747,EXPLORER,2000,497,,40,50,,none,,none,0,high,"Clarksons 08/2026: Explorer 50t, 497 m2, POB 40 | sat=none (non-DSV)"
+9554597,Emerald,2010,545,,128,100,,integrated,12,single,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | Sister of Southern Nova (Crest Odyssey class) - assumed same config; verify Micoperi fit-out
+9249439,GEOQUIP ELENA,2002,1000,,60,100,,none,,none,0,high,"Clarksons 08/2026: Geoquip Elena 100t, 1000 m2, POB 60 (78 in earlier sheets) | sat=none (non-DSV)"
+9394301,GLOMAR SUPPORTER,2009,377,,54,45,,none,,none,1,high,"Clarksons 06/2026: Glomar Supporter 45t stern A-frame + 9t, 377 + 120 mezz, 1x WROV, POB 54 | sat=none (non-DSV)"
+9682617,GLOMAR WAVE,2014,250,,59,1,,none,,none,0,high,"Clarksons 06/2026: Glomar Wave 1t crane, 250 m2, POB 59 | sat=none (non-DSV)"
+9545481,GO ELECTRA,2011,506,,66,25,,none,,none,1,high,"Clarksons 08/2026: Go Electra 25t, 506 m2, 1x WROV + 1 ROV, POB 66 | sat=none (non-DSV)"
+9614608,GRAND CANYON,2012,,,,250,,none,,none,2,medium,"Volstad Grand Canyon-class ROV/trenching OCV: 250t AHC, 2 WROV hangars (class knowledge - verify) | sat/bell=none is certain (non-DSV); other fields unverified"
+9653874,GRAND CANYON II,2016,1650,,110,250,,none,,none,2,high,"Clarksons 02/2026: Grand Canyon II 250t, 1650 m2, 2x WROV, POB 110, DP3 | sat=none (non-DSV)"
+9695963,GRAND CANYON III,2016,,,,250,,none,,none,2,medium,"Volstad Grand Canyon-class ROV/trenching OCV: 250t AHC, 2 WROV hangars (class knowledge - verify) | sat/bell=none is certain (non-DSV); other fields unverified"
+8324579,GSP Falcon,1989,863,,139,200,,integrated,12,single,,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | ex-Wellservicer; 18-man twin bell from service history - STACKED Tuzla, condition unknown"
+9285586,Geo Ocean III,,,,,,,none,,none,,medium,Survey vessel - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9739044,HAI YANG SHI YOU 285,2016,,,,250,25,integrated,12,single,2,high,"Fleet notes: 300m sat, 12 divers, 3-man bell, 250t + 25t AHC, 2x200HP WROV, moonpool, DP3"
+9657882,HAI YANG SHI YOU 289,2013,1300,,100,250,,,,,,medium,"COOEC HYSY 289 - sat/dive configuration unverified; likely construction/dive support | UNO list: 250t AHC, 1300 m2, POB 100, 7.2x7.2 moonpool, DP2, built 2013; sat config still unverified"
+9505508,HAVILA SUBSEA,2011,600,,78,150,,none,,none,2,high,"Clarksons 08/2026: Havila Subsea 150t, 600 m2, 2x WROV, POB 78 | sat=none (non-DSV)"
+9122796,HD Contender,1996,400,,60,40,,integrated,8,single,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | ex-Komandor Subsea 2000; dive config unverified
+9252462,HD Enterprise,2002,500,,74,60,,integrated,9,single,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | Hydrodive DSV; dive config unverified
+9759903,ISLAND DILIGENCE,2018,290,,100,20,,none,,none,0,high,"Clarksons 08/2026: Island Diligence W2W, 20t, 290 open + 210 covered, Uptime gangway, POB 100 | sat=none (non-DSV)"
+9356191,ISLAND VALIANT,2007,860,,60,90,,none,,none,1,high,"Clarksons 08/2026: Island Valiant 90t, 860 m2, 1x WROV, POB 60 | sat=none (non-DSV)"
+9356189,ISLAND VANGUARD,2007,740,,54,15,,none,,none,1,high,"Clarksons 08/2026: Island Vanguard 15t, 740 m2, 1x WROV, POB 54 | sat=none (non-DSV)"
+9745615,ISLAND VICTORY,2021,1200,,110,250,,none,,none,2,high,"Clarksons 02/2026: Island Victory 250t, 1200 m2, 2x WROV, POB 110, BP 477 | sat=none (non-DSV)"
+1118414,Jana 201,2026,,,,,,,,,,low,Newbuild Q3 2026 (Guangzhou Salvage) - specs TBC
+9562427,Kelly Ann Candies,2010,500,,74,60,,integrated,14,single,1,high,"DCN DSV fleet sheet 08/2026 (Spinergie); pob: web source had 76 | Aqueos/Otto Candies: built-in 14-man Draeger sat, 3-man bell moonpool + cursor, SPHL, 60t crane, POB 76, 1 WROV"
+9757369,Khankendi,2017,1750,,175,900,,integrated,18,twin,2,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | BP Shah Deniz SCV Keppel/Baku; sat-capable, capacity unverified (18-man assumed); 2 WROV"
+9758296,Lichtenstein,2017,1300,,130,140,,integrated,18,twin,1,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | MT6024; JFD Lexmar 18-man twin bell 300m, 140t AHC, 1300 m2, POB 130; 1 WROV + 1 obs ROV"
+9769130,MPV Everest,2017,1400,,140,250,50,integrated,18,twin,2,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | MCS/DCN: 18-man twin bell 300m, 250t + 50t AHC, 1400 m2, POB 140, 2 WROV + 1 insp, ROV moonpool, Ice 1A DP3"
+9639866,MUKAVEMET,,,,,,,none,,none,,medium,Salvage/tug (Turkey) - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9481817,Mermaid Asiana,2010,700,,86,100,,integrated,12,single,,high,"DCN DSV fleet sheet 08/2026 (Spinergie); pob: web source had 100 | Mermaid AR: 12-man single bell + SPHL, 100t AHC, POB 100"
+9484778,Mermaid Endurer,2010,1000,,86,100,,integrated,18,single,,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | Mermaid AR: 18-man single bell + SPHL, 100t AHC, POB 86"
+9545663,N-SEA PATHFINDER,2011,,,,,,none,,none,,medium,ex-Noordhoek Pathfinder ROV/survey SV - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9660102,NG SUPPORTER,,,,,,,deck,12,single,,low,Deck SAT system per fleet notes (Saipem); 12-man modular assumed
+9502477,NORMAND AUSTRALIS,,,,,,,none,,none,,medium,Solstad CSV - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9468190,NORMAND BALTIC,2010,900,,80,100,,integrated,9,single,,medium,"Solstad CSV - no sat | sat/bell=none is certain (non-DSV); other fields unverified | UNO 2016 list: 9-man sat, 100t AHC, 900 m2, POB 80, 7.2x7.2 moonpool - VERIFY current dive status"
+9447964,NORMAND DROTT,2010,760,,70,20,,none,,none,1,high,"Clarksons 08/2026: Normand Drott 20t, 760 m2, 1x WROV, POB 70, BP 339 | sat=none (non-DSV)"
+9687241,NORMAND FRONTIER,,,,,,,none,,none,,medium,Solstad CSV - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9249348,NORMAND MERMAID,2002,765,,70,100,,none,,none,2,high,"Clarksons 08/2026: Normand Mermaid DP3, 100t, 765 m2, POB 70 (2x WROV in 02/2026 sheet) | sat=none (non-DSV)"
+9678939,NORMAND OCEAN,2014,,,,,,none,,none,,medium,Solstad OCV - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9707716,NORMAND SENTINEL,2015,1800,,130,350,,none,,none,2,high,"Clarksons 12/2025: Normand Sentinel 350t, 1800 m2, 2x WROV, POB 130, DP3 | sat=none (non-DSV)"
+9766877,NORMAND SUPERIOR,2017,875,,85,150,,none,,none,,high,"Clarksons 08/2026: Normand Superior 150t, 875 m2, POB 85 | sat=none (non-DSV)"
+9524073,NORTH SEA GIANT,2011,2200,,110,400,,none,,none,2,high,"Clarksons 02/2026: North Sea Giant 400t, 2200 m2, 2x WROV, POB 110, DP3 | sat=none (non-DSV)"
+9258533,NORTHERN VICTORIA,2003,640,,49,20,,none,,none,0,high,"Clarksons 08/2026: Northern Victoria 20t, 640 m2, POB 49 | sat=none (non-DSV)"
+9231535,Normand Cutter,2001,1600,,114,300,,none,,none,2,high,"Clarksons 08/2026: Normand Cutter 300t, 1600 m2, 2x WROV, POB 114 | sat=none (non-DSV)"
+9328819,Normand Installer,2006,2500,,100,250,50,integrated,,,,medium,"SBM installation vessel - crane unverified, no sat | sat/bell=none is certain (non-DSV); other fields unverified | UNO list: 250t AHC + 50t, 2500 m2, POB 100, 7x7 moonpool, sat-capable (capacity n/a), DP3"
+9686821,Normand Jarstein,2014,1230,,110,250,,none,,none,2,high,"Clarksons 02/2026: Normand Jarstein 250t, 1230 m2, 2x WROV, POB 110 | sat=none (non-DSV)"
+9687356,Normand Navigator,2015,1800,,130,350,,none,,none,2,high,"Clarksons 04/2026: Normand Navigator (VARD 3 07 sister Sentinel) 350t, 1800 m2, 2x WROV, POB 130, DP3 | sat=none (non-DSV)"
+9179751,Normand Pioneer,1999,,,,,,none,,none,,medium,Solstad AHTS/CSV - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9693915,OLV Venture 1,2014,600,,155,100,,integrated,12,single,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | Hangtong-built DSV; sat configuration unverified
+9665712,OLYMPIC ARES,2013,1300,,102,250,50,none,,none,2,high,"Clarksons 11/2025: Olympic Ares 250t + 50t, 1300 m2, 2x WROV, POB 102 | sat=none (non-DSV)"
+9745768,OLYMPIC DELTA,2015,900,,80,80,,none,,none,2,high,"Clarksons 08/2026: Olympic Delta 80t, 900 m2, 2x WROV, POB 80 | sat=none (non-DSV)"
+9617313,OLYMPIC ORION,2012,650,,108,100,,none,,none,0,high,"Clarksons 08/2026: Olympic Orion 100t, 650 m2, Ampelmann E1000, POB 108 | sat=none (non-DSV)"
+9628465,OLYMPIC TAURUS,2012,1060,,60,125,,none,,none,2,high,"Clarksons 08/2026: Olympic Taurus 125t, 1060 m2, 2x WROV, POB 60 | sat=none (non-DSV)"
+9383754,OLYMPIC TRITON,2007,940,,100,150,,none,,none,2,high,"Clarksons 08/2026: Olympic Triton 150t, 940 m2, 2x WROV, POB 100 | sat=none (non-DSV)"
+9424728,OLYMPIC ZEUS,2009,800,,68,250,,none,,none,2,high,"Clarksons 08/2026: Olympic Zeus 250t, 800 m2, 2x WROV, POB 68, BP 285 | sat=none (non-DSV)"
+9802645,Oriental Dragon,2019,900,,120,250,30,integrated,24,twin,2,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | DeepOcean/Shelf: Drass 24-man twin bell 300m, 250t AHC + 30t, ~900 m2, POB 120, twin ROV hangars (side + moonpool), DP3"
+8600818,PMS Mayo,1987,400,,100,60,,integrated,16,single,,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | ex-DSND/Stena Mayo 1987 DSV; built-in sat, capacity unverified"
+9265342,POSH DEEP C,,,,,,,,,,,low,POSH Deep C DP2 DSV; likely air dive / portable sat - verify
+9812822,POSH Mallard,2017,700,,120,120,12,integrated,18,single,1,high,"DCN DSV fleet sheet 08/2026 (Spinergie); deck: web source had 550; pob: web source had 108; divers: web source had 12 | POSH sheet: 120t AHC + 12t aux, 12-man sat, 550 m2, POB 108, WROV"
+9264518,PSL Eagle,2004,800,,60,120,,integrated,12,single,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | 2002 US-built MPSV/DSV; dive config unverified
+9698783,Picasso,2018,1300,,130,140,40,integrated,18,twin,1,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | DCN spec sheet: 18-man twin-bell 300m, 140t AHC 3000m + 40t, 1300 m2, POB 130; 200HP WROV (UDS)"
+8359043,SANDPIPER 1,,,,,,,none,,none,,medium,Allseas support - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9424508,SEA1 DORADO,,,,,,,none,,none,,medium,Siem OSCV - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9660114,SIEM BARRACUDA,2014,,,,,,none,,none,,medium,Siem OSCV - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+7129049,SOLITAIRE,1972,,,420,3000,35,none,,none,,medium,"Allseas pipelay vessel - no sat | UNO list: 3000t + 35t, POB 420 (pipelayer)"
+9484845,STRIL EXPLORER,2010,,,,,,none,,none,,medium,Stril/MMT survey & IMR - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9665047,STRIL SERVER,2014,615,,90,70,,none,,none,2,high,"Clarksons 11/2025: Stril Server 70t, 615 m2, 2x WROV, POB 90 | sat=none (non-DSV)"
+9774965,Said Aletheia,2018,800,,149,150,50,integrated,12,single,1,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | CCC/Baird: 96.3m; 12-man integrated sat 300m, 150t MacGregor + 50t Liebherr, POB 149, Seaeye Leopard WROV; deck ~800 m2 (broker)"
+9268150,Sapphire,2005,800,,136,150,,integrated,15,twin,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | ex-Bibby Sapphire; 12-man single bell from memory - verify
+9483061,Seamec Agastya,2010,700,,120,50,,integrated,15,single,1,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | ex-Windermere (Hallin, Ullswater upgrade): 15-man sat, 50t AHC 1500m; assumed similar deck/POB"
+9412206,Seamec Anant,2023,700,,60,15,9,deck,,,,medium,"Fleet notes: 15t West Marine + 9t Heila; DSV upgrade 2023-25, sat details TBC | UNO list (as Nordic Amprak, pre-conversion): 100t AHC, 700 m2, POB 60 - post-2023 DSV refit per fleet notes 15t+9t cranes; VERIFY current config"
+8109292,Seamec II,1982,640,,90,100,,integrated,12,single,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | 1982 Stena-era DSV with built-in sat; capacity unverified
+8128339,Seamec III,1983,640,,90,50,,integrated,18,single,,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | 1983 sister Seamec II; built-in sat, capacity unverified"
+9388091,Seamec Paladin,2008,900,,100,140,,integrated,12,single,,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | ex-Toisa Paladin Kleven 2008; 12-man assumed, crane unverified"
+8302959,Seamec Princess,1984,1050,,117,100,,integrated,12,single,,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | 1984 DSV; built-in sat, capacity unverified"
+9385300,Seamec Swordfish,2007,1150,,100,150,,deck,15,single,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | ex-Siem/Subtech Swordfish; modular 12-man deck sat assumed - verify Seamec sheet
+8324567,Seawell,1987,,,122,,,integrated,18,twin,2,high,"Helix: 18-man twin bell 300m, twin ROV, 150t MHS tower, POB 122"
+9419125,Seven Atlantic,2010,1200,,150,120,,integrated,24,twin,1,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | IHC 144.8m; Divex 24-man 350m twin bell, 120t AHC + 2 aux, 1200 m2, POB 150; 2 obs + 1 modular WROV"
+9455167,Seven Falcon,2010,1050,,120,250,,integrated,24,twin,2,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | Havyard; 24-man twin bell 300m, 250t AHC, 1050 m2, POB 120, 2 WROV"
+9679921,Seven Kestrel,2017,1038,,110,120,,integrated,18,twin,1,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | Subsea7 datasheet: 18-man twin bell 300m, 120t AHC, 1038 m2, deck load 1000t, POB 110, DP3"
+9392509,Seven Pegasus,2008,1200,,128,400,,integrated,18,twin,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | Subsea7 datasheet: 18-man twin bell below deck; crane 250t AHC from memory - verify; twin LARS air dive
+9399143,Shaddad,2014,484.5,,93,100,15,integrated,18,single,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | Fleet notes: 100t + 15t cranes; 12-man sat assumed - verify Milaha sheet
+9648570,Shen Qian Hao,2012,1500,,140,350,,integrated,12,single,,high,DCN DSV fleet sheet 08/2026 (Spinergie) | Shanghai Salvage 300m sat DSV; capacity/bell unverified | UNO 2017 list had 140t AHC (DCN sheet: 350t - possible crane upgrade)
+9676292,Siem Stingray,,,,,,,none,,none,,medium,Siem OSCV - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9413810,Skandi Achiever,2007,735,7.5,100,140,,integrated,18,single,1,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | DOF booklet: Aker DSV06, 735 m2 + 153 mezz @ 5-10 t/m2, POB 100, ROV hangar; 18-man sat + 140t AHC from sister design - verify"
+9429857,Skandi Singapore,2011,1000,,100,140,,integrated,18,twin,2,high,"DCN DSV fleet sheet 08/2026 (Spinergie); deck: web source had 900 | DOF spec: Aker06, 900 m2, 140t AHC, 18-man sat, 2 built-in Triton XLX WROV, POB ~100"
+9554585,Southern Nova,2010,800,,132,100,,integrated,12,single,1,high,"DCN DSV fleet sheet 08/2026 (Spinergie); deck: web source had 630; pob: web source had 128 | Shelf Subsea: 12-man 3-man bell moonpool 300m, 100t AHC, 630 m2 + 116 m2 mezz, POB 128"
+9754484,Southern Star,2017,1000,,120,150,10,integrated,15,single,2,high,DCN DSV fleet sheet 08/2026 (Spinergie) | Tasik: MacGregor 150t AHC 3000m + 25t whip + 2x10t aux; integral ROV hangar for 2 WROV; 12-man sat single bell - capacity/bell verify
+9615987,Tidebon 801,2012,940,,105,150,40,none,,none,2,medium,"Bourbon Evolution 800-series MPSV: 100t AHC, 2 internal ROV hangars, POB ~94 (from class knowledge - verify); Tidebon 801 = ex-BE 801 | sat/bell=none is certain (non-DSV); other fields unverified | UNO list: BE 800-series config (ex BE 801)"
+9489651,VIKING REACH,2009,650,,72,70,,none,,none,1,high,"Clarksons 08/2026: Viking Reach 70t, 650 m2, 1x WROV + 1 SROV, POB 72 | sat=none (non-DSV)"
+9777553,Van Gogh,2019,1000,,120,150,,integrated,18,single,2,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | MT6023 114m; 18-man 300m twin 18-man SPHL, 150t AHC; sources conflict single vs twin bell (launch: single); 2 built-in WROV hangars per OEDigital"
+1075014,Viking Vigor,2026,900,,100,150,,none,,none,2,high,"Clarksons 08/2026: Viking Vigor (ex Cecon Vigor) 150t AHC/3D, 900 m2, 2x WROV, POB 100, NSK 6580 IMR 2026 | sat=none (non-DSV)"
+9749439,Wadad Aletheia,2024,1850,15,200,400,25,integrated,24,twin,2,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | CCC: Drass i100 24-man twin bell 300m, MacGregor 400t + 25t AHC, 1850 m2 @ 15 t/m2, POB 200, ROV hangar 2x WROV side launch, DP3"
+9421996,Well Enhancer,2008,1100,,122,150,5,integrated,18,single,2,high,"DCN DSV fleet sheet 08/2026 (Spinergie); c1: web source had 100; bell: web source had twin | Helix: 18-man twin bell 300m, 100t crane + 150t MPT tower, POB 122, 2x WROV, DP3"
+8304799,Wilchief 1,1984,550,,80,140,,integrated,15,single,,high,"DCN DSV fleet sheet 08/2026 (Spinergie) | ex-CSO Alliance 1984 DSV; built-in sat, details unverified"
+9905667,ZWERVER V,2023,800,,60,100,60,none,,none,1,high,"Clarksons 08/2026: Zwerver V 100t + 60t, 800 m2, 1x WROV + trencher, POB 60, DP2/4PM | sat=none (non-DSV)"
+9614878,Zwerver 3,,,,,,,none,,none,,medium,van Stee workboat - no sat | sat/bell=none is certain (non-DSV); other fields unverified
+9440370,Blue Stingray,2010,1000,,,300,,,,,,high,DCN DSV fleet sheet 08/2026 - vessel NOT yet in AIS fleet table (import matches once added)
+9549176,Ebano (exNN Regulus),2011,600,,,60,,integrated,12,single,,high,DCN DSV fleet sheet 08/2026 - vessel NOT yet in AIS fleet table (import matches once added)
+9171852,Forza Positano,1998,700,,200,100,,integrated,14,single,,high,DCN DSV fleet sheet 08/2026 - vessel NOT yet in AIS fleet table (import matches once added)
+9440368,NN Leonis,2008,1000,,,300,,integrated,12,single,,high,DCN DSV fleet sheet 08/2026 - vessel NOT yet in AIS fleet table (import matches once added)
+8224494,Oceanic Installer,1984,450,,88,60,,integrated,14,single,,high,DCN DSV fleet sheet 08/2026 - vessel NOT yet in AIS fleet table (import matches once added)
+8318453,Samudra Sevak,1988,630,,93,120,,,,,,high,"DCN DSV fleet sheet 08/2026 - vessel NOT yet in AIS fleet table (import matches once added) | UNO list: Samudra Sevak 110t, POB 93, 7.2x7.2 moonpool (ONGC)"
+9518311,Seven Pacific,2010,1700,,100,250,,none,,none,,high,DCN DSV fleet sheet 08/2026 - vessel NOT yet in AIS fleet table (import matches once added)
