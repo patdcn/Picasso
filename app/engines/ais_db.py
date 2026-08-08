@@ -603,6 +603,33 @@ def latest_positions():
     )
 
 
+_OLDEST_CACHE = {"stamp": 0.0, "days": None}
+
+
+def oldest_position_age_days(default=90, ttl=3600):
+    """Age in whole days of the oldest stored position, +1 so the slider
+    reaches it. TTL-cached per worker (it moves once a day at most) and a
+    failure NEVER gets cached: on error we serve the last known value (or
+    the default) and retry on the next call."""
+    import time as _time
+    now = _time.time()
+    if (_OLDEST_CACHE["days"] is not None
+            and now - _OLDEST_CACHE["stamp"] < ttl):
+        return _OLDEST_CACHE["days"]
+    try:
+        rows = q("""SELECT floor(extract(epoch FROM (now() - min(ts)))
+                              / 86400)::int
+                    FROM positions""")
+        days = rows[0][0] if rows and rows[0][0] is not None else None
+    except AisDbError:
+        days = None
+    if days is None:
+        return _OLDEST_CACHE["days"] or default
+    days = max(7, int(days) + 1)
+    _OLDEST_CACHE.update(stamp=now, days=days)
+    return days
+
+
 def positions_within(days, days_until):
     """Historical fleet snapshot: each vessel's LAST fix inside the window
     [now - days, now - days_until]. Same row shape as latest_positions().

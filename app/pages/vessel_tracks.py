@@ -634,6 +634,8 @@ layout = html.Div(className="full-width-page", children=[
     Output("vtt-info-close", "style"),
     Output("vtt-specs-request", "data"),
     Output("vtt-daterange-wrap", "style"),
+    Output("vtt-daterange", "min"),
+    Output("vtt-daterange", "marks"),
     Input("vtt-tick", "n_intervals"),
     Input("vtt-search", "value"),
     Input("vtt-col-toggle", "n_clicks"),
@@ -704,6 +706,7 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
 
     d_from, d_to = _range_days(daterange)
     try:
+        max_days = ais_db.oldest_position_age_days()
         if d_to == 0:
             # window ends now: use the real-time `latest` fixes (kiosk stays
             # live; `positions` is downsampled) and age-filter client-side
@@ -719,7 +722,7 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
         return ([], empty, "Vessels", "", dash.no_update, new_selected,
                 [], typefilter, collapsed, col_style_out, reopen_style,
                 {"display": "none"}, [], {"display": "none"}, specs_request,
-                {"display": "none"})
+                {"display": "none"}, dash.no_update, dash.no_update)
 
     chips = _type_chips(all_rows, typefilter)
     rows = [r for r in all_rows
@@ -797,7 +800,8 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
     return (layer, _vessel_list(rows, new_selected, collapsed), count,
             subtitle, viewport, new_selected, chips, typefilter, collapsed,
             col_style_out, reopen_style, info_style, info_children,
-            close_style, specs_request, range_style)
+            close_style, specs_request, range_style,
+            -max_days, _range_marks(max_days))
 
 
 def _as_utc(ts):
@@ -806,6 +810,20 @@ def _as_utc(ts):
     if ts.tzinfo is None:
         return ts.replace(tzinfo=timezone.utc)
     return ts
+
+
+def _range_marks(max_days):
+    """Slider marks for a data-driven lookback: now/7/14/30, then 30-day
+    steps (90-day steps once the archive grows past a year), always ending
+    at the oldest-data bound itself."""
+    marks = {0: "now", -7: "7d", -14: "14d"}
+    step = 30 if max_days <= 400 else 90
+    d = 30
+    while d < max_days:
+        marks[-d] = f"{d}d"
+        d += step
+    marks[-max_days] = f"{max_days}d"
+    return {k: v for k, v in marks.items() if k >= -max_days}
 
 
 def _range_days(value):
