@@ -36,7 +36,7 @@ from app.engines import ais_db, sv_api
 
 PAGE_PATH = "/vessel-tracker/fleet"
 
-dash.register_page(__name__, path=PAGE_PATH, name="Fleet",
+dash.register_page(__name__, path=PAGE_PATH, name="AIS Fleet",
                    category="Vessel Tracker", order=1)
 
 INK = "#1f2937"
@@ -295,10 +295,19 @@ def _build_table(pending_delete=None, editing=None, search="", ftype=None,
                 d["region"] or "\u2014", d["tier"] or "\u2014",
                 d["notes"] or "\u2014",
                 status, action,
-                html.Button("Edit", n_clicks=0,
-                            id={"type": "vtf-edit", "imo": str(imo)},
-                            style={**_BTN, "padding": "1px 8px",
-                                   "fontSize": "0.72rem"}) if can_edit else "",
+                html.Span([
+                    html.Button("Edit", n_clicks=0,
+                                id={"type": "vtf-edit", "imo": str(imo)},
+                                style={**_BTN, "padding": "1px 8px",
+                                       "fontSize": "0.72rem",
+                                       "marginRight": "4px"}),
+                    html.Button("Specs", n_clicks=0,
+                                id={"type": "vtf-spec", "imo": str(imo)},
+                                title="Edit vessel capability specs (deck, "
+                                      "cranes, SAT system, ROV)",
+                                style={**_BTN, "padding": "1px 8px",
+                                       "fontSize": "0.72rem"}),
+                ]) if can_edit else "",
             ]
 
         def td(c, i):
@@ -349,8 +358,22 @@ def _new_field(fid, placeholder, width="110px", required=False):
 
 _ADD_BTN_STYLE = {**_BTN, "padding": "6px 14px", "fontWeight": "600"}
 
+
+def _spec_num(fid, placeholder, width):
+    return dcc.Input(id=f"vtf-sp-{fid}", value="", placeholder=placeholder,
+                     type="text", debounce=False,
+                     style={**_FILTER_INPUT, "width": width})
+
+
+def _spec_dd(fid, placeholder, options, width):
+    return dcc.Dropdown(id=f"vtf-sp-{fid}", placeholder=placeholder,
+                        options=[{"label": o, "value": o} for o in options],
+                        clearable=True,
+                        style={"width": width, "display": "inline-block",
+                               "verticalAlign": "middle", "fontSize": "0.8rem"})
+
 layout = html.Div(className="full-width-page", children=[
-    html.H3("Fleet"),
+    html.H3("AIS Fleet"),
     html.P("Complete vessel list with SeaVantage workspace registration. "
            "Registered vessels are polled every 15 minutes (satellite AIS). "
            f"Removal is locked for {DELETE_LOCK_DAYS} days after registration.",
@@ -404,6 +427,43 @@ layout = html.Div(className="full-width-page", children=[
     ], style={"border": f"1px solid {LINE}", "borderRadius": "8px",
               "padding": "10px 14px", "margin": "6px 0",
               "background": "#f8fafc"})),
+    # spec-editor: permanent in the layout (hidden) - same pattern as the
+    # add-vessel form; conditional rendering broke this page before
+    html.Div(id="vtf-specform", style={"display": "none"}, children=html.Div([
+        html.Div(id="vtf-spec-title",
+                 style={"fontWeight": "600", "marginBottom": "6px",
+                        "fontSize": "0.85rem"}),
+        html.Div([
+            _spec_num("deck_space_m2", "Deck m\u00b2", "90px"),
+            _spec_num("deck_strength_t_m2", "t/m\u00b2", "70px"),
+            _spec_num("pob", "POB", "70px"),
+            _spec_num("crane1_swl_t", "Crane 1 (t)", "90px"),
+            _spec_num("crane2_swl_t", "Crane 2 (t)", "90px"),
+            _spec_dd("sat_type", "SAT type",
+                     ["integrated", "deck", "none"], "130px"),
+            _spec_num("sat_divers", "Divers", "70px"),
+            _spec_dd("bell_config", "Bell",
+                     ["single", "twin", "none"], "110px"),
+            _spec_dd("rov_hangar", "ROV hangar", ["0", "1", "2"], "110px"),
+            _spec_dd("spec_confidence", "Confidence",
+                     ["high", "medium", "low"], "120px"),
+        ], style={"display": "flex", "flexWrap": "wrap", "gap": "6px",
+                  "alignItems": "center"}),
+        dcc.Input(id="vtf-sp-spec_source", value="", placeholder="Source note",
+                  style={**_FILTER_INPUT, "width": "100%", "marginTop": "6px",
+                         "boxSizing": "border-box"}),
+        html.Div([
+            html.Button("Save specs", id="vtf-spec-save", n_clicks=0,
+                        style={**_BTN, "background": "#f0fdf4",
+                               "borderColor": "#bbf7d0", "color": GREEN,
+                               "marginRight": "6px"}),
+            html.Button("Cancel", id="vtf-spec-cancel", n_clicks=0, style=_BTN),
+        ], style={"marginTop": "8px"}),
+    ], style={"border": f"1px solid {LINE}", "borderRadius": "8px",
+              "padding": "10px 14px", "margin": "6px 0",
+              "background": "#f8fafc"})),
+    html.Div(id="vtf-spec-banner"),
+    dcc.Store(id="vtf-spec-editing", data=None),
     html.Div(id="vtf-banner"),
     dcc.Store(id="vtf-pending-delete", data=None),
     dcc.Store(id="vtf-editing", data=None),
@@ -738,3 +798,91 @@ def _do_remove(imo):
     sv_api.deregister([ship_id])
     ais_db.sv_clear_registration(imo)
     return f"{name} removed from the SeaVantage workspace.", True
+
+
+_SPEC_FIELDS = ("deck_space_m2", "deck_strength_t_m2", "pob", "crane1_swl_t",
+                "crane2_swl_t", "sat_type", "sat_divers", "bell_config",
+                "rov_hangar", "spec_confidence", "spec_source")
+
+
+@callback(
+    Output("vtf-specform", "style"),
+    Output("vtf-spec-title", "children"),
+    Output("vtf-spec-editing", "data"),
+    Output("vtf-spec-banner", "children"),
+    *[Output(f"vtf-sp-{f}", "value") for f in _SPEC_FIELDS],
+    Input({"type": "vtf-spec", "imo": dash.ALL}, "n_clicks"),
+    Input("vtf-spec-save", "n_clicks"),
+    Input("vtf-spec-cancel", "n_clicks"),
+    State("vtf-spec-editing", "data"),
+    *[State(f"vtf-sp-{f}", "value") for f in _SPEC_FIELDS],
+    prevent_initial_call=True,
+)
+def _spec_editor(_open, _save, _cancel, editing, *values):
+    """Open / save / close the capability-spec editor. Runs independently
+    from the main fleet callback; failures land in its own banner."""
+    trig = ctx.triggered_id
+    clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
+    hidden = {"display": "none"}
+    blank = [""] * len(_SPEC_FIELDS)
+    can_edit = auth.may_edit_params(auth.current_user(), PAGE_PATH)
+
+    def out(style, title, editing, banner, vals):
+        return (style, title, editing, banner, *vals)
+
+    if not clicked:
+        return out(hidden, "", None, None, blank)
+    try:
+        if isinstance(trig, dict) and trig.get("type") == "vtf-spec":
+            if not can_edit:
+                return out(hidden, "", None,
+                           _banner("You have view-only access to the fleet.",
+                                   ok=False), blank)
+            imo = int(trig["imo"])
+            cur = ais_db.fleet_get_specs(imo)
+            if cur is None:
+                return out(hidden, "", None,
+                           _banner(f"IMO {imo} not found.", ok=False), blank)
+            vals = []
+            for f in _SPEC_FIELDS:
+                v = cur.get(f)
+                if v is None:
+                    vals.append("")
+                elif f in ("sat_type", "bell_config", "spec_confidence",
+                           "spec_source"):
+                    vals.append(str(v))
+                elif f == "rov_hangar":
+                    vals.append(str(int(v)))
+                elif isinstance(v, float) and v == int(v):
+                    vals.append(str(int(v)))
+                else:
+                    vals.append(str(v))
+            title = (f"Capability specs \u2014 {cur['name']} (IMO {imo}). "
+                     f"Empty fields are stored as unknown (NULL).")
+            return out({"display": "block"}, title, str(imo), None, vals)
+
+        if trig == "vtf-spec-cancel" or not editing:
+            return out(hidden, "", None, None, blank)
+
+        if trig == "vtf-spec-save":
+            if not can_edit:
+                return out(hidden, "", None,
+                           _banner("You have view-only access to the fleet.",
+                                   ok=False), blank)
+            fields = dict(zip(_SPEC_FIELDS, values))
+            err = ais_db.fleet_update_specs(int(editing), fields)
+            if err:
+                return out({"display": "block"},
+                           dash.no_update, editing, _banner(err, ok=False),
+                           list(values))
+            name = (ais_db.fleet_get_specs(int(editing)) or {}).get("name",
+                                                                    editing)
+            return out(hidden, "", None,
+                       _banner(f"Specs saved for {name}. They are visible on "
+                               f"the Fleet Details page.", ok=True), blank)
+    except ais_db.AisDbError as exc:
+        return out(hidden, "", None, _banner(str(exc), ok=False), blank)
+    except Exception as exc:                     # never kill the page
+        return out(hidden, "", None,
+                   _banner(f"Unexpected error: {exc}", ok=False), blank)
+    return out(hidden, "", None, None, blank)

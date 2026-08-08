@@ -702,3 +702,68 @@ def fleet_auto_update_dims():
            RETURNING 1"""
     )
     return len(rows)
+
+
+# --- vessel capability specs (Fleet Details / spec editing) ------------------
+_SPEC_EDITABLE = ("deck_space_m2", "deck_strength_t_m2", "pob",
+                  "crane1_swl_t", "crane2_swl_t", "sat_type", "sat_divers",
+                  "bell_config", "rov_hangar", "spec_confidence", "spec_source")
+
+_SPEC_NUMERIC = {"deck_space_m2": float, "deck_strength_t_m2": float,
+                 "pob": int, "crane1_swl_t": float, "crane2_swl_t": float,
+                 "sat_divers": int, "rov_hangar": int}
+
+
+def fleet_details():
+    """All fleet vessels with capability specs, for the Fleet Details page."""
+    return q(
+        """SELECT f.imo, f.mmsi, f.name, f.owner, f.operator, f.built, f.flag,
+                  f.region, f.tier, f.notes, f.active, f.vessel_type,
+                  f.length_m, f.beam_m,
+                  f.deck_space_m2, f.deck_strength_t_m2, f.pob,
+                  f.crane1_swl_t, f.crane2_swl_t, f.sat_type, f.sat_divers,
+                  f.bell_config, f.rov_hangar, f.spec_confidence, f.spec_source
+           FROM fleet f
+           ORDER BY f.name"""
+    )
+
+
+def fleet_get_specs(imo):
+    """Spec columns for one vessel (prefill of the spec editor)."""
+    rows = q(
+        """SELECT name, deck_space_m2, deck_strength_t_m2, pob, crane1_swl_t,
+                  crane2_swl_t, sat_type, sat_divers, bell_config, rov_hangar,
+                  spec_confidence, spec_source
+           FROM fleet WHERE imo=%s""", (imo,))
+    if not rows:
+        return None
+    keys = ("name",) + _SPEC_EDITABLE
+    return dict(zip(keys, rows[0]))
+
+
+def fleet_update_specs(imo, fields):
+    """Update whitelisted spec columns for one vessel. Values arrive as
+    strings from the UI; '' means NULL. Numeric fields are coerced here and
+    return a readable error instead of raising. DB CHECK constraints guard
+    the enum fields (sat_type / bell_config / rov_hangar / confidence)."""
+    clean = {}
+    for k in _SPEC_EDITABLE:
+        if k not in fields:
+            continue
+        v = (fields[k] or "").strip() if isinstance(fields[k], str) else fields[k]
+        if v in ("", None):
+            clean[k] = None
+            continue
+        cast = _SPEC_NUMERIC.get(k)
+        if cast:
+            try:
+                v = cast(float(v))
+            except (TypeError, ValueError):
+                return f"'{fields[k]}' is not a valid number for {k}"
+        clean[k] = v
+    if not clean:
+        return None
+    cols = ", ".join(f"{k}=%s" for k in clean)
+    q(f"UPDATE fleet SET {cols}, updated_at=now() WHERE imo=%s",
+      (*clean.values(), imo))
+    return None
