@@ -252,21 +252,7 @@ _NAV_LABELS = {0: "Underway (engine)", 1: "At anchor", 2: "Not under command",
                8: "Underway (sailing)", 15: "Undefined"}
 
 
-# Destination hyperlink target. VesselFinder's public /ports page is
-# searchable by UN/LOCODE; {loc} is substituted with the vessel's reported
-# destination LOCODE. Change this single line to point elsewhere if needed.
-PORT_LINK_TEMPLATE = "https://www.vesselfinder.com/ports/{loc}"
-
 _INFO_CARD_H = 330       # vaste max-hoogte van de info-card (px)
-
-
-def _looks_like_locode(dest):
-    """AIS destination is a UN/LOCODE when it's 5 chars, letters, first two
-    a country code. Free-text destinations (e.g. 'ABERDEEN') are not linked."""
-    if not dest:
-        return False
-    d = dest.strip().upper()
-    return len(d) == 5 and d.isalpha()
 
 
 _EARTH_NM = 3440.065        # earth radius in nautical miles
@@ -369,17 +355,9 @@ def _fmt_age(ts):
 
 
 def _destination_value(dest):
-    """Plain text, or a hyperlink to the VesselFinder port page when the
-    destination is a UN/LOCODE."""
-    if not dest:
-        return "\u2014"
-    if _looks_like_locode(dest):
-        return html.A(dest,
-                      href=PORT_LINK_TEMPLATE.format(loc=dest.strip().upper()),
-                      target="_blank", rel="noopener noreferrer",
-                      style={"color": TEAL, "textDecoration": "underline",
-                             "cursor": "pointer"})
-    return dest
+    """Reported AIS destination as plain text (hyperlink removed by request:
+    the LOCODE lookup pages added little and left the portal)."""
+    return dest or "\u2014"
 
 
 def _info_card(info):
@@ -428,9 +406,23 @@ def _info_card(info):
     ], style={"display": "flex", "alignItems": "center",
               "borderBottom": f"1px solid {LINE}", "paddingBottom": "4px",
               "marginBottom": "3px"})
-    name = html.Div(info.get("name", ""),
+    name_children = [html.Span(info.get("name", ""),
+                               style={"flex": "1 1 auto"})]
+    if info.get("imo"):
+        name_children.append(html.Button(
+            "Info", n_clicks=0,
+            id={"type": "vtt-specs-open", "imo": str(info["imo"])},
+            title="Vessel details from the fleet database "
+                  "(built, POB, deck, cranes, SAT system)",
+            style={"padding": "1px 8px", "borderRadius": "6px",
+                   "fontSize": "0.7rem", "cursor": "pointer",
+                   "border": f"1px solid {LINE}", "background": "white",
+                   "color": TEAL, "fontWeight": "600"}))
+    name = html.Div(name_children,
                     style={"fontWeight": "700", "fontSize": "0.8rem",
-                           "color": TEAL, "margin": "1px 0 4px"})
+                           "color": TEAL, "margin": "1px 0 4px",
+                           "display": "flex", "alignItems": "center",
+                           "gap": "6px"})
     return style, [header, name, *rows]
 
 
@@ -501,6 +493,11 @@ layout = html.Div(className="full-width-page", children=[
         html.Span(id="vtt-subtitle", style={"color": MUTED, "fontSize": "0.85rem"}),
     ], style={"marginBottom": "8px"}),
     dcc.Interval(id="vtt-tick", interval=900_000, n_intervals=0),  # 15 min kiosk refresh
+    # vessel-details modal: permanent in the layout (hidden); populated by
+    # its own callback so the big map callback stays untouched
+    html.Div(id="vtt-specs-modal", style={"display": "none"}, children=[
+        html.Div(id="vtt-specs-body"),
+    ]),
     dcc.Store(id="vtt-selected", data=None),
     dcc.Store(id="vtt-mapclick", data=None),
     dcc.Store(id="vtt-typefilter", data=None),
@@ -876,3 +873,146 @@ clientside_callback(
     Input("vtt-map", "n_clicks"),
     prevent_initial_call=True,
 )
+
+
+# --- vessel-details modal ----------------------------------------------------
+
+_MODAL_STYLE = {"position": "fixed", "inset": "0", "zIndex": 1100,
+                "background": "rgba(15,23,42,0.45)", "display": "flex",
+                "alignItems": "center", "justifyContent": "center"}
+_MODAL_CARD = {"background": "white", "borderRadius": "10px",
+               "padding": "14px 18px", "width": "420px", "maxWidth": "92vw",
+               "maxHeight": "82vh", "overflowY": "auto",
+               "boxShadow": "0 8px 30px rgba(0,0,0,0.35)"}
+_MROW_L = {"color": MUTED, "fontSize": "0.76rem", "flex": "0 0 140px"}
+_MROW_V = {"fontSize": "0.76rem", "fontWeight": "600", "flex": "1 1 auto"}
+
+
+def _mrow(label, value):
+    return html.Div([html.Span(label, style=_MROW_L),
+                     html.Span(value, style=_MROW_V)],
+                    style={"display": "flex", "gap": "8px",
+                           "padding": "2.5px 0",
+                           "borderBottom": "1px solid #f1f5f9"})
+
+
+def _mnum(v, unit="", dec=0):
+    if v is None:
+        return "\u2014"
+    if isinstance(v, float) and dec == 0 and v == int(v):
+        return f"{int(v)}{unit}"
+    return f"{v:.{dec}f}{unit}" if dec else f"{v}{unit}"
+
+
+def _sat_summary(card):
+    st = card.get("sat_type")
+    if st == "none":
+        return "none"
+    if not st and not card.get("sat_divers"):
+        return "\u2014"
+    parts = []
+    if card.get("sat_divers"):
+        parts.append(f"{int(card['sat_divers'])}-man")
+    if st:
+        parts.append(st)
+    if card.get("bell_config") and card["bell_config"] != "none":
+        parts.append(f"{card['bell_config']} bell")
+    return " ".join(parts) or "\u2014"
+
+
+def _specs_modal_body(imo, card):
+    conf = card.get("spec_confidence")
+    conf_dot = ""
+    if conf:
+        colors = {"high": "#047857", "medium": "#b45309", "low": "#b91c1c"}
+        conf_dot = html.Span(f" \u25cf {conf}",
+                             title=card.get("spec_source") or "",
+                             style={"color": colors.get(conf, MUTED),
+                                    "fontSize": "0.72rem", "cursor": "help"})
+    dims = "\u2014"
+    if card.get("length_m"):
+        b = f" \u00d7 {card['beam_m']:.0f}" if card.get("beam_m") else ""
+        dims = f"{card['length_m']:.0f}{b} m"
+    owner = " / ".join(x for x in (card.get("owner"),
+                                   card.get("operator")) if x) or "\u2014"
+    rows = [
+        _mrow("Type", card.get("vessel_type") or "\u2014"),
+        _mrow("Owner / Operator", owner),
+        _mrow("Built", card.get("built") or "\u2014"),
+        _mrow("Flag", card.get("flag") or "\u2014"),
+        _mrow("Region / Tier",
+              "{} / {}".format(card.get("region") or "\u2014",
+                               card.get("tier") or "\u2014")),
+        _mrow("Dimensions", dims),
+        _mrow("Deck space", _mnum(card.get("deck_space_m2"), " m\u00b2")),
+        _mrow("Deck strength", _mnum(card.get("deck_strength_t_m2"),
+                                     " t/m\u00b2")),
+        _mrow("POB", _mnum(card.get("pob"))),
+        _mrow("Crane 1", _mnum(card.get("crane1_swl_t"), " t")),
+        _mrow("Crane 2", _mnum(card.get("crane2_swl_t"), " t")),
+        _mrow("SAT system", _sat_summary(card)),
+        _mrow("ROV hangar", _mnum(card.get("rov_hangar"))),
+    ]
+    if card.get("notes"):
+        rows.append(_mrow("Notes", card["notes"]))
+    header = html.Div([
+        html.Div([html.Span(card.get("name") or str(imo),
+                            style={"fontWeight": "700", "fontSize": "0.95rem",
+                                   "color": TEAL}), conf_dot],
+                 style={"flex": "1 1 auto"}),
+        html.Button("\u2715", id="vtt-specs-close", n_clicks=0,
+                    style={"border": "none", "background": "none",
+                           "cursor": "pointer", "color": "#94a3b8",
+                           "fontSize": "0.95rem", "padding": "0 2px"}),
+    ], style={"display": "flex", "alignItems": "center",
+              "marginBottom": "6px"})
+    sub = html.Div(f"IMO {imo} \u2014 fleet database",
+                   style={"color": MUTED, "fontSize": "0.7rem",
+                          "marginBottom": "8px"})
+    # photo slot reserved: once vessel photos land on the data volume this
+    # is where the image goes (see AIS Fleet / Specs discussion)
+    return html.Div([header, sub, *rows], style=_MODAL_CARD)
+
+
+def _specs_modal_missing(imo):
+    header = html.Div([
+        html.Span("Vessel details", style={"fontWeight": "700",
+                                           "flex": "1 1 auto"}),
+        html.Button("\u2715", id="vtt-specs-close", n_clicks=0,
+                    style={"border": "none", "background": "none",
+                           "cursor": "pointer", "color": "#94a3b8"}),
+    ], style={"display": "flex", "alignItems": "center"})
+    return html.Div([header,
+                     html.Div(f"IMO {imo} not found in the fleet database.",
+                              style={"fontSize": "0.8rem", "marginTop": "8px",
+                                     "color": MUTED})],
+                    style=_MODAL_CARD)
+
+
+@callback(
+    Output("vtt-specs-modal", "style"),
+    Output("vtt-specs-body", "children"),
+    Input({"type": "vtt-specs-open", "imo": dash.ALL}, "n_clicks"),
+    Input("vtt-specs-close", "n_clicks"),
+)
+# NB: no prevent_initial_call - the Info button is created dynamically by
+# the map callback; prevent_initial_call suppresses clicks on late-added
+# pattern components (same gotcha as the AIS Fleet Specs button).
+def _specs_modal(_open, _close):
+    trig = ctx.triggered_id
+    clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
+    hidden = {"display": "none"}
+    if not clicked:
+        return hidden, []
+    if trig == "vtt-specs-close":
+        return hidden, []
+    if isinstance(trig, dict) and trig.get("type") == "vtt-specs-open":
+        imo = trig.get("imo")
+        try:
+            card = ais_db.vessel_card(int(imo))
+        except (ais_db.AisDbError, ValueError, Exception):
+            card = None
+        body = (_specs_modal_body(imo, card) if card
+                else _specs_modal_missing(imo))
+        return _MODAL_STYLE, body
+    return hidden, []

@@ -767,3 +767,23 @@ def fleet_update_specs(imo, fields):
     q(f"UPDATE fleet SET {cols}, updated_at=now() WHERE imo=%s",
       (*clean.values(), imo))
     return None
+
+
+def vessel_card(imo):
+    """Everything the Tracks info-modal shows about one vessel: fleet
+    identity plus the capability specs from migration 09."""
+    rows = q(
+        """SELECT name, vessel_type, built, flag, region, tier, owner,
+                  operator, length_m, beam_m, deck_space_m2,
+                  deck_strength_t_m2, pob, crane1_swl_t, crane2_swl_t,
+                  sat_type, sat_divers, bell_config, rov_hangar,
+                  spec_confidence, spec_source, notes
+           FROM fleet WHERE imo=%s""", (imo,))
+    if not rows:
+        return None
+    keys = ("name", "vessel_type", "built", "flag", "region", "tier",
+            "owner", "operator", "length_m", "beam_m", "deck_space_m2",
+            "deck_strength_t_m2", "pob", "crane1_swl_t", "crane2_swl_t",
+            "sat_type", "sat_divers", "bell_config", "rov_hangar",
+            "spec_confidence", "spec_source", "notes")
+    return dict(zip(keys, rows[0]))
