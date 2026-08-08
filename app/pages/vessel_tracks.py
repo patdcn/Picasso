@@ -493,16 +493,7 @@ layout = html.Div(className="full-width-page", children=[
     html.Div([
         html.H3("Tracks", style={"margin": "0 12px 0 0", "display": "inline"}),
         html.Span(id="vtt-subtitle", style={"color": MUTED, "fontSize": "0.85rem"}),
-        html.Div(id="vtt-daterange-wrap", style={"display": "none"}, children=[
-            dcc.RangeSlider(
-                id="vtt-daterange", min=-90, max=0, step=1, value=[-30, 0],
-                marks={-90: "90d", -60: "60d", -30: "30d", -14: "14d",
-                       -7: "7d", 0: "now"},
-                allowCross=False,
-                tooltip={"placement": "bottom", "always_visible": False}),
-        ]),
-    ], style={"marginBottom": "8px", "display": "flex", "alignItems": "center",
-              "flexWrap": "wrap", "gap": "4px 14px"}),
+    ], style={"marginBottom": "8px"}),
     dcc.Interval(id="vtt-tick", interval=900_000, n_intervals=0),  # 15 min kiosk refresh
     # vessel-details modal: permanent in the layout (hidden); populated by
     # its own callback so the big map callback stays untouched
@@ -537,6 +528,14 @@ layout = html.Div(className="full-width-page", children=[
                  style={"display": "flex", "gap": "6px", "flexWrap": "wrap",
                         "marginTop": "6px"}),
     ], style={"margin": "0 0 8px"}),
+    html.Div(id="vtt-daterange-wrap", style={"display": "none"}, children=[
+        dcc.RangeSlider(
+            id="vtt-daterange", min=-90, max=0, step=1, value=[-30, 0],
+            marks={-90: "90d", -60: "60d", -30: "30d", -14: "14d",
+                   -7: "7d", 0: "now"},
+            allowCross=False,
+            tooltip={"placement": "bottom", "always_visible": False}),
+    ]),
     html.Div([
         html.Div([
             dl.Map(id="vtt-map", preferCanvas=True,
@@ -793,8 +792,8 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
                     "boxShadow": "0 1px 4px rgba(0,0,0,0.2)"}
                    if info_style.get("display") != "none"
                    else {"display": "none"})
-    range_style = {"width": "340px", "maxWidth": "55vw",
-                    "marginLeft": "auto"}
+    range_style = {"width": "100%", "padding": "0 4px",
+                   "margin": "0 0 10px", "boxSizing": "border-box"}
     return (layer, _vessel_list(rows, new_selected, collapsed), count,
             subtitle, viewport, new_selected, chips, typefilter, collapsed,
             col_style_out, reopen_style, info_style, info_children,
