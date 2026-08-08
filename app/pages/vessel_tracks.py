@@ -23,6 +23,8 @@ the Copernicus page follows later.
 """
 from datetime import datetime, timezone
 
+import os
+
 import dash
 import dash_leaflet as dl
 from dash import html, dcc, Input, Output, State, callback, ctx, clientside_callback
@@ -496,8 +498,18 @@ layout = html.Div(className="full-width-page", children=[
     # vessel-details modal: permanent in the layout (hidden); populated by
     # its own callback so the big map callback stays untouched
     html.Div(id="vtt-specs-modal", style={"display": "none"}, children=[
-        html.Div(id="vtt-specs-body"),
+        html.Div([
+            html.Button("\u2715", id="vtt-specs-close", n_clicks=0,
+                        title="Close",
+                        style={"position": "absolute", "top": "8px",
+                               "right": "10px", "border": "none",
+                               "background": "none", "cursor": "pointer",
+                               "color": "#94a3b8", "fontSize": "0.95rem",
+                               "zIndex": 2, "padding": "2px 4px"}),
+            html.Div(id="vtt-specs-body"),
+        ], style={"position": "relative"}),
     ]),
+    dcc.Store(id="vtt-specs-request", data=None),
     dcc.Store(id="vtt-selected", data=None),
     dcc.Store(id="vtt-mapclick", data=None),
     dcc.Store(id="vtt-typefilter", data=None),
@@ -612,6 +624,7 @@ layout = html.Div(className="full-width-page", children=[
     Output("vtt-info", "style"),
     Output("vtt-info", "children"),
     Output("vtt-info-close", "style"),
+    Output("vtt-specs-request", "data"),
     Input("vtt-tick", "n_intervals"),
     Input("vtt-search", "value"),
     Input("vtt-col-toggle", "n_clicks"),
@@ -622,17 +635,27 @@ layout = html.Div(className="full-width-page", children=[
     Input({"type": "vtt-sel", "mmsi": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-tf", "val": dash.ALL}, "n_clicks"),
     Input({"type": "vtt-grp", "name": dash.ALL}, "n_clicks"),
+    Input({"type": "vtt-specs-open", "imo": dash.ALL}, "n_clicks"),
     State("vtt-selected", "data"),
     State("vtt-typefilter", "data"),
     State("vtt-collapsed", "data"),
     State("vtt-col", "style"),
 )
 def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
-            _sels, _chips, _grps,
+            _sels, _chips, _grps, _specs,
             selected, typefilter, collapsed, col_style):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
-    is_refresh = trig in (None, "vtt-tick")
+    specs_request = dash.no_update
+    is_spec_click = (clicked and isinstance(trig, dict)
+                     and trig.get("type") == "vtt-specs-open")
+    if is_spec_click:
+        # main callback receives the click (proven delivery path) and only
+        # signals the details modal via its request store; keep the map
+        # view exactly as it is.
+        specs_request = {"imo": str(trig.get("imo")),
+                         "n": ctx.triggered[0].get("value")}
+    is_refresh = trig in (None, "vtt-tick") or is_spec_click
 
     # vessel-column collapse (mirrors the main nav toggle behaviour)
     col_hidden = bool((col_style or {}).get("display") == "none")
@@ -674,7 +697,7 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
                                           "fontSize": "0.85rem"})
         return ([], empty, "Vessels", "", dash.no_update, new_selected,
                 [], typefilter, collapsed, col_style_out, reopen_style,
-                {"display": "none"}, [], {"display": "none"})
+                {"display": "none"}, [], {"display": "none"}, specs_request)
 
     chips = _type_chips(all_rows, typefilter)
     rows = [r for r in all_rows
@@ -746,7 +769,8 @@ def _render(_tick, search, _colt, _colt2, _map_clicks, _infoclose, _dots,
                    else {"display": "none"})
     return (layer, _vessel_list(rows, new_selected, collapsed), count,
             subtitle, viewport, new_selected, chips, typefilter, collapsed,
-            col_style_out, reopen_style, info_style, info_children, close_style)
+            col_style_out, reopen_style, info_style, info_children,
+            close_style, specs_request)
 
 
 def _resolve_selection(trig, clicked, current):
@@ -877,6 +901,18 @@ clientside_callback(
 
 # --- vessel-details modal ----------------------------------------------------
 
+_PHOTO_DIR = os.getenv("VESSEL_PHOTO_DIR", "/data/vessel_photos")
+_PHOTO_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def _photo_available(imo):
+    try:
+        return any(os.path.exists(os.path.join(_PHOTO_DIR, f"{imo}{e}"))
+                   for e in _PHOTO_EXTS)
+    except OSError:
+        return False
+
+
 _MODAL_STYLE = {"position": "fixed", "inset": "0", "zIndex": 1100,
                 "background": "rgba(15,23,42,0.45)", "display": "flex",
                 "alignItems": "center", "justifyContent": "center"}
@@ -960,27 +996,23 @@ def _specs_modal_body(imo, card):
                             style={"fontWeight": "700", "fontSize": "0.95rem",
                                    "color": TEAL}), conf_dot],
                  style={"flex": "1 1 auto"}),
-        html.Button("\u2715", id="vtt-specs-close", n_clicks=0,
-                    style={"border": "none", "background": "none",
-                           "cursor": "pointer", "color": "#94a3b8",
-                           "fontSize": "0.95rem", "padding": "0 2px"}),
     ], style={"display": "flex", "alignItems": "center",
-              "marginBottom": "6px"})
+              "marginBottom": "6px", "paddingRight": "18px"})
     sub = html.Div(f"IMO {imo} \u2014 fleet database",
                    style={"color": MUTED, "fontSize": "0.7rem",
                           "marginBottom": "8px"})
-    # photo slot reserved: once vessel photos land on the data volume this
-    # is where the image goes (see AIS Fleet / Specs discussion)
-    return html.Div([header, sub, *rows], style=_MODAL_CARD)
+    photo = []
+    if _photo_available(imo):
+        photo = [html.Img(src=f"/vessel-photo/{imo}",
+                          style={"width": "100%", "borderRadius": "8px",
+                                 "marginBottom": "8px", "display": "block"})]
+    return html.Div([header, sub, *photo, *rows], style=_MODAL_CARD)
 
 
 def _specs_modal_missing(imo):
     header = html.Div([
         html.Span("Vessel details", style={"fontWeight": "700",
                                            "flex": "1 1 auto"}),
-        html.Button("\u2715", id="vtt-specs-close", n_clicks=0,
-                    style={"border": "none", "background": "none",
-                           "cursor": "pointer", "color": "#94a3b8"}),
     ], style={"display": "flex", "alignItems": "center"})
     return html.Div([header,
                      html.Div(f"IMO {imo} not found in the fleet database.",
@@ -992,13 +1024,10 @@ def _specs_modal_missing(imo):
 @callback(
     Output("vtt-specs-modal", "style"),
     Output("vtt-specs-body", "children"),
-    Input({"type": "vtt-specs-open", "imo": dash.ALL}, "n_clicks"),
+    Input("vtt-specs-request", "data"),
     Input("vtt-specs-close", "n_clicks"),
 )
-# NB: no prevent_initial_call - the Info button is created dynamically by
-# the map callback; prevent_initial_call suppresses clicks on late-added
-# pattern components (same gotcha as the AIS Fleet Specs button).
-def _specs_modal(_open, _close):
+def _specs_modal(request, _close):
     trig = ctx.triggered_id
     clicked = bool(ctx.triggered) and bool(ctx.triggered[0].get("value"))
     hidden = {"display": "none"}
@@ -1006,8 +1035,8 @@ def _specs_modal(_open, _close):
         return hidden, []
     if trig == "vtt-specs-close":
         return hidden, []
-    if isinstance(trig, dict) and trig.get("type") == "vtt-specs-open":
-        imo = trig.get("imo")
+    if trig == "vtt-specs-request" and request:
+        imo = request.get("imo")
         try:
             card = ais_db.vessel_card(int(imo))
         except (ais_db.AisDbError, ValueError, Exception):

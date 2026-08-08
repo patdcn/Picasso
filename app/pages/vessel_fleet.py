@@ -464,6 +464,7 @@ layout = html.Div(className="full-width-page", children=[
               "background": "#f8fafc"})),
     html.Div(id="vtf-spec-banner"),
     dcc.Store(id="vtf-spec-editing", data=None),
+    dcc.Store(id="vtf-spec-request", data=None),
     html.Div(id="vtf-banner"),
     dcc.Store(id="vtf-pending-delete", data=None),
     dcc.Store(id="vtf-editing", data=None),
@@ -494,6 +495,7 @@ layout = html.Div(className="full-width-page", children=[
     Output("vtf-new-region", "value"),
     Output("vtf-new-tier", "value"),
     Output("vtf-new-notes", "value"),
+    Output("vtf-spec-request", "data"),
     Input("vtf-refresh", "n_clicks"),
     Input("vtf-add-open", "n_clicks"),
     Input("vtf-new-save", "n_clicks"),
@@ -510,6 +512,7 @@ layout = html.Div(className="full-width-page", children=[
     Input({"type": "vtf-nm", "imo": dash.ALL}, "n_clicks"),
     Input({"type": "vtf-save", "imo": dash.ALL}, "n_clicks"),
     Input({"type": "vtf-cancel", "imo": dash.ALL}, "n_clicks"),
+    Input({"type": "vtf-spec", "imo": dash.ALL}, "n_clicks"),
     State({"type": "vtf-f", "field": dash.ALL}, "value"),
     State({"type": "vtf-f", "field": dash.ALL}, "id"),
     State("vtf-new-name", "value"), State("vtf-new-imo", "value"),
@@ -523,7 +526,7 @@ layout = html.Div(className="full-width-page", children=[
     State("vtf-sort", "data"),
 )
 def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
-                   _sort, _a, _d, _dc, _dx, _e, _nm, _sv, _cx,
+                   _sort, _a, _d, _dc, _dx, _e, _nm, _sv, _cx, _sp,
                    f_values, f_ids,
                    nv_name, nv_imo, nv_mmsi, nv_type, nv_owner_op, nv_built,
                    nv_flag, nv_region, nv_tier, nv_notes,
@@ -536,9 +539,10 @@ def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
         editing, adding = None, False
     new_pending, new_editing, new_adding = None, editing, bool(adding)
     clear_new = False        # leeg de nieuw-vessel velden na save/open/cancel
+    spec_request = dash.no_update   # klik op Specs -> editor-store
 
     _MUTATING = ("vtf-add", "vtf-del", "vtf-del-confirm", "vtf-edit",
-                 "vtf-nm", "vtf-save")
+                 "vtf-nm", "vtf-save", "vtf-spec")
     try:
         if (clicked and not can_edit
                 and ((isinstance(trig, dict) and trig.get("type") in _MUTATING)
@@ -574,6 +578,11 @@ def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
                 new_editing = None
             elif kind == "vtf-cancel":
                 new_editing = None
+            elif kind == "vtf-spec":
+                # main callback receives the click (proven delivery path) and
+                # only signals the spec editor via its request store
+                spec_request = {"imo": str(imo),
+                                "n": ctx.triggered[0].get("value")}
         elif clicked and trig == "vtf-add-open":
             new_adding, new_editing = not new_adding, None
             if new_adding:
@@ -640,13 +649,14 @@ def _fleet_actions(_r, _ao, _ns, _nc, search, ftype, fregion,
     except Exception as exc:
         return (_banner(str(exc), ok=False), "", None, None, None, False,
                 {"display": "none"}, [], [], _ADD_BTN_STYLE,
-                *[dash.no_update] * 10)
+                *[dash.no_update] * 10, dash.no_update)
     form_style = {"display": "block"} if (new_adding and can_edit) else {"display": "none"}
     add_btn_style = _ADD_BTN_STYLE if can_edit else {"display": "none"}
     # tien nieuw-velden: legen wanneer clear_new, anders ongemoeid laten
     new_vals = (["" ] * 10 if clear_new else [dash.no_update] * 10)
     return (table, counter, _banner(banner, ok), new_pending, new_editing,
-            new_adding, form_style, types, regions, add_btn_style, *new_vals)
+            new_adding, form_style, types, regions, add_btn_style, *new_vals,
+            spec_request)
 
 
 @callback(Output("vtf-sort", "data"),
@@ -811,7 +821,7 @@ _SPEC_FIELDS = ("deck_space_m2", "deck_strength_t_m2", "pob", "crane1_swl_t",
     Output("vtf-spec-editing", "data"),
     Output("vtf-spec-banner", "children"),
     *[Output(f"vtf-sp-{f}", "value") for f in _SPEC_FIELDS],
-    Input({"type": "vtf-spec", "imo": dash.ALL}, "n_clicks"),
+    Input("vtf-spec-request", "data"),
     Input("vtf-spec-save", "n_clicks"),
     Input("vtf-spec-cancel", "n_clicks"),
     State("vtf-spec-editing", "data"),
@@ -821,7 +831,7 @@ _SPEC_FIELDS = ("deck_space_m2", "deck_strength_t_m2", "pob", "crane1_swl_t",
 # by the main table callback; prevent_initial_call suppresses clicks on such
 # late-added pattern components (known Dash gotcha). The `clicked` guard
 # below keeps the initial call harmless (panel stays hidden).
-def _spec_editor(_open, _save, _cancel, editing, *values):
+def _spec_editor(request, _save, _cancel, editing, *values):
     """Open / save / close the capability-spec editor. Runs independently
     from the main fleet callback; failures land in its own banner."""
     trig = ctx.triggered_id
@@ -836,12 +846,12 @@ def _spec_editor(_open, _save, _cancel, editing, *values):
     if not clicked:
         return out(hidden, "", None, None, blank)
     try:
-        if isinstance(trig, dict) and trig.get("type") == "vtf-spec":
+        if trig == "vtf-spec-request" and request:
             if not can_edit:
                 return out(hidden, "", None,
                            _banner("You have view-only access to the fleet.",
                                    ok=False), blank)
-            imo = int(trig["imo"])
+            imo = int(request["imo"])
             cur = ais_db.fleet_get_specs(imo)
             if cur is None:
                 return out(hidden, "", None,

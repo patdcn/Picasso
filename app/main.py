@@ -89,6 +89,7 @@ from app.calcmod import db as calcmod_db  # noqa: E402
 calcmod_db.init_db()
 
 from app.nav import build_nav  # noqa: E402
+from app import buildinfo  # noqa: E402
 
 # ---- serve GA reference files from the data volume (read-only, safe filenames) ----
 import os as _os
@@ -128,6 +129,28 @@ def _dp_doc(name):
         abort(404)
     return send_from_directory(_DP_DOCS_DIR, name)
 
+# ---- serve vessel photos from the data volume ----
+# Photos live at /data/vessel_photos/<imo>.<ext> on the picasso_data volume
+# (outside the public repo, included in the R2 backup). Any signed-in user
+# may view them - vessel photos are not proprietary, unlike dive tables.
+_VESSEL_PHOTO_DIR = _os.getenv("VESSEL_PHOTO_DIR", "/data/vessel_photos")
+_VESSEL_PHOTO_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+
+
+@server.route("/vessel-photo/<imo>")
+def _vessel_photo(imo):
+    user = auth.current_user()
+    if not user:
+        abort(403)
+    if not imo.isdigit() or len(imo) > 8:      # IMO numbers only, no paths
+        abort(404)
+    for ext in _VESSEL_PHOTO_EXTS:
+        name = f"{imo}{ext}"
+        if _os.path.exists(_os.path.join(_VESSEL_PHOTO_DIR, name)):
+            return send_from_directory(_VESSEL_PHOTO_DIR, name)
+    abort(404)
+
+
 # ---- Header (toggle + title + user area) ----
 header = html.Header(
     [
@@ -145,6 +168,15 @@ app.layout = html.Div(
         dcc.Location(id="url"),
         dcc.Store(id="nav-open", data=True),
         dcc.Interval(id="activity-hb", interval=60_000, n_intervals=0),
+        # portal-wide stale-tab guard: the client keeps the BUILD_ID it was
+        # served at load; a heartbeat callback reports the server's current
+        # BUILD_ID; the clientside compare below force-reloads the tab after
+        # a deploy. Page layouts arrive fresh per navigation, but the
+        # callback list does NOT - a stale tab renders new buttons that are
+        # silently dead. This closes that gap for every page at once.
+        dcc.Store(id="shell-mybuild", data=buildinfo.BUILD_ID),
+        dcc.Store(id="shell-srvbuild", data=None),
+        html.Div(id="shell-reload-sink", style={"display": "none"}),
         html.Div(id="activity-sink", style={"display": "none"}),
         html.Div(id="activity-hb-sink", style={"display": "none"}),
         header,
@@ -194,6 +226,24 @@ def _log_pageview(pathname):
     except Exception:
         pass
     return ""
+
+
+@app.callback(Output("shell-srvbuild", "data"), Input("activity-hb", "n_intervals"))
+def _report_build(_n):
+    return buildinfo.BUILD_ID
+
+
+app.clientside_callback(
+    """
+    function(srv, mine) {
+        if (srv && mine && srv !== mine) { window.location.reload(); }
+        return "";
+    }
+    """,
+    Output("shell-reload-sink", "children"),
+    Input("shell-srvbuild", "data"),
+    State("shell-mybuild", "data"),
+)
 
 
 @app.callback(Output("activity-hb-sink", "children"), Input("activity-hb", "n_intervals"))
